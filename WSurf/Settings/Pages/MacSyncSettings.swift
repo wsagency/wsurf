@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import SwiftUI
+import WSurfCore
 import WSurfVault
 
 struct MacSyncSettings: View {
@@ -11,7 +12,7 @@ struct MacSyncSettings: View {
     }
 
     var body: some View {
-        SettingsPageHeader(title: "Sync", caption: "Choose what this Mac shares through your Apple Account.")
+        SettingsPageHeader(title: "Sync", caption: "Choose what stays in sync across WSurf on your Apple Account.")
             .task(id: profile.id) {
                 guard !profile.isPrivate, let settings = CloudSync.shared?.settingsSync else { return }
                 settings.registerProfile?(profile)
@@ -30,8 +31,8 @@ struct MacSyncSettings: View {
             }
             ProfileICloudTabsSection(profile: profile)
                 .settingsAnchor("sync.otherDevices")
-            VaultSharingSettings(coordinator: coordinator, cloud: cloud)
-                .id(coordinator.browser.vaultScope())
+            VaultSharingSettings(profile: profile, coordinator: coordinator, cloud: cloud)
+                .id(profile.id)
                 .settingsAnchor("sync.vaults")
             MacSettingOptions(settings: settings, profile: profile, cloudProfileID: cloud.sharedSpaces?.cloudProfileID(for: profile.id))
             MacWebsiteSyncApprovalSection(profile: profile)
@@ -53,13 +54,16 @@ private struct MacSettingOptions: View {
 
     var body: some View {
         SettingsSection(title: "Website settings", symbol: "globe") {
-            switchRow("Share website settings", category: .websiteSettings, global: false)
+            switchRow("Share website settings", scope: "Sync preferences like zoom and browser engine for websites in this profile.", category: .websiteSettings, global: false)
         }
         .settingsAnchor("sync.websites")
         SettingsSection(title: "AI providers", symbol: "sparkles") {
-            switchRow("Share custom providers", category: .providers, global: true)
+            switchRow("Sync custom provider definitions", scope: "Sync the names and server addresses of custom AI providers across all profiles.", category: .providers, global: true)
             RowSeparator()
-            switchRow("Share model choices for this profile", category: .providers, global: false)
+            switchRow(
+                "Sync model choices for this profile", scope: "Sync this profile’s selected provider, model and reasoning settings. API keys have their own controls below.",
+                category: .providers, global: false
+            )
         }
         .settingsAnchor("sync.providers")
         if let notice = settings.hasPendingOptOuts ? String(localized: "Sync is paused for the settings you turned off. Try again to save this choice.") : settings.notice {
@@ -83,11 +87,13 @@ private struct MacSettingOptions: View {
     }
 
     @ViewBuilder
-    private func switchRow(_ title: LocalizedStringResource, category: MacSettingsCategory, global: Bool) -> some View {
+    private func switchRow(_ title: LocalizedStringResource, scope: LocalizedStringResource, category: MacSettingsCategory, global: Bool) -> some View {
         let local = global ? nil : profile.id
         let channel = settings.channel(category, localProfileID: local)
         let turningOff = settings.isTurningOff(category, localProfileID: local)
-        DetailRow(title: title, caption: caption(for: channel, needsProfile: !global && cloudProfileID == nil)) {
+        let summary = [scope, caption(for: channel, needsProfile: !global && cloudProfileID == nil)]
+            .compactMap { $0 }.map { String(localized: $0) }.joined(separator: "\n")
+        DetailRow(verbatimTitle: String(localized: title), verbatimCaption: summary) {
             SettingsToggle(
                 Binding(
                     get: { channel != nil || turningOff },
@@ -148,58 +154,146 @@ private struct VaultSharingSettings: View {
     @State private var model: CredentialSettingsModel
     @State private var work: Task<Void, Never>?
     @State private var showsVaultMerge = false
+    @State private var heldVaults: Set<VaultMergeOption.ID> = []
 
-    init(coordinator: AppCoordinator, cloud: CloudSync) {
+    init(profile: Profile, coordinator: AppCoordinator, cloud: CloudSync) {
         self.coordinator = coordinator
         self.cloud = cloud
-        _model = State(initialValue: CredentialSettingsModel(scope: coordinator.browser.vaultScope()))
+        _model = State(initialValue: CredentialSettingsModel(profile: profile))
     }
 
     var body: some View {
         SettingsSection(title: "Credential vaults", symbol: "lock.icloud") {
-            DetailRow(title: "Find my vaults in iCloud", caption: "Choose separately which vaults to share from this Mac.") {
+            DetailRow(
+                title: "Find and sync iCloud vaults",
+                caption: "Find encrypted vaults from your other Macs and resume sync for vaults you’ve already enabled. To share a vault, turn on sync for that vault."
+            ) {
                 SettingsToggle(Binding(get: { cloud.vaults != nil }, set: { cloud.setVaultDiscovery($0) }))
             }
-            if cloud.vaults != nil, let first = model.vaults.first {
+            if let first = model.vaults.first {
                 RowSeparator()
-                DetailRow(title: "Vault") {
+                DetailRow(verbatimTitle: String(localized: "Vaults for \(ProfileSummary.displayName(for: model.profile))")) {
                     SettingsMenu(
-                        options: model.vaults.map { .init(value: $0.vaultID, label: $0.label) },
+                        options: model.vaults.map { .init(value: $0.vaultID, label: $0.label, detail: vaultStatus($0.vaultID)) },
                         selection: Binding(
                             get: { model.selectedVaultID ?? first.vaultID },
                             set: { id in Task { await model.select(vaultID: id) } }
                         ))
                 }
+                if !model.isUnlocked, model.selectedVaultID != nil {
+                    RowSeparator()
+                    DetailRow(title: "Vault is locked") {
+                        SettingsButton(title: "Unlock…") {
+                            useWindow { await model.unlock(in: $0) }
+                        }
+                        .disabled(model.isBusy)
+                    }
+                }
                 CloudVaultRow(model: model, run: run)
-                CredentialVaultMergeRow(model: model) { showsVaultMerge = true }
             }
+            CredentialVaultMergeRow(model: model, showsAllVaults: true) { showsVaultMerge = true }
             ForEach(model.retryableSyncedVaults) { retry in
                 RowSeparator()
                 VaultAdoptionRetryRow(retry: retry, isBusy: model.isBusy) {
-                    guard let window = coordinator.nativeWindow, window.isVisible else {
-                        model.error = String(localized: "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again.")
-                        return
-                    }
-                    run { await model.retrySyncedVault(retry, in: window) }
+                    useWindow { await model.retrySyncedVault(retry, in: $0) }
                 }
             }
             if let error = model.error {
                 SettingsNotice(symbol: "exclamationmark.triangle", text: error)
             }
-            if cloud.vaults != nil {
-                RowSeparator()
-                DetailRow(title: "Manage credential vaults", caption: "Unlock a vault, add a vault from another Mac or review changes.") {
-                    SettingsButton(title: "Open Vaults…") { coordinator.routeSettings(to: .autofill) }
-                }
+            RowSeparator()
+            DetailRow(title: "Manage vaults in Autofill", caption: "Manage unlock methods, autofill defaults and review changes from iCloud.") {
+                SettingsButton(title: "Open Vaults…") { coordinator.routeSettings(to: .autofill) }
             }
         }
         .modifier(CredentialVaultMergePresentation(model: model, isPresented: $showsVaultMerge))
         .onDisappear { work?.cancel() }
-        .task(id: cloud.vaults != nil) {
-            if cloud.vaults != nil {
-                await model.load()
+        .task(id: cloud.vaults != nil) { await model.load() }
+        .task(id: discoveryVersions) {
+            guard cloud.vaults != nil else { return }
+            var held = Set<VaultMergeOption.ID>()
+            for profile in coordinator.profiles.profiles where profile.id != model.profile.id && !profile.isPrivate {
+                guard let store = try? CredentialManager.store(for: profile), let listing = try? await store.listing() else { continue }
+                held.formUnion(listing.map { .init(profileID: profile.id, vaultID: $0.vaultID) })
+            }
+            if !Task.isCancelled {
+                heldVaults = held
             }
         }
+        if let vaults = cloud.vaults {
+            discoveredVaults(vaults)
+        }
+    }
+
+    private var discoveryVersions: [UUID: UInt64]? {
+        guard cloud.vaults != nil else { return nil }
+        return Dictionary(uniqueKeysWithValues: coordinator.profiles.profiles.map { ($0.id, VaultStateChanges.shared.count(for: $0.id)) })
+    }
+
+    private func vaultStatus(_ id: UUID) -> String {
+        guard let vaults = cloud.vaults, vaults.status(profileID: model.profile.id, vaultID: id) != .enrollmentUnavailable else { return "" }
+        return vaults.isSyncing(profileID: model.profile.id, vaultID: id) ? String(localized: "Shared via iCloud") : String(localized: "Sync off on this Mac")
+    }
+
+    private func discoveredVaults(_ vaults: VaultSync) -> some View {
+        let remoteProfiles = vaults.remoteProfiles()
+        let alreadyHere = coordinator.profiles.profiles.filter { profile in
+            profile.id != model.profile.id && vaults.remoteVaults(profileID: profile.id).contains {
+                !heldVaults.contains(.init(profileID: profile.id, vaultID: $0.vaultID))
+            }
+        }
+        let available = model.addableSyncedVaults
+        return SettingsSection(title: "iCloud vaults from other Macs", symbol: "icloud.and.arrow.down") {
+            if available.isEmpty && remoteProfiles.isEmpty && alreadyHere.isEmpty {
+                DetailRow(title: "No additional vaults found", caption: "Vaults you’ve already added appear with the vaults for their profile.") { EmptyView() }
+            }
+            ForEach(Array(available.enumerated()), id: \.element.id) { index, vault in
+                if index > 0 {
+                    RowSeparator()
+                }
+                let title = ProfileSummary.publishedName(vault.payload.profile.name, source: vault.payload.profile.publicationSource)
+                let ready = model.canAddSyncedVault(vault)
+                let keyCheck: String? = if case .keyDiffers(let id, let check) = model.syncAddFailure, id == vault.id { check } else { nil }
+                DetailRow(
+                    verbatimTitle: title,
+                    verbatimCaption: adoptionCaption(ready: ready, keyCheck: keyCheck)
+                ) {
+                    SettingsButton(title: keyCheck == nil ? "Add to This Mac…" : "Try Again…") { useWindow { await model.addSyncedVault(vault, in: $0) } }
+                        .disabled(model.isBusy || (!ready && keyCheck == nil))
+                }
+            }
+            ForEach(alreadyHere) { profile in
+                RowSeparator()
+                DetailRow(verbatimTitle: ProfileSummary.displayName(for: profile), verbatimCaption: String(localized: "Open this profile to view or add its iCloud vaults.")) {
+                    SettingsButton(title: "Show Profiles…") { coordinator.routeSettings(to: .profiles) }
+                }
+            }
+            ForEach(remoteProfiles, id: \.id) { remote in
+                RowSeparator()
+                DetailRow(
+                    verbatimTitle: ProfileSummary.publishedName(remote.card.name, source: remote.card.publicationSource),
+                    verbatimCaption: String(localized: "Add this profile on this Mac to use its iCloud vaults.")
+                ) {
+                    SettingsButton(title: "Show Profiles…") { coordinator.routeSettings(to: .profiles) }
+                }
+            }
+        }
+    }
+
+    private func adoptionCaption(ready: Bool, keyCheck: String?) -> String {
+        if let keyCheck {
+            return String(localized: "This passkey couldn’t open the vault. Key check on this Mac: \(keyCheck)")
+        }
+        return ready ? String(localized: "Use the vault’s unlock passkey to add it to this Mac.")
+            : String(localized: "Unlock one of this profile’s vaults above before adding this vault.")
+    }
+
+    private func useWindow(_ action: @escaping (NSWindow) async -> Void) {
+        guard let window = coordinator.nativeWindow, window.isVisible else {
+            model.error = String(localized: "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again.")
+            return
+        }
+        run { await action(window) }
     }
 
     private func run(_ action: @escaping () async throws -> Void) {

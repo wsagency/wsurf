@@ -62,14 +62,14 @@ enum SettingsIndex {
     }
 
     static let all: [SettingsEntry] = [
-        SettingsEntry("sync.profiles", .sync, "Linked profile", "Combine this profile’s pins and Favorites across your Macs.",
-                      ["icloud", "shared profile", "publish", "pinned tabs", "favorites"]),
-        SettingsEntry("sync.spaces", .sync, "Shared Spaces", "Share or join a Space with its tabs and the profile’s pins and Favorites.",
-                      ["icloud", "tabs", "shared spaces and favorites", "pin", "favorites"]),
+        SettingsEntry("sync.profiles", .sync, "Profiles and library", "Combine this profile’s pins and Favorites across your Macs.",
+                      ["icloud", "linked profile", "shared profile", "publish", "pinned tabs", "favorites"]),
+        SettingsEntry("sync.spaces", .sync, "Shared Spaces", "Share or join a Space to sync its open tabs.",
+                      ["icloud", "tabs", "gather", "windows"]),
         SettingsEntry("sync.otherDevices", .sync, "Tabs on other devices", "Share tabs through iCloud",
                       ["icloud", "personal profile", "sidebar", "open a copy"]),
         SettingsEntry("sync.vaults", .sync, "Credential vaults", "Choose which vaults to share through iCloud.",
-                      ["icloud", "vault", "passwords", "credentials"]),
+                      ["icloud", "vault", "passwords", "credentials", "merge", "copy"]),
         SettingsEntry("sync.websites", .sync, "Website settings", "Share this profile’s site preferences.",
                       ["permissions", "engine", "zoom", "privacy"]),
         SettingsEntry("sync.providers", .sync, "AI providers", "Share provider definitions and model choices.",

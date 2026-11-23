@@ -10,10 +10,10 @@ struct SharedProfileLinkSection: View {
     @State private var change = SharedCatalogChange()
 
     var body: some View {
-        SettingsSection(title: "Linked profile", symbol: "person.2") {
+        SettingsSection(title: "Profiles and library", symbol: "person.2") {
             SharedCatalogControl(
                 host: host, category: .profiles, title: "Find Profiles", profile: profile, change: change,
-                scope: "Publishing or linking combines this profile’s pins and Favorites across your Macs, including any you add later."
+                scope: "Find and publish profiles on your Apple Account. Turning this off keeps published profiles visible to your other Macs."
             )
             RowSeparator()
             let linkedID = host.cloudProfileID(for: profile.id)
@@ -21,21 +21,23 @@ struct SharedProfileLinkSection: View {
                 let published = host.catalog.item(id, in: .profiles)
                 let name = published.map { ProfileSummary.publishedName($0.title, source: $0.publicationSource) }
                     ?? ProfileSummary.displayName(for: profile, sharedSpaces: host)
-                DetailRow(verbatimTitle: profile.name, verbatimCaption: String(localized: "Linked to \(name) in iCloud.")) {
+                DetailRow(verbatimTitle: name, verbatimCaption: String(localized: "This Mac is linked to this iCloud profile.")) {
                     if published == nil {
                         publishButton
                     } else {
-                        Image(systemName: "link").accessibilityHidden(true)
+                        Label("Shared profile", systemImage: "icloud").foregroundStyle(.secondary)
                     }
                 }
             } else {
-                DetailRow(title: "Use this profile across Macs") { publishButton }
+                DetailRow(title: "Publish or link this profile", caption: "A link combines all pins and Favorites for this profile. Website sign-ins and cookies stay on each Mac.") {
+                    publishButton
+                }
                 ForEach(host.available(.profiles, for: profile)) { item in
                     let linkedHere = host.links.values.contains { $0.profile == item.id }
                     RowSeparator()
                     DetailRow(
                         verbatimTitle: ProfileSummary.publishedName(item.title, source: item.publicationSource),
-                        verbatimCaption: linkedHere ? String(localized: "This iCloud profile is already linked on this Mac.") : item.id.uuidString
+                        verbatimCaption: linkedHere ? String(localized: "This iCloud profile is already linked on this Mac.") : nil
                     ) {
                         SettingsButton(title: "Link to Profile") { change.run { try await host.joinProfile(item, in: profile) } }
                             .disabled(change.working || linkedHere)
@@ -45,8 +47,8 @@ struct SharedProfileLinkSection: View {
             if linkedID != nil || host.links[profile.id]?.profile != nil || host.hasPendingOptOut(.pins, for: profile) {
                 RowSeparator()
                 SharedCatalogControl(
-                    host: host, category: .pins, title: "Shared Pins and Favorites", profile: profile, change: change,
-                    scope: "Combine all pins and Favorites from this Mac and iCloud, including any you add later."
+                    host: host, category: .pins, title: "Sync Pins and Favorites", profile: profile, change: change,
+                    scope: "Sync the whole library for this profile, including new pins and Favorites, across its linked Macs."
                 )
                 if host.isEnabled(.pins, for: profile) {
                     SharedCatalogConflicts(host: host, category: .pins, profile: profile)
@@ -69,6 +71,7 @@ struct SharedSpacesSettingsView: View {
     let host: CloudSharedSpaces
     let coordinator: AppCoordinator
     @State private var change = SharedCatalogChange()
+    @State private var leaving: SpaceEntry?
 
     private var choices: [SharedSpaceChoice] {
         let vaults = CloudSync.shared?.vaults
@@ -78,17 +81,17 @@ struct SharedSpacesSettingsView: View {
     }
 
     var body: some View {
-        SettingsSection(title: "Shared Spaces", symbol: "square.grid.2x2") {
+        SettingsSection(title: "Shared Spaces", symbol: "square.grid.2x2", footnote: "Gather Tabs is available when a shared Space’s tabs are in more than one window on this Mac.") {
             SharedCatalogControl(
-                host: host, category: .spaces, title: "Sync Spaces on this Mac", profile: profile, change: change,
-                scope: "Sharing or joining a Space syncs its tabs and this profile’s pins and Favorites, including any you add later."
+                host: host, category: .spaces, title: "Sync Shared Spaces on This Mac", profile: profile, change: change,
+                scope: "Open, move or close tabs in a joined Space and the change reaches the other Macs using that Space."
             )
             if host.isEnabled(.spaces, for: profile) {
                 ForEach(host.spaces(profile)?.spaces ?? []) { space in
                     RowSeparator()
                     let entry = SpaceEntry(space: space, profile: profile)
                     if host.links[profile.id]?.spaces[space.id] != nil {
-                        joinedRow(entry, canStop: true)
+                        joinedRow(entry)
                     } else {
                         DetailRow(verbatimTitle: space.name, verbatimCaption: String(localized: "Only on this Mac")) {
                             SettingsButton(title: "Share This Space") { change.run { try await host.share(space, in: profile) } }
@@ -107,11 +110,23 @@ struct SharedSpacesSettingsView: View {
                 SettingsNotice(symbol: "exclamationmark.triangle", text: message)
             }
         }
+        .confirmationDialog(
+            "Stop syncing this Space on this Mac?",
+            isPresented: Binding(get: { leaving != nil }, set: { if !$0 { leaving = nil } }),
+            presenting: leaving
+        ) { entry in
+            Button("Stop Syncing", role: .destructive) { host.stopSharing(entry.space, in: entry.profile) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This Mac keeps its tabs. The iCloud copy and the other Macs keep syncing. Pins and Favorites follow the profile’s library switch.")
+        }
     }
 
-    private func joinedRow(_ entry: SpaceEntry, canStop: Bool) -> some View {
+    private func joinedRow(_ entry: SpaceEntry) -> some View {
         let profileName = ProfileSummary.displayName(for: entry.profile, sharedSpaces: host)
-        return DetailRow(verbatimTitle: host.spaceTitle(for: entry), verbatimCaption: String(localized: "Shared in the \(profileName) profile"), layout: .stacked) {
+        let enabled = host.isEnabled(.spaces, for: entry.profile)
+        let caption = enabled ? String(localized: "Shared in the \(profileName) profile") : String(localized: "Paused on this Mac in the \(profileName) profile")
+        return DetailRow(verbatimTitle: host.spaceTitle(for: entry), verbatimCaption: caption, layout: .stacked) {
             ChipFlow(spacing: 8) {
                 SettingsButton(title: "Open Space") { coordinator.openSharedSpace(entry) }
                 if Set(host.tabWindows(in: entry, includingPinned: false).values).count > 1 {
@@ -119,9 +134,7 @@ struct SharedSpacesSettingsView: View {
                         .disabled(!coordinator.canGatherSharedTabs(in: entry))
                 }
                 SettingsButton(title: "Space Settings…") { coordinator.showSpaceEditor(for: entry) }
-                if canStop {
-                    SettingsButton(title: "Stop Sharing") { host.stopSharing(entry.space, in: entry.profile) }
-                }
+                SettingsButton(title: "Stop Syncing on This Mac…") { leaving = entry }
             }
         }
         .disabled(change.working)
@@ -133,12 +146,12 @@ struct SharedSpacesSettingsView: View {
         case .open(let entry):
             if entry.profile.id != profile.id || !host.isEnabled(.spaces, for: profile) {
                 RowSeparator()
-                joinedRow(entry, canStop: false)
+                joinedRow(entry)
             }
         case .join(let target):
             RowSeparator()
             let name = ProfileSummary.displayName(for: target, sharedSpaces: host)
-            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Join in the \(name) profile to sync its tabs, pins and Favorites.")) {
+            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Join in the \(name) profile to sync this Space’s open tabs.")) {
                 SettingsButton(title: "Join and Open") { join(choice, in: target) }
                 .disabled(change.working)
             }
@@ -150,7 +163,7 @@ struct SharedSpacesSettingsView: View {
         case .chooseProfile:
             RowSeparator()
             let candidates = host.unlinkedProfiles(in: coordinator.profiles.profiles)
-            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Choose a profile to join this Space and combine its pins and Favorites.")) {
+            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Choose the local profile that will open and sync this Space.")) {
                 if candidates.isEmpty {
                     SettingsButton(title: "Show Profiles…") { coordinator.openSettings(.profiles) }
                 } else {
@@ -224,7 +237,7 @@ private struct SharedCatalogControl: View {
     var body: some View {
         let enabled = host.isEnabled(category, for: profile)
         let pending = host.hasPendingOptOut(category, for: profile)
-        let caption = [scopeDescription, status].compactMap { $0 }.map { String(localized: $0) }.joined(separator: "\n")
+        let caption = [scope, status].compactMap { $0 }.map { String(localized: $0) }.joined(separator: "\n")
         DetailRow(verbatimTitle: String(localized: title), verbatimCaption: caption, controlWidth: nil) {
             HStack(spacing: 8) {
                 if pending || !host.catalog.storageAvailable {
@@ -260,15 +273,6 @@ private struct SharedCatalogControl: View {
 
     private var libraryFailed: Bool {
         category == .pins && host.links[profile.id]?.sharesPinLibrary == true && host.pinLibraryFailures.contains(profile.id)
-    }
-
-    private var scopeDescription: LocalizedStringResource? {
-        guard let scope else { return nil }
-        if category != .pins, host.cloudProfileID(for: profile.id) != nil || host.links[profile.id]?.profile != nil,
-           !host.isEnabled(.pins, for: profile) {
-            return "Pin and Favorite sync is paused on this Mac."
-        }
-        return scope
     }
 
     private var status: LocalizedStringResource {

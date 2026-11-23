@@ -14,6 +14,7 @@ import Testing
 extension VaultAdoptionSettingsTests {
     private struct MergeFixture {
         let pair: DevicePair
+        let sourceProfile: Profile
         let source: FixtureVault
         let model: CredentialSettingsModel
         let local: VaultMergeSource
@@ -80,11 +81,38 @@ extension VaultAdoptionSettingsTests {
                 try #require(await waitUntil { model.canMergeIntoSharedVault })
                 let sync = try #require(app.vaults)
                 let engine = try #require(app.engine as? FakeSyncEngine)
-                let sources = try await model.mergeSources()
-                let chosen = try #require(sources.first { $0.id.profileID == sourceProfile.id && $0.id.vaultID == local[0].vaultID })
-                #expect(!sources.contains { $0.id.profileID == pair.profile.id && $0.id.vaultID == target.vaultID })
-                try await body(MergeFixture(pair: pair, source: local[0], model: model, local: chosen, destination: target, sync: sync, engine: engine, clock: clock))
+                let options = try await model.mergeOptions()
+                let source = try #require(options.first { $0.id.profileID == sourceProfile.id && $0.id.vaultID == local[0].vaultID })
+                let shared = try #require(options.first { $0.id.profileID == pair.profile.id && $0.id.vaultID == target.vaultID })
+                #expect(throws: VaultMergeError.unavailableDestination) { try model.mergeSource(shared, into: shared) }
+                let chosen = try model.mergeSource(source, into: shared)
+                try await body(MergeFixture(pair: pair, sourceProfile: sourceProfile, source: local[0], model: model,
+                                            local: chosen, destination: target, sync: sync, engine: engine, clock: clock))
             }
+        }
+    }
+
+    @Test func sharedEntriesCanBeCopiedIntoALocalVaultWithoutEnrollingIt() async throws {
+        try await withMergeFixture { f in
+            let profile = f.sourceProfile
+            let choices = try await f.model.mergeOptions()
+            let option = try #require(choices.first { $0.id.profileID == profile.id && $0.id.vaultID == f.source.vaultID })
+            let local = f.model.mergeDestinationModel(for: option)
+            let shared = try #require(choices.first { $0.id.profileID == f.pair.profile.id && $0.id.vaultID == f.destination.vaultID })
+            #expect(option.destination == .local && shared.destination == .shared)
+            let before = try await f.destination.snapshot()
+            let source = try local.mergeSource(shared, into: option)
+            let review = try await local.reviewVaultMerge(from: source, in: VaultManagerFixture.anchor())
+            let copies = Dictionary(uniqueKeysWithValues: review.rows.map { ($0.id, CredentialVaultMergePlan.Choice.copy) })
+            #expect(try await local.confirmVaultMerge(review, choices: copies) == 3)
+            #expect(try await f.source.manager.snapshot().accounts.count == 3)
+            #expect(try await f.destination.snapshot().stamps == before.stamps)
+            #expect(!f.sync.isSyncing(profileID: profile.id, vaultID: f.source.vaultID))
+
+            CloudSync.shared?.setVaultDiscovery(false)
+            let paused = try #require(try await f.model.mergeOptions().first { $0.id == shared.id })
+            #expect(paused.destination == .paused && !paused.destination.canBeDestination)
+            #expect(throws: VaultMergeError.unavailableDestination) { try f.model.mergeSource(option, into: paused) }
         }
     }
 
@@ -204,7 +232,7 @@ extension VaultAdoptionSettingsTests {
                 return (node.accessibilityChildren?() ?? []).lazy.compactMap { button(title, in: $0 as AnyObject) }.first
             }
             func press(_ title: String, in view: NSView) async throws {
-                try #require(await waitUntil { button(title, in: view)?.isAccessibilityEnabled?() == true })
+                try #require(await waitUntil { button(title, in: view)?.isAccessibilityEnabled?() == true }, "Could not press \(title)")
                 _ = button(title, in: view)?.accessibilityPerformPress?()
             }
             try await press(String(localized: "Merge Vaults…"), in: host)

@@ -10,6 +10,7 @@ struct QuietIconButton: View {
     let symbol: String
     let isOn: Bool
     var tint: Color?
+    var badge: String?
     let help: String
     let action: () -> Void
 
@@ -32,6 +33,15 @@ struct QuietIconButton: View {
                 .font(Theme.Font.rowTitle)
                 .frame(width: 28, height: 28)
                 .hoverBackground(isActive: isOn || hovering, tint: tint, in: Circle())
+                .overlay(alignment: .bottomTrailing) {
+                    if let badge {
+                        Image(systemName: badge)
+                            .font(.system(size: 8, weight: .semibold))
+                            .padding([.trailing, .bottom], 2)
+                            .accessibilityHidden(true)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .foregroundStyle(ink)
