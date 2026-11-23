@@ -254,6 +254,9 @@ mutation pattern, not a dangling remove and re-add.
 Lint runs with the pinned SwiftLint on the Pro machine with full Xcode. Do not
 relax rules to work around failures on a Command Line Tools-only machine.
 
+The CI watchdog gives `xcodebuild build-for-testing` 30 minutes for a cold build.
+Set `WSURF_CI_BUILD_LIMIT_SECONDS` to override that deadline without changing test execution limits.
+
 `WSurf.xctestplan` runs with per-test timeouts: 120 seconds by default, 300 at
 most. A stalled test times out and reports its name without blocking the full run.
 Both frameworks run from this plan, and a new test needs no entry in it — the
