@@ -163,14 +163,21 @@ struct TabOrderingTests {
         #expect(model.canReopenClosedTab)
     }
 
-    @Test func aPrivateTabIsNeverRecordedForReopening() {
-        let model = BrowserModel(context: .shared(for: .privateBrowsing()))
+    @Test func aClosedPrivateTabReopensInTheSameWindow() {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let model = BrowserModel(context: context)
         let secret = model.newTab(url: URL(string: "https://example.com/secret")!)
-
+        let otherWindow = BrowserModel(context: BrowserProfileContext(profile: .privateBrowsing()))
+        defer {
+            model.closeAllTabs(saving: false)
+            otherWindow.closeAllTabs(saving: false)
+        }
         model.close(secret)
-
-        #expect(!model.canReopenClosedTab)
-        #expect(model.closedTabs.isEmpty)
+        #expect(model.canReopenClosedTab)
+        #expect(!otherWindow.canReopenClosedTab)
+        model.reopenLastClosedTab()
+        #expect(model.activeTabID == secret.id && model.activeTab?.isPrivate == true)
+        #expect(model.activeTab?.context === context)
     }
 
     @Test func theReopenListRemembersTheLastTwentyClosings() {

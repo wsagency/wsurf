@@ -939,6 +939,7 @@ final class ChromiumClient {
             }
             let decision = await CertificateTrust.decideInvalid(
                 host: expectedHost ?? "",
+                port: expectedURL.port ?? 443,
                 trust: trust,
                 allowsExceptions: page.context.settings.allowsCertificateExceptions,
                 in: page.window

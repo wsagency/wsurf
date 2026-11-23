@@ -33,7 +33,7 @@ enum CertificateTrust {
         else { return .useDefaultHandling }
 
         let host = space.host.lowercased()
-        switch await decideInvalid(host: host, trust: trust, allowsExceptions: allowsExceptions, in: window) {
+        switch await decideInvalid(host: host, port: space.port, trust: trust, allowsExceptions: allowsExceptions, in: window) {
         case .proceed:
             return .proceed(URLCredential(trust: trust))
         case .cancel:
@@ -44,15 +44,15 @@ enum CertificateTrust {
     }
 
     /// Shared decision path for WebKit challenges and native CEF certificate
-    /// errors. The accepted map is deliberately keyed by host and leaf
-    /// fingerprint, never by a host alone.
+    /// errors. WSurf matches cached approvals by host and leaf fingerprint.
     static func decideInvalid(
         host: String,
+        port: Int = 443,
         trust: SecTrust,
         allowsExceptions: Bool,
         in window: NSWindow?
     ) async -> Decision {
-        guard allowsExceptions else { return .useDefaultHandling }
+        guard allowsExceptions, !host.isEmpty else { return .useDefaultHandling }
         let generation = exceptionGeneration
         guard let trusted = try? await evaluate(trust),
               generation == exceptionGeneration
@@ -65,7 +65,9 @@ enum CertificateTrust {
         if accepted[key] == fingerprint {
             return .proceed(URLCredential(trust: trust))
         }
-        let confirmed = await ask(host: key, trust: trust, fingerprint: fingerprint, in: window)
+        let confirmed = await ask(
+            host: key, port: port, trust: trust, fingerprint: fingerprint, generation: generation, in: window
+        )
         guard confirmed, generation == exceptionGeneration else { return .cancel }
         Self.accepted[key] = fingerprint
         Pipeline.log.notice("certificate exception accepted for a host this session")
@@ -146,24 +148,46 @@ enum CertificateTrust {
 
     private static func ask(
         host: String,
+        port: Int,
         trust: SecTrust,
         fingerprint: String,
+        generation: Int,
         in window: NSWindow?
     ) async -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = String(localized: "This website’s identity can’t be verified")
-        alert.informativeText = detail(host: host, trust: trust, fingerprint: fingerprint)
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.addButton(withTitle: String(localized: "Continue")).hasDestructiveAction = true
+        let name = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let address = port > 0 && port != 443 ? "\(name):\(port)" : name
+        while generation == exceptionGeneration {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = String(localized: "This connection isn’t private")
+            alert.informativeText = detail(host: address, trust: trust, fingerprint: fingerprint)
+            let goBack = alert.addButton(withTitle: String(localized: "Go Back"))
+            alert.addButton(withTitle: String(localized: "Visit Website")).hasDestructiveAction = true
+            alert.addButton(withTitle: String(localized: "Show Certificate"))
 
-        guard let window else {
-            return alert.runModal() == .alertSecondButtonReturn
+            let response: NSApplication.ModalResponse
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard event.window === alert.window,
+                      let key = event.charactersIgnoringModifiers,
+                      ["\u{1b}", "\r", "\u{03}"].contains(key)
+                else { return event }
+                goBack.performClick(nil)
+                return nil
+            }
+            if let window {
+                response = await alert.beginSheetModal(for: window)
+            } else {
+                response = alert.runModal()
+            }
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            guard response == .alertThirdButtonReturn else { return response == .alertSecondButtonReturn }
+            guard generation == exceptionGeneration,
+                  await CertificatePanel.inspect(trust, host: host, in: window)
+            else { return false }
         }
-        let response = await withCheckedContinuation { continuation in
-            alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
-        }
-        return response == .alertSecondButtonReturn
+        return false
     }
 
     private static func detail(host: String, trust: SecTrust, fingerprint: String) -> String {
@@ -176,7 +200,7 @@ enum CertificateTrust {
         }
         lines.append(String(localized: "SHA-256: \(fingerprint)"))
         lines.append("")
-        lines.append(String(localized: "Continue only if you expected this — a development server, or a proxy your organization runs. The exception lasts until you quit."))
+        lines.append(String(localized: "Continue only if you expected this, such as on a development server or your organization’s proxy."))
         return lines.joined(separator: "\n")
     }
 

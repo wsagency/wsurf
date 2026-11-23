@@ -49,7 +49,7 @@ struct AdvancedSettings: View {
 
             DetailRow(
                 title: "Certificate exceptions",
-                caption: "Continue past a certificate macOS rejects. WSurf forgets the exception when you quit."
+                caption: "Let websites with invalid certificates ask you whether to continue."
             ) {
                 SettingsToggle($profileSettings.allowsCertificateExceptions)
             }

@@ -28,6 +28,65 @@ struct CertificateEvaluationTests {
         }
     }
 
+    enum WarningPath: CaseIterable {
+        case goBack, inspect, closeWhileInspecting
+    }
+
+    @Test(.exclusiveExternalApp, arguments: WarningPath.allCases)
+    func theWarningShowsThePortAndOffersToInspectTheCertificate(path: WarningPath) async throws {
+        let trust = try makeTrust(anchored: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let pending = Task {
+            await CertificateTrust.decideInvalid(host: "other-port.example", port: 8443, trust: trust, allowsExceptions: true, in: window)
+        }
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .abort)
+            }
+            window.close()
+            pending.cancel()
+        }
+        try #require(await waitUntil { window.attachedSheet != nil })
+        let alert = try #require(window.attachedSheet)
+        let controls = allViews(in: try #require(alert.contentView))
+        #expect(controls.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("other-port.example:8443") })
+        let buttons = controls.compactMap { $0 as? NSButton }
+        let goBack = try #require(buttons.first { $0.title == String(localized: "Go Back") })
+        #expect(buttons.contains { $0.title == String(localized: "Visit Website") })
+        let inspect = try #require(buttons.first { $0.title == String(localized: "Show Certificate") })
+        switch path {
+        case .goBack:
+            goBack.performClick(nil)
+        case .inspect, .closeWhileInspecting:
+            inspect.performClick(nil)
+            try #require(await waitUntil { window.attachedSheet.map { $0 !== alert } ?? false })
+            let preview = try #require(window.attachedSheet)
+            if path == .closeWhileInspecting {
+                window.close()
+            } else {
+                let previewControls = allViews(in: try #require(preview.contentView))
+                let dismiss = try #require(previewControls.compactMap { $0 as? NSButton }.first {
+                    $0.title == String(localized: "OK") || $0.title == String(localized: "Done")
+                })
+                dismiss.performClick(nil)
+                try #require(await waitUntil { window.attachedSheet.map { $0 !== preview } ?? false })
+                window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
+            }
+        }
+        guard case .cancel = await pending.value else {
+            Issue.record("Leaving the warning without choosing Visit Website must cancel the decision.")
+            return
+        }
+    }
+
+    private func allViews(in root: NSView) -> [NSView] {
+        [root] + root.subviews.flatMap { allViews(in: $0) }
+    }
+
     @Test(arguments: [true, false])
     func evaluationPreservesTrustResult(anchored: Bool) async throws {
         let trust = try makeTrust(anchored: anchored)

@@ -15,7 +15,7 @@ struct OpenAIDeveloperSettings: View {
         Text("Change these options only if your API setup needs them. Chat and voice work with the defaults.")
             .font(.callout).foregroundStyle(.secondary)
         SettingsSection(title: "API configuration", symbol: "curlybraces") {
-            DetailRow(title: "Run commands at OpenAI", caption: "Allow a hosted shell to run commands and create files. Extra charges may apply.") {
+            DetailRow(title: "Run commands at OpenAI", caption: "Run commands on OpenAI’s servers. Extra charges may apply.") {
                 SettingsToggle(Binding(get: { options.hostedTools.contains { $0["type"] == "shell" } }, set: { enabled in
                     var updated = options
                     updated.hostedTools.removeAll { $0["type"] == "shell" }

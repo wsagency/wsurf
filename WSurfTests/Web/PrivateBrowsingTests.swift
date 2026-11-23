@@ -205,12 +205,11 @@ struct PrivateBrowsingTests {
         #expect(saved == 0)
     }
 
-    /// ⇧⌘T must not resurrect something the session was meant to forget.
-    @Test func closingAPrivateTabLeavesNothingToReopen() {
+    @Test func endingThePrivateWindowClearsItsReopenList() {
         let model = makePrivateModel()
-        let tab = model.newTab()
-
-        model.close(tab)
+        model.close(model.newTab())
+        #expect(model.canReopenClosedTab)
+        model.closeAllTabs(saving: false)
         #expect(!model.canReopenClosedTab)
     }
 
@@ -479,6 +478,20 @@ struct PageZoomStoreTests {
         #expect(store.level(for: "other.example") == nil)
     }
 
+    @Test(.boundedWebViews) func privateZoomStaysInItsSession() async {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let browser = BrowserModel(context: context)
+        let page = browser.newTab()
+        defer { browser.closeAllTabs(saving: false) }
+        page.zoomHost = "private-zoom.example"
+        page.page.pageZoom = 1.25
+        page.zoomDidChange()
+        #expect(context.pageZoom.level(for: "private-zoom.example") == 1.25)
+        #expect(BrowserProfileContext(profile: .privateBrowsing()).pageZoom.level(for: "private-zoom.example") == nil)
+        await context.endPrivateSession()
+        #expect(context.pageZoom.level(for: "private-zoom.example") == nil)
+    }
+
     @Test func returningToTheDefaultForgetsTheSite() {
         let store = makeStore()
         store.set(1.25, for: "news.example", defaultZoom: 1)
@@ -518,6 +531,23 @@ struct PrivateFaviconTests {
         NSRect(x: 0, y: 0, width: 16, height: 16).fill()
         image.unlockFocus()
         return try #require(image.tiffRepresentation)
+    }
+
+    @Test(.boundedWebViews) func aPrivateTabShowsItsSessionsFavicon() async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let browser = BrowserModel(context: context)
+        let page = browser.newTab()
+        defer { browser.closeAllTabs(saving: false) }
+        let url = try #require(URL(string: "https://private-icon.example/"))
+        let webView = try #require(page.page.webKit)
+        webView.loadHTMLString("<html><body>Private icon fixture</body></html>", baseURL: url)
+        try #require(await waitUntil { webView.url?.host() == url.host() })
+        context.favicons.store(try iconData(), forHost: "private-icon.example")
+        page.refreshFavicon()
+        #expect(page.favicon != nil)
+        #expect(BrowserProfileContext(profile: .privateBrowsing()).favicons.cached(for: "private-icon.example") == nil)
+        await context.endPrivateSession()
+        #expect(context.favicons.cached(for: "private-icon.example") == nil)
     }
 
     @Test func aPrivateFaviconNeverTouchesTheDisk() throws {

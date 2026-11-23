@@ -1,6 +1,156 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "On low memory, unload inactive tabs until you open them." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kad ponestane memorije, neaktivne kartice učitavaju se tek kad ih otvorite."
+          }
+        }
+      }
+    },
+    "Video plays in a floating window when you leave its tab." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video se reproducira u lebdećem prozoru kad napustite karticu."
+          }
+        }
+      }
+    },
+    "Set the default zoom for websites." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Postavite zadano povećanje web-stranica."
+          }
+        }
+      }
+    },
+    "Clear history, cookies and cache for a time range." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Obrišite povijest, kolačiće i predmemoriju za odabrano razdoblje."
+          }
+        }
+      }
+    },
+    "Clear cookies, site data and cache when you quit WSurf." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Obrišite kolačiće, podatke web-mjesta i predmemoriju pri izlasku iz WSurfa."
+          }
+        }
+      }
+    },
+    "Restore the default browser settings." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vrati zadane postavke preglednika."
+          }
+        }
+      }
+    },
+    "Run commands on OpenAI’s servers. Extra charges may apply." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Izvršavajte naredbe na OpenAI-jevim poslužiteljima uz moguću dodatnu naplatu."
+          }
+        }
+      }
+    },
+    "Keep a copy for retrieval through the OpenAI API." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spremite kopiju dostupnu putem OpenAI API-ja."
+          }
+        }
+      }
+    },
+    "Block known trackers is off for all websites." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blokiranje poznatih programa za praćenje isključeno je za sva web-mjesta."
+          }
+        }
+      }
+    },
+    "Sleep inactive tabs is off." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirovanje neaktivnih kartica je isključeno."
+          }
+        }
+      }
+    },
+    "Automatic Picture in Picture is off for all websites." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatska slika u slici isključena je za sva web-mjesta."
+          }
+        }
+      }
+    },
+    "Choose whether this website can autoplay media." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite smije li ovo web-mjesto automatski reproducirati medije."
+          }
+        }
+      }
+    },
+    "Choose whether this website can open new windows." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite smije li ovo web-mjesto otvarati nove prozore."
+          }
+        }
+      }
+    },
+    "Review what the assistant remembers about you. It excludes page content, passwords and payment details." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pregledajte što asistent pamti o vama. Sadržaj stranica, lozinke i podaci o plaćanju ne spremaju se."
+          }
+        }
+      }
+    },
+    "Visit Website" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Posjeti web-mjesto"
+          }
+        }
+      }
+    },
     "%@ — Shared Space %@" : {
       "localizations" : {
         "hr" : {
@@ -2822,7 +2972,15 @@
 
     },
     "Automatic Picture in Picture" : {
-      "comment" : "Title of the row that makes video float in its own window on its own: on the General settings page, in Settings search, on a single website’s page under Websites, and in the Site Settings menu in the toolbar. “Picture in Picture” is the macOS name of that window — use the system’s own wording. Title Case."
+      "comment" : "Title of the row that makes video float in its own window on its own: on the General settings page, in Settings search, on a single website’s page under Websites, and in the Site Settings menu in the toolbar. “Picture in Picture” is the macOS name of that window — use the system’s own wording. Title Case.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatska slika u slici"
+          }
+        }
+      }
     },
     "Automatic Picture in Picture is off while \"Show video in the player\" is on in Experiments." : {
 
@@ -2884,7 +3042,14 @@
       "comment" : "One line in the bulleted list of what an extension will be able to do, in the install confirmation sheet. It completes “It will also be able to:”."
     },
     "Block known trackers" : {
-
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blokiranje poznatih programa za praćenje"
+          }
+        }
+      }
     },
     "Block known trackers is off, so trackers are allowed everywhere." : {
 
@@ -3502,10 +3667,10 @@
         }
       }
     },
-    "Continue only if you expected this — a development server, or a proxy your organization runs. The exception lasts until you quit." : {
+    "Continue only if you expected this, such as on a development server or your organization’s proxy." : {
 
     },
-    "Continue past a certificate macOS rejects. WSurf forgets the exception when you quit." : {
+    "Let websites with invalid certificates ask you whether to continue." : {
 
     },
     "Control media" : {
@@ -4277,7 +4442,15 @@
       "comment" : "Hint word printed beside a ↩ key cap under the address field, reading “↩ go”, shown when what is typed looks like an address: pressing Return loads it. One lowercase verb, tiny type."
     },
     "Go Back" : {
-      "comment" : "Tool name in assistant settings: going back one page."
+      "comment" : "Tool name in assistant settings: going back one page.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vrati se"
+          }
+        }
+      }
     },
     "Go to the Tab Playing This" : {
       "comment" : "Tooltip on the arrow in the media dock while another tab is providing the sound; clicking switches to that tab. “This” means what is currently playing. Title Case."
@@ -6931,7 +7104,15 @@
       "comment" : "Tooltip on the toolbar button that appears after a website's pop-up was blocked. Pressing it opens that window in a new tab. Title Case."
     },
     "Show Certificate" : {
-      "comment" : "Tooltip on the lock beside the address in the Website Settings popover. Opening it shows the website's certificate in the system panel. Title Case."
+      "comment" : "Tooltip on the lock beside the address in the Website Settings popover. Opening it shows the website's certificate in the system panel. Title Case.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prikaži certifikat"
+          }
+        }
+      }
     },
     "Show Configuration" : {
       "comment" : "External MCP client setup in Advanced settings."
@@ -7142,7 +7323,15 @@
       "comment" : "Caption of the Fast transitions setting in Settings › Appearance › Window, and its Settings search summary. Layouts are the Standard and Minimal window styles. Reader is WSurf’s distraction-free reading view and keeps its name."
     },
     "Sleep inactive tabs" : {
-      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
+      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirovanje neaktivnih kartica"
+          }
+        }
+      }
     },
     "Sleep inactive tabs is off, so every website stays loaded." : {
 
@@ -7750,7 +7939,15 @@
 
     },
     "This connection isn’t private" : {
-      "comment" : "Headline on the error page shown when a website’s security certificate could not be verified. A short sentence in sentence case, displayed large above a longer explanation. Curly apostrophe."
+      "comment" : "Headline on the error page shown when a website’s security certificate could not be verified. A short sentence in sentence case, displayed large above a longer explanation. Curly apostrophe.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ova veza nije privatna"
+          }
+        }
+      }
     },
     "This document contains too much text. Attach a shorter selection." : {
 

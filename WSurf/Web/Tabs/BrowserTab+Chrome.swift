@@ -91,8 +91,12 @@ extension BrowserTab {
         }
     }
 
+    private var mayLoadFavicon: Bool {
+        !isShowingSystemPage && !context.privateSessionEnded && (!isPrivate || context.profile.isPrivate)
+    }
+
     func declaredFaviconChanged() {
-        guard extensionBaseURL == nil, !isPrivate, !isShowingSystemPage else { return }
+        guard extensionBaseURL == nil, mayLoadFavicon else { return }
         guard let host = page.url?.host()?.lowercased() else { return }
         context.favicons.forget(host: host)
         refreshFavicon()
@@ -100,7 +104,7 @@ extension BrowserTab {
 
     func refreshFavicon() {
         guard extensionBaseURL == nil, isMaterialised else { return }
-        guard !isPrivate, !isShowingSystemPage else { return }
+        guard mayLoadFavicon else { return }
         guard let host = page.url?.host()?.lowercased() else { return }
         if host != faviconHost {
             faviconHost = host

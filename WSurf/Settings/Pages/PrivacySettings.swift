@@ -45,7 +45,7 @@ struct PrivacySettings: View {
 
             DetailRow(
                 title: "Clear browsing data",
-                caption: "Choose a time range to clear history, cookies, and cached files."
+                caption: "Clear history, cookies and cache for a time range."
             ) {
                 HStack(spacing: 10) {
                     if isClearing {
@@ -72,7 +72,7 @@ struct PrivacySettings: View {
 
             DetailRow(
                 title: "Clear on quit",
-                caption: "Clear cookies, site data, and cached files when you quit WSurf."
+                caption: "Clear cookies, site data and cache when you quit WSurf."
             ) {
                 SettingsToggle($settings.clearsDataOnQuit)
             }

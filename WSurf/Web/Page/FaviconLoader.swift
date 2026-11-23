@@ -223,6 +223,10 @@ final class FaviconLoader {
 
     private func fetchDeclared(from webView: BrowserPage, pageURL: URL, host: String) async -> NSImage? {
         let beganPrivately = !persistsToDisk
+        let restrictedOrigin = beganPrivately ? IconOrigin(pageURL) : nil
+        if beganPrivately, restrictedOrigin == nil {
+            return nil
+        }
         let beganInGeneration = cacheGeneration
         var candidates: [URL] = []
         var mask: URL?
@@ -271,6 +275,7 @@ final class FaviconLoader {
           const mask = masks.length ? masks[masks.length - 1] : null;
           return JSON.stringify({
             host: location.hostname || '',
+            origin: location.origin || '',
             href: pick ? pick.href : '',
             mask: mask ? mask.href : ''
           });
@@ -279,6 +284,7 @@ final class FaviconLoader {
         if webView.url?.host()?.lowercased() == host,
            let answer = await webView.evaluateJavaScript(script, within: .seconds(5), as: String.self),
            webView.url?.host()?.lowercased() == host,
+           !beganPrivately || Self.answerOrigin(answer) == restrictedOrigin,
            let answered = Self.declaredIconURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL) {
             candidates.append(answered)
             mask = Self.declaredMaskURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL)
@@ -288,10 +294,10 @@ final class FaviconLoader {
         }
 
         for candidate in candidates {
-            guard let data = await fetch(candidate) else { continue }
+            guard let data = await fetch(candidate, restrictedOrigin: restrictedOrigin) else { continue }
             guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
             let sessionOnly = beganPrivately || !persistsToDisk
-            let inkedData = await inked(data, mask: mask)
+            let inkedData = await inked(data, mask: mask, restrictedOrigin: restrictedOrigin)
             guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
             if let inkedData,
                let image = store(inkedData, forHost: host, sessionOnly: sessionOnly, isGuess: false) {
@@ -304,21 +310,26 @@ final class FaviconLoader {
         return nil
     }
 
-    private func inked(_ data: Data, mask: URL?) async -> Data? {
+    private func inked(_ data: Data, mask: URL?, restrictedOrigin: IconOrigin?) async -> Data? {
         let isDark = scheme == .dark
         guard FaviconInk.needsInk(data, isDark: isDark) else { return nil }
         if let mask,
-           let maskData = await fetch(mask),
+           let maskData = await fetch(mask, restrictedOrigin: restrictedOrigin),
            let fromMask = FaviconInk.inked(maskData, isDark: isDark) {
             return fromMask
         }
         return FaviconInk.inked(data, isDark: isDark)
     }
 
-    private func fetch(_ url: URL) async -> Data? {
+    private func fetch(_ url: URL, restrictedOrigin: IconOrigin? = nil) async -> Data? {
         guard Self.isFetchable(url) else { return nil }
+        let origin = restrictedOrigin ?? (persistsToDisk ? nil : IconOrigin(url))
+        if let origin, !PrivateIconRedirects.permits(url, origin: origin) {
+            return nil
+        }
+        let redirects = origin.map(PrivateIconRedirects.init)
         let session = persistsToDisk ? session : ephemeralSession
-        guard let (data, response) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 10)),
+        guard let (data, response) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 10), delegate: redirects),
               !Task.isCancelled,
               (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true
         else { return nil }
@@ -409,6 +420,11 @@ final class FaviconLoader {
         return image
     }
 
+    private static func answerOrigin(_ answer: String) -> IconOrigin? {
+        let document = (try? JSONSerialization.jsonObject(with: Data(answer.utf8))) as? [String: String]
+        return document?["origin"].flatMap(URL.init(string:)).flatMap(IconOrigin.init)
+    }
+
     nonisolated static func declaredIconURL(
         fromAnswer answer: String,
         requestedHost: String,
@@ -472,5 +488,39 @@ final class FaviconLoader {
             : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("WSurf", isDirectory: true)
         return base.appendingPathComponent("Favicons", isDirectory: true)
+    }
+}
+
+private nonisolated struct IconOrigin: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int
+
+    init?(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host()?.lowercased() else { return nil }
+        guard scheme == "http" || scheme == "https" else { return nil }
+        self.scheme = scheme
+        self.host = host
+        port = url.port ?? (scheme == "http" ? 80 : 443)
+    }
+}
+
+private nonisolated final class PrivateIconRedirects: NSObject, URLSessionTaskDelegate {
+    let origin: IconOrigin
+
+    init(origin: IconOrigin) {
+        self.origin = origin
+    }
+
+    static func permits(_ url: URL, origin: IconOrigin) -> Bool {
+        IconOrigin(url) == origin && url.user() == nil && url.password() == nil
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        let allowed = request.url.map { Self.permits($0, origin: origin) } ?? false
+        completionHandler(allowed ? request : nil)
     }
 }

@@ -230,7 +230,7 @@ private struct BehaviourSection: View {
 
             DetailRow(
                 title: "Summarize a link on hover",
-                caption: "Hold Shift while pointing at a link to get a summary before opening it."
+                caption: "Hold Shift over a link to see a summary."
             ) {
                 SettingsToggle($settings.peeksAtLinks)
             }

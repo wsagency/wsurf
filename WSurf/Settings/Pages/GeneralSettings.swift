@@ -34,7 +34,7 @@ struct GeneralSettings: View {
         SettingsSection(title: "Tabs", symbol: "rectangle.on.rectangle") {
             DetailRow(
                 title: "Sleep inactive tabs",
-                caption: "When your Mac runs low on memory, inactive tabs unload. They reload when you open them."
+                caption: "On low memory, unload inactive tabs until you open them."
             ) {
                 SettingsToggle($settings.sleepsInactiveTabs)
             }
@@ -176,7 +176,7 @@ struct GeneralSettings: View {
 
             DetailRow(
                 title: "Automatic Picture in Picture",
-                caption: "Video keeps playing in a floating window when you leave its tab."
+                caption: "Video plays in a floating window when you leave its tab."
             ) {
                 SettingsToggle($settings.automaticPictureInPicture)
             }

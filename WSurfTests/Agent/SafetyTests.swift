@@ -479,6 +479,7 @@ struct ProviderEndpointTests {
 /// The way past a rejected certificate. Everything here is about the door
 /// being shut: a browser that ships this open has no certificate checking.
 @MainActor
+@Suite(.exclusiveExternalApp)
 struct CertificateTrustTests {
     /// The setting itself, not the alert, is what the invariant hangs on.
     @Test func exceptionsAreOffUntilAskedFor() {
