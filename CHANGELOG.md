@@ -5,6 +5,12 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.2.5 (build 37) — 2026-11-23
+
+- Sync settings explain how profiles, pins and Favorites, shared Space tabs, and tabs from other devices work. Shared Spaces and profiles have a cloud badge in the sidebar.
+- Copy or merge credential vault entries between local and shared vaults. Review the entries and choose what to copy, replace, or skip while keeping the source.
+- Sync settings explain provider definitions, per-profile model settings, and saved API keys.
+
 ## 0.2.4 (build 36) — 2026-11-23
 
 - The compact address bar shows nonstandard ports.

@@ -6,30 +6,57 @@ import Synchronization
 import WSurfCore
 import WSurfVault
 
-/// The picker lists locally held vaults, including those of a separately created profile with the same name.
-struct VaultMergeSource: Identifiable, Hashable {
+/// A vault on this Mac, identified independently of its profile's display name.
+struct VaultMergeOption: Identifiable {
     nonisolated struct Identifier: Hashable, Sendable {
         let profileID: UUID
         let vaultID: UUID
     }
 
     let id: Identifier
-    fileprivate let profileLabel: String
+    let profile: Profile
+    let profileLabel: String
     fileprivate let listing: VaultListing
-    fileprivate let source: CredentialManager
+    fileprivate let manager: CredentialManager
     fileprivate let listedEpoch: UInt64?
-    fileprivate let target: MergeTarget
+    let destination: Destination
+
+    enum Destination {
+        case local, shared, paused, unavailable
+
+        var canBeDestination: Bool {
+            self == .local || self == .shared
+        }
+
+        var label: LocalizedStringResource {
+            switch self {
+            case .local:
+                "Local copy"
+            case .shared:
+                "Shared via iCloud"
+            case .paused:
+                "iCloud sync paused"
+            case .unavailable:
+                "Sync status unverified"
+            }
+        }
+    }
 
     var label: String {
-        let name = listedEpoch != nil && listedEpoch == source.authorizationEpoch ? listing.label : listing.numberedName
+        let name = listedEpoch != nil && listedEpoch == manager.authorizationEpoch ? listing.label : listing.numberedName
         return "\(profileLabel) · \(name)"
     }
+}
 
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id
+struct VaultMergeSource: Identifiable {
+    fileprivate let option: VaultMergeOption
+    fileprivate let target: MergeTarget
+
+    var id: VaultMergeOption.ID {
+        option.id
     }
-    nonisolated func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+    fileprivate var source: CredentialManager {
+        option.manager
     }
 }
 
@@ -38,8 +65,9 @@ private struct MergeTarget {
     let window: UUID
     let selection: UInt64
     let manager: CredentialManager
-    let sync: VaultSync
-    let enrollment: VaultSync.MergeDestination
+    let sync: VaultSync?
+    let enrollment: VaultSync.MergeDestination?
+    let localDirectory: URL
 }
 
 struct VaultMergeReview {
@@ -47,7 +75,8 @@ struct VaultMergeReview {
     let sourceLabel: String
     let destinationLabel: String
     fileprivate let source: VaultMergeSource
-    fileprivate let enrollment: VaultSync.MergeAuthorization
+    let isSharedDestination: Bool
+    fileprivate let enrollment: VaultSync.MergeAuthorization?
     fileprivate let sourceEpoch: UInt64
     fileprivate let destinationEpoch: UInt64
     fileprivate let sourceRevision: UInt64
@@ -56,33 +85,35 @@ struct VaultMergeReview {
     fileprivate let destinationStamps: [UUID: AccountStamp]
 }
 
-enum VaultMergeError: Error { case unavailableDestination }
+enum VaultMergeError: Error, Equatable { case unavailableDestination }
 
 extension CredentialSettingsModel {
     var canMergeIntoSharedVault: Bool {
-        mergeTarget != nil
+        mergeTarget(allowLocal: false) != nil
     }
 
-    private var mergeTarget: MergeTarget? {
-        guard let manager, let sync = vaultSync,
-              let enrollment = sync.mergeDestination(profileID: profile.id, vaultID: manager.vaultID) else { return nil }
-        return MergeTarget(window: owner, selection: vaultSelectionGeneration, manager: manager, sync: sync, enrollment: enrollment)
+    private func mergeTarget(allowLocal: Bool) -> MergeTarget? {
+        guard !profile.isPrivate, let manager else { return nil }
+        let sync = vaultSync
+        let enrollment = sync?.mergeDestination(profileID: profile.id, vaultID: manager.vaultID)
+        guard enrollment != nil || (allowLocal && Self.localMergeAvailable(profile, manager.vaultID, sync: sync)) else { return nil }
+        return MergeTarget(window: owner, selection: vaultSelectionGeneration, manager: manager, sync: sync, enrollment: enrollment,
+                           localDirectory: profile.supportDirectory)
     }
 
     private var mergeProfiles: [Profile] {
         (CloudSync.shared?.profileStore ?? .shared).verifiedProfiles ?? [.original()]
     }
 
-    var vaultMergeDestinationLabel: String {
-        let listing = vaults.first { $0.vaultID == selectedVaultID }
-        let label = (isUnlocked ? listing?.label : listing?.numberedName) ?? String(localized: "Vault")
-        return "\(profile.vaultPickerLabel(among: mergeProfiles)) · \(label)"
+    private static func localMergeAvailable(_ profile: Profile, _ vaultID: UUID, sync: VaultSync?) -> Bool {
+        guard sync?.isSyncing(profileID: profile.id, vaultID: vaultID) != true,
+              sync?.status(profileID: profile.id, vaultID: vaultID) != .enrollmentUnavailable else { return false }
+        return (try? VaultSync.hasLocalMergeDestination(in: profile.supportDirectory, vaultID: vaultID)) == true
     }
 
-    func mergeSources() async throws -> [VaultMergeSource] {
-        guard let target = mergeTarget else { throw VaultMergeError.unavailableDestination }
+    func mergeOptions() async throws -> [VaultMergeOption] {
         let profiles = mergeProfiles
-        var sources: [VaultMergeSource] = []
+        var options: [VaultMergeOption] = []
         var unavailable: (any Error)?
         for profile in profiles where !profile.isPrivate {
             try Task.checkCancellation()
@@ -96,26 +127,53 @@ extension CredentialSettingsModel {
                 unavailable = error
                 continue
             }
-            for vault in listing where profile.id != target.manager.profileID || vault.vaultID != target.manager.vaultID {
-                let source = try CredentialManager.forVault(profile, vaultID: vault.vaultID, native: native)
-                sources.append(VaultMergeSource(
-                    id: .init(profileID: profile.id, vaultID: vault.vaultID), profileLabel: profile.vaultPickerLabel(among: profiles),
-                    listing: vault, source: source, listedEpoch: changes == VaultStateChanges.shared.count(for: profile.id) ? source.authorizationEpoch : nil, target: target
+            for vault in listing {
+                let manager = try CredentialManager.forVault(profile, vaultID: vault.vaultID, native: native)
+                let sync = vaultSync
+                let destination: VaultMergeOption.Destination
+                if sync?.isSyncing(profileID: profile.id, vaultID: vault.vaultID) == true {
+                    destination = .shared
+                } else if sync?.status(profileID: profile.id, vaultID: vault.vaultID) != .enrollmentUnavailable,
+                          let local = try? VaultSync.hasLocalMergeDestination(in: profile.supportDirectory, vaultID: vault.vaultID) {
+                    destination = local ? .local : .paused
+                } else {
+                    destination = .unavailable
+                }
+                options.append(VaultMergeOption(
+                    id: .init(profileID: profile.id, vaultID: vault.vaultID), profile: profile,
+                    profileLabel: profile.vaultPickerLabel(among: profiles), listing: vault, manager: manager,
+                    listedEpoch: changes == VaultStateChanges.shared.count(for: profile.id) ? manager.authorizationEpoch : nil, destination: destination
                 ))
             }
         }
         try Task.checkCancellation()
-        guard matches(target) else { throw VaultMergeError.unavailableDestination }
-        if sources.isEmpty, let unavailable {
+        if options.isEmpty, let unavailable {
             throw unavailable
         }
-        return sources
+        return options
+    }
+
+    func mergeDestinationModel(for option: VaultMergeOption) -> CredentialSettingsModel {
+        if manager === option.manager {
+            return self
+        }
+        return CredentialSettingsModel(profile: option.profile, spaceVaultID: option.id.vaultID, manager: option.manager, native: native, verifyUser: verifyUser)
+    }
+
+    func mergeSource(_ source: VaultMergeOption, into destination: VaultMergeOption) throws -> VaultMergeSource {
+        guard source.id != destination.id, manager === destination.manager, destination.destination.canBeDestination,
+              let target = mergeTarget(allowLocal: destination.destination == .local),
+              (target.enrollment != nil) == (destination.destination == .shared) else { throw VaultMergeError.unavailableDestination }
+        return VaultMergeSource(option: source, target: target)
     }
 
     private func matches(_ target: MergeTarget) -> Bool {
         guard target.window == owner, target.selection == vaultSelectionGeneration, target.manager === manager,
-              target.sync === vaultSync else { return false }
-        return target.enrollment == target.sync.mergeDestination(profileID: profile.id, vaultID: target.manager.vaultID)
+              target.sync === vaultSync, mergeProfiles.contains(where: { $0.id == profile.id }) else { return false }
+        if let enrollment = target.enrollment {
+            return enrollment == target.sync?.mergeDestination(profileID: profile.id, vaultID: target.manager.vaultID)
+        }
+        return target.sync?.isSyncing(profileID: profile.id, vaultID: target.manager.vaultID) != true
     }
 
     private func requireSource(_ source: VaultMergeSource) throws {
@@ -126,9 +184,13 @@ extension CredentialSettingsModel {
     }
 
     @discardableResult
-    private func verifyTarget(_ target: MergeTarget) async throws -> VaultSync.MergeAuthorization {
+    private func verifyTarget(_ target: MergeTarget) async throws -> VaultSync.MergeAuthorization? {
         do {
-            return try await target.sync.verifyMergeDestination(target.enrollment)
+            if let sync = target.sync, let enrollment = target.enrollment {
+                return try await sync.verifyMergeDestination(enrollment)
+            }
+            guard Self.localMergeAvailable(profile, target.manager.vaultID, sync: target.sync) else { throw VaultMergeError.unavailableDestination }
+            return nil
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -153,8 +215,9 @@ extension CredentialSettingsModel {
         guard let from = listing.first(where: { $0.vaultID == source.id.vaultID }),
               let to = destination.first(where: { $0.vaultID == target.manager.vaultID }) else { throw CredentialVaultError.staleRevision }
         let review = VaultMergeReview(
-            rows: rows, sourceLabel: "\(source.profileLabel) · \(from.label)", destinationLabel: "\(profile.vaultPickerLabel(among: mergeProfiles)) · \(to.label)",
-            source: source, enrollment: enrollment, sourceEpoch: sourceEpoch, destinationEpoch: destinationEpoch, sourceRevision: incoming.revision, destinationRevision: stored.revision,
+            rows: rows, sourceLabel: "\(source.option.profileLabel) · \(from.label)", destinationLabel: "\(profile.vaultPickerLabel(among: mergeProfiles)) · \(to.label)",
+            source: source, isSharedDestination: target.enrollment != nil, enrollment: enrollment, sourceEpoch: sourceEpoch, destinationEpoch: destinationEpoch,
+            sourceRevision: incoming.revision, destinationRevision: stored.revision,
             sourceStamps: incoming.stamps, destinationStamps: stored.stamps
         )
         try await verifyDuplicateFiles(review, in: stored)
@@ -168,13 +231,13 @@ extension CredentialSettingsModel {
     }
 
     func isCurrentVaultMerge(_ review: VaultMergeReview) -> Bool {
-        review.enrollment.isCurrent && matches(review.source.target)
+        review.enrollment?.isCurrent != false && matches(review.source.target)
             && review.source.source.authorizationEpoch == review.sourceEpoch && authorizationEpoch == review.destinationEpoch
     }
 
     private func requireReview(_ review: VaultMergeReview) throws {
         try requireSource(review.source)
-        guard review.enrollment.isCurrent else { throw VaultMergeError.unavailableDestination }
+        guard review.enrollment?.isCurrent != false else { throw VaultMergeError.unavailableDestination }
         guard review.source.source.authorizationEpoch == review.sourceEpoch, authorizationEpoch == review.destinationEpoch else { throw CredentialVaultError.unauthorized }
     }
 
@@ -211,7 +274,8 @@ extension CredentialSettingsModel {
             guard source.stableGeneration == sourceGeneration, target.manager.stableGeneration == targetGeneration else { throw CredentialVaultError.staleRevision }
             return 0
         }
-        guard try await verifyOwner(String(localized: "copy entries into the shared vault")) == review.destinationEpoch else { throw CredentialVaultError.unauthorized }
+        let reason = review.isSharedDestination ? String(localized: "copy entries into the shared vault") : String(localized: "copy entries into the local vault")
+        guard try await verifyOwner(reason) == review.destinationEpoch else { throw CredentialVaultError.unauthorized }
         try requireReview(review)
         let files = entries.flatMap { $0.attachments ?? [] }
         if !files.isEmpty {
@@ -259,6 +323,7 @@ extension CredentialSettingsModel {
     private func commitMerge(_ writes: [AccountWrite], review: VaultMergeReview, sourceGeneration: UInt64) async throws {
         let source = review.source.source, target = review.source.target
         let access = try source.currentAccess(), enrollment = review.enrollment
+        let localDirectory = target.localDirectory, vaultID = target.manager.vaultID
         let cancelled = Mutex(false)
         try await withTaskCancellationHandler {
             _ = try await target.manager.commitAccounts(
@@ -269,7 +334,11 @@ extension CredentialSettingsModel {
                 }
                 guard access.isAuthorized(at: instant) else { throw CredentialVaultError.unauthorized }
                 guard source.contentGeneration == sourceGeneration else { throw CredentialVaultError.staleRevision }
-                guard enrollment.isCurrent else { throw VaultMergeError.unavailableDestination }
+                if let enrollment {
+                    guard enrollment.isCurrent else { throw VaultMergeError.unavailableDestination }
+                } else if try !VaultSync.hasLocalMergeDestination(in: localDirectory, vaultID: vaultID) {
+                    throw VaultMergeError.unavailableDestination
+                }
             }
         } onCancel: {
             cancelled.withLock { $0 = true }

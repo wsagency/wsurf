@@ -57,7 +57,10 @@ struct ProviderKeySyncSection: View {
                 title: "Saved provider keys", symbol: "key.icloud",
                 footnote: account == nil ? "A verified Apple Account is required to share saved keys." : nil
             ) {
-                DetailRow(title: "Share saved keys with iCloud Keychain") {
+                DetailRow(
+                    title: "Share saved keys with iCloud Keychain",
+                    caption: "Choose an AI provider and share the API key saved for its endpoint in WSurf on this Mac. Each Mac keeps its local key."
+                ) {
                     SettingsToggle(Binding(get: { enabled }, set: { next in
                         guard !next || (account != nil && account == keys.accountContext) else { return }
                         confirmation = nil
@@ -109,7 +112,7 @@ struct ProviderKeySyncSection: View {
             .textSelection(.enabled)
             if needsApproval || canShare {
                 RowSeparator()
-                DetailRow(layout: .stacked) {
+                DetailRow(title: "API key for this endpoint", layout: .stacked) {
                     ChipFlow(spacing: 8) {
                         if needsApproval {
                             SettingsButton(title: "Approve changed endpoint…") { request(.approveEndpoint, for: choice) }

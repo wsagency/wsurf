@@ -1,6 +1,606 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "This passkey couldn’t open the vault. Key check on this Mac: %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj pristupni ključ nije mogao otvoriti trezor. Provjera ključa na ovom Macu: %@"
+          }
+        }
+      }
+    },
+    "Copy or merge vault entries" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopiraj ili spoji stavke trezora"
+          }
+        }
+      }
+    },
+    "Choose a source and destination. Review what to copy, replace or skip. The source vault is kept." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite izvor i odredište. Pregledajte što želite kopirati, zamijeniti ili preskočiti. Izvorni trezor ostaje sačuvan."
+          }
+        }
+      }
+    },
+    "Copy or Merge Vault Entries" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopiraj ili spoji stavke trezora"
+          }
+        }
+      }
+    },
+    "Destination vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odredišni trezor"
+          }
+        }
+      }
+    },
+    "All entries were skipped. The destination vault was unchanged." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sve su stavke preskočene. Odredišni trezor ostao je isti."
+          }
+        }
+      }
+    },
+    "Add a shared vault to this Mac before copying its entries. WSurf asks you to unlock each locked vault before the review." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dodajte dijeljeni trezor na ovaj Mac prije kopiranja stavki. WSurf će prije pregleda zatražiti otključavanje zaključanih trezora."
+          }
+        }
+      }
+    },
+    "You need at least two credential vaults on this Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Za kopiranje stavki potrebna su barem dva trezora na ovom Macu."
+          }
+        }
+      }
+    },
+    "Choose a vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite trezor"
+          }
+        }
+      }
+    },
+    "Two entries would replace the same destination entry. Choose a different action for one of them." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dvije bi stavke zamijenile istu stavku u odredišnom trezoru. Za jednu odaberite drugu radnju."
+          }
+        }
+      }
+    },
+    "Each replacement overwrites the entire matching entry in the destination vault." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zamjena prepisuje cijelu odgovarajuću stavku u odredišnom trezoru."
+          }
+        }
+      }
+    },
+    "Choose what stays in sync across WSurf on your Apple Account." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite što se u WSurfu sinkronizira putem vašeg Apple računa."
+          }
+        }
+      }
+    },
+    "Sync preferences like zoom and browser engine for websites in this profile." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizira postavke web-stranica ovog profila kao što su zumiranje i mehanizam preglednika."
+          }
+        }
+      }
+    },
+    "Sync custom provider definitions" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj prilagođene pružatelje"
+          }
+        }
+      }
+    },
+    "Sync the names and server addresses of custom AI providers across all profiles." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizira nazive i adrese poslužitelja prilagođenih AI pružatelja za sve profile."
+          }
+        }
+      }
+    },
+    "Sync model choices for this profile" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj odabir modela za ovaj profil"
+          }
+        }
+      }
+    },
+    "Sync this profile’s selected provider, model and reasoning settings. API keys have their own controls below." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizira odabranog pružatelja, model i postavke zaključivanja ovog profila. API ključevi imaju zasebne kontrole ispod."
+          }
+        }
+      }
+    },
+    "Find and sync iCloud vaults" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pronađi i sinkroniziraj iCloud trezore"
+          }
+        }
+      }
+    },
+    "Find encrypted vaults from your other Macs and resume sync for vaults you’ve already enabled. To share a vault, turn on sync for that vault." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pronađite šifrirane trezore s drugih Macova i nastavite sinkronizaciju već uključenih trezora. Za dijeljenje uključite sinkronizaciju na samom trezoru."
+          }
+        }
+      }
+    },
+    "Vaults for %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trezori profila %@"
+          }
+        }
+      }
+    },
+    "Vault is locked" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trezor je zaključan"
+          }
+        }
+      }
+    },
+    "Manage vaults in Autofill" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upravljaj trezorima u Automatskom ispunjavanju"
+          }
+        }
+      }
+    },
+    "Manage unlock methods, autofill defaults and review changes from iCloud." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upravljajte načinima otključavanja i zadanim trezorom za automatsko ispunjavanje te pregledajte promjene iz iClouda."
+          }
+        }
+      }
+    },
+    "Shared via iCloud" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeno putem iClouda"
+          }
+        }
+      }
+    },
+    "Sync off on this Mac" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizacija na ovom Macu je isključena"
+          }
+        }
+      }
+    },
+    "iCloud vaults from other Macs" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud trezori s drugih Macova"
+          }
+        }
+      }
+    },
+    "No additional vaults found" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nema dodatnih trezora"
+          }
+        }
+      }
+    },
+    "Vaults you’ve already added appear with the vaults for their profile." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dodani trezori nalaze se među trezorima svojeg profila."
+          }
+        }
+      }
+    },
+    "Use the vault’s unlock passkey to add it to this Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upotrijebite pristupni ključ za otključavanje da biste dodali trezor na ovaj Mac."
+          }
+        }
+      }
+    },
+    "Unlock one of this profile’s vaults above before adding this vault." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prije dodavanja otključajte jedan od trezora ovog profila iznad."
+          }
+        }
+      }
+    },
+    "Open this profile to view or add its iCloud vaults." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Otvorite ovaj profil za pregled ili dodavanje njegovih iCloud trezora."
+          }
+        }
+      }
+    },
+    "Add this profile on this Mac to use its iCloud vaults." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dodajte ovaj profil na Mac kako biste koristili njegove iCloud trezore."
+          }
+        }
+      }
+    },
+    "See tabs from your other devices in the sidebar and open independent copies. To keep the same tabs in sync, join a Shared Space." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prikažite kartice s drugih uređaja u rubnom stupcu i otvorite zasebne kopije. Za sinkronizaciju istih kartica pridružite se dijeljenom prostoru."
+          }
+        }
+      }
+    },
+    "Choose an AI provider and share the API key saved for its endpoint in WSurf on this Mac. Each Mac keeps its local key." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite AI pružatelja i podijelite API ključ koji je WSurf na ovom Macu spremio za njegovu adresu. Svaki Mac zadržava lokalni ključ."
+          }
+        }
+      }
+    },
+    "API key for this endpoint" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API ključ za ovu adresu"
+          }
+        }
+      }
+    },
+    "Profiles and library" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Profili i zbirka"
+          }
+        }
+      }
+    },
+    "Find and publish profiles on your Apple Account. Turning this off keeps published profiles visible to your other Macs." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pronađite i objavite profile na svojem Apple računu. Isključivanjem već objavljeni profili ostaju vidljivi drugim Macovima."
+          }
+        }
+      }
+    },
+    "This Mac is linked to this iCloud profile." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj Mac povezan je s ovim iCloud profilom."
+          }
+        }
+      }
+    },
+    "Publish or link this profile" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objavi ili poveži ovaj profil"
+          }
+        }
+      }
+    },
+    "A link combines all pins and Favorites for this profile. Website sign-ins and cookies stay on each Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Povezivanje spaja sve prikvačene i omiljene stavke ovog profila. Prijave na web-stranice i kolačići ostaju na svakom Macu."
+          }
+        }
+      }
+    },
+    "Sync Pins and Favorites" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj prikvačeno i omiljeno"
+          }
+        }
+      }
+    },
+    "Sync the whole library for this profile, including new pins and Favorites, across its linked Macs." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizira cijelu zbirku ovog profila na povezanim Macovima, uključujući nove prikvačene i omiljene stavke."
+          }
+        }
+      }
+    },
+    "Gather Tabs is available when a shared Space’s tabs are in more than one window on this Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Okupljanje kartica dostupno je kad su kartice dijeljenog prostora u više prozora na ovom Macu."
+          }
+        }
+      }
+    },
+    "Sync Shared Spaces on This Mac" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj dijeljene prostore na ovom Macu"
+          }
+        }
+      }
+    },
+    "Open, move or close tabs in a joined Space and the change reaches the other Macs using that Space." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Otvaranje, premještanje i zatvaranje kartica prenosi se na ostale Macove koji koriste isti dijeljeni prostor."
+          }
+        }
+      }
+    },
+    "Stop syncing this Space on this Mac?" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaustaviti sinkronizaciju ovog prostora na ovom Macu?"
+          }
+        }
+      }
+    },
+    "Stop Syncing" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaustavi sinkronizaciju"
+          }
+        }
+      }
+    },
+    "This Mac keeps its tabs. The iCloud copy and the other Macs keep syncing. Pins and Favorites follow the profile’s library switch." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj Mac zadržava kartice. iCloud kopija i ostali Macovi nastavljaju sinkronizaciju. Prikvačene i omiljene stavke imaju svoj prekidač u postavkama profila."
+          }
+        }
+      }
+    },
+    "Paused on this Mac in the %@ profile" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pauzirano na ovom Macu u profilu %@"
+          }
+        }
+      }
+    },
+    "Stop Syncing on This Mac…" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaustavi sinkronizaciju na ovom Macu…"
+          }
+        }
+      }
+    },
+    "Join in the %@ profile to sync this Space’s open tabs." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pridružite se u profilu %@ za sinkronizaciju otvorenih kartica ovog prostora."
+          }
+        }
+      }
+    },
+    "Choose the local profile that will open and sync this Space." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite lokalni profil koji će otvoriti i sinkronizirati ovaj prostor."
+          }
+        }
+      }
+    },
+    "Share or join a Space to sync its open tabs." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podijelite prostor ili mu se pridružite za sinkronizaciju otvorenih kartica."
+          }
+        }
+      }
+    },
+    "Shared profile — %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeni profil — %@"
+          }
+        }
+      }
+    },
+    "Shared Space — %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeni prostor — %@"
+          }
+        }
+      }
+    },
+    "The destination vault changed or is unavailable. Choose it again when its sync status is ready." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odredišni trezor se promijenio ili je nedostupan. Odaberite ga ponovno kada sinkronizacija bude spremna."
+          }
+        }
+      }
+    },
+    "Local copy" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokalna kopija"
+          }
+        }
+      }
+    },
+    "iCloud sync paused" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud sinkronizacija je pauzirana"
+          }
+        }
+      }
+    },
+    "Sync status unverified" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status sinkronizacije nije potvrđen"
+          }
+        }
+      }
+    },
+    "copy entries into the local vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "kopiranje stavki u lokalni trezor"
+          }
+        }
+      }
+    },
     "On low memory, unload inactive tabs until you open them." : {
       "localizations" : {
         "hr" : {

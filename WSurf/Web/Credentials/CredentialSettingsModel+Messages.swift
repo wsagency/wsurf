@@ -44,7 +44,7 @@ extension CredentialSettingsModel {
     static func message(for error: any Error) -> String? {
         switch error {
         case VaultMergeError.unavailableDestination:
-            return String(localized: "The shared vault changed or is unavailable. Reopen the merge review and try again.")
+            return String(localized: "The destination vault changed or is unavailable. Choose it again when its sync status is ready.")
         case CredentialVaultError.staleRevision:
             return String(localized: "Your credentials changed elsewhere. Reload and try again.")
         case CredentialPromptError.listChanged:

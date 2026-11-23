@@ -14,7 +14,7 @@ struct ProfileICloudTabsSection: View {
             SettingsSection(title: "Tabs on other devices", symbol: "macbook", footnote: footnote(cloud.tabs)) {
                 DetailRow(
                     title: "Share tabs through iCloud",
-                    caption: "Tabs open in this profile appear on your other devices, and theirs appear in the sidebar here. Private windows are never shared."
+                    caption: "See tabs from your other devices in the sidebar and open independent copies. To keep the same tabs in sync, join a Shared Space."
                 ) {
                     SettingsToggle(Binding(
                         get: { cloud.tabs?.isOptedIn(profile.id) == true },

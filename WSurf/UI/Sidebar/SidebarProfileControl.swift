@@ -28,15 +28,21 @@ struct SidebarProfileControl: View {
         profiles.isPrivate ? profiles.privateBrowsing.name : ProfileSummary.displayName(for: profile)
     }
 
+    private var isShared: Bool {
+        !profiles.isPrivate && ProfileSummary.isShared(profile)
+    }
+
     var body: some View {
         QuietIconButton(
             symbol: profiles.isPrivate ? profiles.privateBrowsing.symbol : profile.symbol,
             isOn: coordinator.isProfileSwitcherOpen,
             tint: tint,
-            help: String(localized: "Profile — \(name)")
+            badge: isShared ? "icloud.fill" : nil,
+            help: isShared ? String(localized: "Shared profile — \(name)") : String(localized: "Profile — \(name)")
         ) {
             coordinator.isProfileSwitcherOpen.toggle()
         }
+        .accessibilityLabel(isShared ? Text("Shared profile — \(name)") : Text("Profile — \(name)"))
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
             coordinator.profileButtonFrame = $0
         }

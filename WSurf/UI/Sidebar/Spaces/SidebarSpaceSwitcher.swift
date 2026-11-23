@@ -44,9 +44,11 @@ struct SidebarSpaceSwitcher: View {
         let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 2)) : AnyLayout(VStackLayout(spacing: 2))
         return layout {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                let sharing = coordinator.browser.sharedSpaceService
                 SpaceDot(
                     entry: entry,
-                    spaceName: coordinator.browser.sharedSpaceService?.spaceTitle(for: entry) ?? entry.space.name,
+                    spaceName: sharing?.spaceTitle(for: entry) ?? entry.space.name,
+                    isShared: sharing?.cloudProfileID(for: entry.profile.id) != nil && sharing?.links[entry.profile.id]?.spaces[entry.id] != nil,
                     isForeign: entry.profile.id != coordinator.context.profile.id,
                     shortcut: SpaceShortcut.label(at: index),
                     isCurrent: entry.id == coordinator.browser.currentSpaceID,
@@ -88,6 +90,7 @@ struct SidebarSpaceSwitcher: View {
 private struct SpaceDot: View {
     let entry: SpaceEntry
     let spaceName: String
+    let isShared: Bool
     /// A space of another profile: choosing it switches the window to that profile.
     let isForeign: Bool
     let shortcut: String?
@@ -96,7 +99,8 @@ private struct SpaceDot: View {
     let action: () -> Void
 
     private var name: String {
-        isForeign ? String(localized: "\(spaceName) — \(entry.profile.name) profile") : spaceName
+        let name = isForeign ? String(localized: "\(spaceName) — \(entry.profile.name) profile") : spaceName
+        return isShared ? String(localized: "Shared Space — \(name)") : name
     }
 
     private var help: String {
@@ -109,6 +113,7 @@ private struct SpaceDot: View {
             symbol: entry.space.symbol,
             isOn: isCurrent || isArmed,
             tint: isCurrent ? entry.space.color.tint : nil,
+            badge: isShared ? "icloud.fill" : nil,
             help: help,
             action: action
         )

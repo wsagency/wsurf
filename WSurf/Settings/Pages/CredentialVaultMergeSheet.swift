@@ -6,12 +6,13 @@ import WSurfVault
 
 struct CredentialVaultMergeRow: View {
     let model: CredentialSettingsModel
+    var showsAllVaults = false
     let open: () -> Void
 
     var body: some View {
-        if model.canMergeIntoSharedVault {
+        if showsAllVaults || model.canMergeIntoSharedVault {
             RowSeparator()
-            DetailRow(title: "Merge another vault", caption: "Review entries from a vault on this Mac and choose which ones to add to this shared vault.") {
+            DetailRow(title: "Copy or merge vault entries", caption: "Choose a source and destination. Review what to copy, replace or skip. The source vault is kept.") {
                 SettingsButton(title: "Merge Vaults…", action: open)
                     .disabled(model.isBusy)
             }
@@ -28,12 +29,6 @@ struct CredentialVaultMergePresentation: ViewModifier {
         content.sheet(isPresented: $isPresented) {
             CredentialVaultMergeSheet(model: model)
         }
-        .onChange(of: model.selectedVaultID) { isPresented = false }
-        .onChange(of: model.canMergeIntoSharedVault) {
-            if !model.canMergeIntoSharedVault {
-                isPresented = false
-            }
-        }
         .onDisappear { isPresented = false }
     }
 }
@@ -42,25 +37,30 @@ private struct CredentialVaultMergeSheet: View {
     let model: CredentialSettingsModel
     @Environment(\.dismiss) private var dismiss
     @State private var anchor = CredentialWindowAnchor()
+    @State private var destination: CredentialSettingsModel?
+    @State private var pickedSource: VaultMergeOption.ID?
+    @State private var pickedDestination: VaultMergeOption.ID?
     @State private var review: VaultMergeReview?
-    @State private var receipt: (applied: Int, skipped: Int)?
+    @State private var receipt: (destination: VaultMergeOption, applied: Int, skipped: Int)?
+    @State private var destinationChoice: VaultMergeOption?
     @State private var message: String?
     @State private var work: Task<Void, Never>?
     @State private var committing = false
 
     private var expired: Bool {
-        review.map { !model.isCurrentVaultMerge($0) } ?? false
+        guard let review, let destination else { return false }
+        return !destination.isCurrentVaultMerge(review)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Merge into Shared Vault").font(Theme.Font.rowTitle)
+            Text("Copy or Merge Vault Entries").font(Theme.Font.rowTitle)
             if let receipt {
-                LabeledContent("Shared destination") { Text(verbatim: model.vaultMergeDestinationLabel) }
+                LabeledContent("Destination vault") { Text(verbatim: receipt.destination.label) }
                 if receipt.applied == 0 && receipt.skipped == 0 {
                     Text("The source vault has no current entries.")
                 } else if receipt.applied == 0 {
-                    Text("All entries were skipped. The shared vault was unchanged.")
+                    Text("All entries were skipped. The destination vault was unchanged.")
                 } else {
                     LabeledContent("Entries merged", value: receipt.applied, format: .number)
                 }
@@ -72,18 +72,17 @@ private struct CredentialVaultMergeSheet: View {
                 }
             } else if let review, !expired {
                 LabeledContent("Source vault") { Text(verbatim: review.sourceLabel) }
-                LabeledContent("Shared destination") { Text(verbatim: review.destinationLabel) }
+                LabeledContent("Destination vault") { Text(verbatim: review.destinationLabel) }
                 VaultMergeReviewContent(review: review, busy: committing, message: $message, back: { self.review = nil }, cancel: close) { selection in
                     confirm(review, selection: selection)
                 }
             } else if committing {
                 ProgressView("Finishing the merge…").controlSize(.small)
             } else {
-                LabeledContent("Shared destination") { Text(verbatim: model.vaultMergeDestinationLabel) }
                 if let message {
                     SettingsNotice(symbol: "exclamationmark.triangle", text: message)
                 }
-                VaultMergeSourcePicker(model: model, busy: work != nil, cancel: close, choose: preview)
+                VaultMergePicker(model: model, busy: work != nil, sourceID: $pickedSource, destinationID: $pickedDestination, cancel: close, choose: preview)
             }
         }
         .font(Theme.Font.row)
@@ -110,7 +109,7 @@ private struct CredentialVaultMergeSheet: View {
         dismiss()
     }
 
-    private func preview(_ source: VaultMergeSource) {
+    private func preview(_ source: VaultMergeOption, into target: VaultMergeOption) {
         guard work == nil else { return }
         guard let window = anchor.window, window.isVisible else {
             message = String(localized: "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again.")
@@ -120,9 +119,13 @@ private struct CredentialVaultMergeSheet: View {
         work = Task {
             defer { work = nil }
             do {
-                let prepared = try await model.reviewVaultMerge(from: source, in: window)
+                let destination = model.mergeDestinationModel(for: target)
+                let selection = try destination.mergeSource(source, into: target)
+                let prepared = try await destination.reviewVaultMerge(from: selection, in: window)
                 try Task.checkCancellation()
-                guard model.isCurrentVaultMerge(prepared) else { throw CredentialVaultError.unauthorized }
+                guard destination.isCurrentVaultMerge(prepared) else { throw CredentialVaultError.unauthorized }
+                self.destination = destination
+                destinationChoice = target
                 review = prepared
             } catch {
                 if !Task.isCancelled {
@@ -133,7 +136,7 @@ private struct CredentialVaultMergeSheet: View {
     }
 
     private func confirm(_ review: VaultMergeReview, selection: VaultMergeSelection) {
-        guard work == nil, selection.isComplete else { return }
+        guard let destination, let destinationChoice, work == nil, selection.isComplete else { return }
         let skipped = selection.count(.skip)
         message = nil
         committing = true
@@ -143,18 +146,18 @@ private struct CredentialVaultMergeSheet: View {
                 committing = false
             }
             do {
-                let applied = try await model.confirmVaultMerge(review, choices: selection.choices)
+                let applied = try await destination.confirmVaultMerge(review, choices: selection.choices)
                 try Task.checkCancellation()
-                receipt = (applied, skipped)
+                receipt = (destinationChoice, applied, skipped)
             } catch {
                 if !Task.isCancelled {
-                    if case CredentialVaultError.duplicateIdentifier = error, model.isCurrentVaultMerge(review) {
+                    if case CredentialVaultError.duplicateIdentifier = error, destination.isCurrentVaultMerge(review) {
                         message = String(localized: "These entries can’t be saved together. Skip one of the matching entries and try again.")
                         return
                     }
                     if let reason = CredentialSettingsModel.message(for: error) {
                         message = reason
-                    } else if model.isCurrentVaultMerge(review) {
+                    } else if destination.isCurrentVaultMerge(review) {
                         // Cancelling the system prompt leaves the user's choices available for another try.
                         return
                     }
@@ -165,31 +168,27 @@ private struct CredentialVaultMergeSheet: View {
     }
 }
 
-private struct VaultMergeSourcePicker: View {
+private struct VaultMergePicker: View {
     let model: CredentialSettingsModel
     let busy: Bool
+    @Binding var sourceID: VaultMergeOption.ID?
+    @Binding var destinationID: VaultMergeOption.ID?
     let cancel: () -> Void
-    let choose: (VaultMergeSource) -> Void
-    @State private var sources: [VaultMergeSource]?
-    @State private var picked: VaultMergeSource.ID?
+    let choose: (VaultMergeOption, VaultMergeOption) -> Void
+    @State private var vaults: [VaultMergeOption]?
     @State private var error: String?
     @State private var attempt = 0
 
     var body: some View {
-        if let sources, !sources.isEmpty {
-            Picker("Source vault", selection: $picked) {
-                Text("Choose a vault on this Mac").tag(VaultMergeSource.ID?.none)
-                ForEach(sources) { source in
-                    Text(verbatim: source.label).tag(Optional(source.id))
-                }
-            }
-            .disabled(busy)
-            Text("Choose a profile and vault. WSurf asks for the unlock passkey of each locked vault before showing its entries.")
+        if let vaults, vaults.count >= 2 {
+            picker("Source vault", selection: $sourceID, from: vaults.filter { $0.id != destinationID })
+            picker("Destination vault", selection: $destinationID, from: vaults.filter { $0.id != sourceID && $0.destination.canBeDestination })
+            Text("Add a shared vault to this Mac before copying its entries. WSurf asks you to unlock each locked vault before the review.")
                 .font(Theme.Font.label).foregroundStyle(.secondary)
         } else if let error {
             SettingsNotice(symbol: "exclamationmark.triangle", text: error)
-        } else if sources != nil {
-            Text("There are no other credential vaults on this Mac.")
+        } else if vaults != nil {
+            Text("You need at least two credential vaults on this Mac.")
         } else {
             ProgressView("Finding vaults…").controlSize(.small)
         }
@@ -202,29 +201,51 @@ private struct VaultMergeSourcePicker: View {
             if error != nil {
                 Button("Try Again") { attempt += 1 }
             } else {
-                let selected = sources?.first { $0.id == picked }
+                let source = vaults?.first { $0.id == sourceID }
+                let destination = vaults?.first { $0.id == destinationID && $0.destination.canBeDestination }
                 Button("Review Entries") {
-                    if let selected {
-                        choose(selected)
+                    if let source, let destination, source.id != destination.id {
+                        choose(source, destination)
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(selected == nil || busy)
+                .disabled(source == nil || destination == nil || sourceID == destinationID || busy)
             }
         }
         .task(id: attempt) {
             error = nil
             do {
-                let result = try await model.mergeSources()
+                let result = try await model.mergeOptions()
                 try Task.checkCancellation()
-                sources = result
-                picked = result.count == 1 ? result[0].id : nil
+                vaults = result
+                if destinationID == nil, let id = model.selectedVaultID {
+                    let current = VaultMergeOption.ID(profileID: model.profile.id, vaultID: id)
+                    if sourceID != current, result.contains(where: { $0.id == current && $0.destination.canBeDestination }) {
+                        destinationID = current
+                    }
+                }
+                if sourceID == nil, let destinationID, result.count == 2 {
+                    sourceID = result.first { $0.id != destinationID }?.id
+                }
             } catch {
                 if !Task.isCancelled {
                     self.error = CredentialSettingsModel.message(for: error)
                 }
             }
         }
+    }
+
+    private func picker(_ title: LocalizedStringResource, selection: Binding<VaultMergeOption.ID?>, from vaults: [VaultMergeOption]) -> some View {
+        Picker(selection: selection) {
+            Text("Choose a vault").tag(VaultMergeOption.ID?.none)
+            ForEach(vaults) { vault in
+                Text("\(vault.label) — \(String(localized: vault.destination.label))")
+                    .tag(Optional(vault.id))
+            }
+        } label: {
+            Text(title)
+        }
+        .disabled(busy)
     }
 }
 
@@ -263,7 +284,7 @@ struct VaultMergeSelection {
                 return "Choose what to do with every conflict first."
             }
             if choice == .replace, let target = row.targetID, !replaced.insert(target).inserted {
-                return "Two entries would replace the same shared entry. Choose a different action for one of them."
+                return "Two entries would replace the same destination entry. Choose a different action for one of them."
             }
         }
         return nil
@@ -308,7 +329,7 @@ private struct VaultMergeReviewContent: View {
             LabeledContent("Entries to replace", value: selection.count(.replace), format: .number)
             LabeledContent("Entries to skip", value: selection.count(.skip), format: .number)
             if selection.count(.replace) > 0 {
-                Text("Each replacement overwrites the entire matching entry in the shared vault.")
+                Text("Each replacement overwrites the entire matching entry in the destination vault.")
             }
             Text(CredentialVaultMergeSheet.sourceKept)
                 .font(Theme.Font.label).foregroundStyle(.secondary)

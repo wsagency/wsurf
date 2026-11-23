@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import GRDB
 import Synchronization
 
 extension VaultSyncSummary {
@@ -11,6 +12,27 @@ extension VaultSyncSummary {
 }
 
 extension VaultSync {
+    /// A paused discovery service cannot tell whether a vault will sync when it comes back.
+    public nonisolated static func hasLocalMergeDestination(in directory: URL, vaultID: UUID) throws -> Bool {
+        let file = directory.appending(path: VaultSyncDatabase.fileName)
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: file.path)
+        } catch CocoaError.fileReadNoSuchFile {
+            return true
+        }
+        var configuration = Configuration()
+        configuration.readonly = true
+        return try DatabaseQueue(path: file.path, configuration: configuration).read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT vaultID, enabled FROM vault")
+            for row in rows where try row.decode(UUID.self, forColumn: "vaultID") == vaultID {
+                if try VaultRow.readEnabled(from: row) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     /// A review belongs to one enrollment. Disabling and re-enabling the same zone starts another.
     public struct MergeDestination: Equatable, Sendable {
         fileprivate let key: VaultKey
