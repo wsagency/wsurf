@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: BUSL-1.1 -->
 # branding/
 
-WSurf brand files. **The mark is Tandem: start with [tandem/README.md](tandem/README.md).** Nothing here is wired into the app, website, README or release tooling yet.
+The [public design system](../wsurf.app/design-system/README.md) documents the Tandem identity, the shipping Dock finishes and the website components. The editable artwork and its provenance live in [tandem/README.md](tandem/README.md).
 
 The Flux draft below was superseded by Tandem on 2026-10-16. Its files stay as the record of that review; its default colour pair carries over to Tandem, and its palettes stay available as colour pairs.
 

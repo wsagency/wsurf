@@ -294,10 +294,11 @@ a pull request; never commit or push directly to `main`.
 
 ## Website and domain association
 
-[`wsurf.app/`](wsurf.app/) is the static website: HTML, CSS, and the existing
-wave artwork. No build step, JavaScript, third-party assets, or credentials are
-needed. Configure autodeploy from this repository with `wsurf.app/` as the
-webserver's document root, preserving the hidden `.well-known/` directory.
+[`wsurf.app/`](wsurf.app/) contains the static website and the [WSurf design system](wsurf.app/design-system/README.md).
+The public route `/design-system/` includes Tandem artwork, shipping Dock icons,
+design tokens, reusable component examples and [instructions for AI tools](wsurf.app/design-system/AI.md).
+Serve `wsurf.app/` as the document root, including its hidden `.well-known/` directory.
+The checked-in pages, styles and media work directly from a static server.
 
 Preview locally:
 

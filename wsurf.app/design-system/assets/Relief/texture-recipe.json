@@ -1,0 +1,18 @@
+{
+  "seed": 20261017, "width": 2048, "height": 1024,
+  "noise": "improved Perlin 3D gradient noise (quintic fade, seeded permutation) sampled on the unit sphere: seamless, no pole pinching; fBm lacunarity 2.0, gain 0.5",
+  "planet": {
+    "continents": "fBm 6 octaves @ freq 1.18 over a domain warp (3 x fBm 4 octaves @ 1.5, amplitude 0.17)",
+    "mountains": "ridged multifractal 5 octaves @ 2.6, land only, weight 0.46",
+    "seaLevelQuantile": 0.63, "sea": 0.050494615,
+    "clouds": "warped fBm 7 octaves @ 2.3 + latitude belts, smoothstep(0.16, 0.40), alpha 0.88",
+    "clay": "same continents, two sculpted terraces (smoothstep edges), flat oceans, ceramic grain in the normal map",
+    "topo": "earth height box-blurred twice (smoother iso-lines)"
+  },
+  "moon": {
+    "craters": "hashed 3D cells, 6 octaves, cell sizes [0.78, 0.4, 0.21, 0.115, 0.062, 0.034]; bowl + central peak + rim + ejecta, wobble 0.16/0.07, age softening",
+    "maria": "fBm 4 octaves @ 0.85, smoothstep(0.10, 0.34)", "terrain": "fBm 6 octaves + ridged 4 octaves",
+    "clay": "deeper craters (0.52 vs 0.30), ceramic grain"
+  },
+  "channels": "height 8-bit (planet: 0.5 = sea level) + 16-bit; normal = tangent space, OpenGL (G = north / up in the image); colour sRGB; roughness linear; clouds RGBA (alpha = density); row 0 = north pole; u 0..1 = longitude -180..180 degrees; PNGs are untagged"
+}

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="WSurf’s reusable Tandem artwork, app icons, design tokens, interface components and guidance for contributors and AI tools.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <link rel="canonical" href="https://wsurf.app/design-system/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="components/bundle.css">
+  <link rel="stylesheet" href="reference.css">
+  <title>Design system · WSurf</title>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="mast wrap">
+    <a href="/" aria-label="WSurf home"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/Lockup/lockup-dark.svg">
+      <img src="assets/Lockup/lockup-light.svg" width="128" height="28" alt="">
+    </picture></a>
+    <nav aria-label="Site navigation">
+      <a href="/#features">Features</a>
+      <a href="/design-system/" aria-current="page">Design system</a>
+      <a href="/changelog/">Changelog</a>
+    </nav>
+  </header>
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="title">
+      <div class="intro">
+        <h1 id="title">Design<br> system<span>.</span></h1>
+        <p>The artwork, colors and controls behind WSurf. Pick a finish, try a component or take the source into your next change.</p>
+        <div class="ws-actions">
+          <a class="ws-button ws-button--primary label" href="#library">Browse assets <span aria-hidden="true">↓</span></a>
+          <a class="ws-link label" href="#contribute">Contributor &amp; AI guide</a>
+        </div>
+      </div>
+      <fieldset class="finishes">
+        <legend class="visually-hidden">Preview a Dock icon finish</legend>
+        <div class="swatches">
+          <label><input type="radio" name="finish" value="metal" checked><span>Anodized</span></label>
+          <label><input type="radio" name="finish" value="steel"><span>Steel</span></label>
+          <label><input type="radio" name="finish" value="copper"><span>Copper</span></label>
+          <label><input type="radio" name="finish" value="light"><span>Light</span></label>
+          <label><input type="radio" name="finish" value="dark"><span>Dark</span></label>
+          <label><input type="radio" name="finish" value="mono"><span>Mono</span></label>
+        </div>
+        <div class="material">
+          <p class="plate-title">Dock finishes</p>
+          <figure class="metal"><img src="assets/Dock/metal.png" width="512" height="512" alt="Polished violet and mint discs on a midnight blue tile"><figcaption>Anodized · Default artwork <a href="assets/Dock/metal.png" download aria-label="Download Anodized PNG">PNG ↓</a></figcaption></figure>
+          <figure class="steel"><img src="assets/Dock/steel.png" width="512" height="512" alt="Satin steel discs on a pale silver tile"><figcaption>Steel <a href="assets/Dock/steel.png" download aria-label="Download Steel PNG">PNG ↓</a></figcaption></figure>
+          <figure class="copper"><img src="assets/Dock/copper.png" width="512" height="512" alt="Polished copper discs on a warm brown tile"><figcaption>Copper <a href="assets/Dock/copper.png" download aria-label="Download Copper PNG">PNG ↓</a></figcaption></figure>
+          <figure class="light"><img src="assets/Dock/light.png" width="512" height="512" alt="Flat violet and mint discs on a white tile"><figcaption>Light <a href="assets/Dock/light.png" download aria-label="Download Light PNG">PNG ↓</a></figcaption></figure>
+          <figure class="dark"><img src="assets/Dock/dark.png" width="512" height="512" alt="Flat violet and mint discs on a black tile"><figcaption>Dark <a href="assets/Dock/dark.png" download aria-label="Download Dark PNG">PNG ↓</a></figcaption></figure>
+          <figure class="mono"><img src="assets/Dock/mono.png" width="512" height="512" alt="Flat white discs on a black tile"><figcaption>Mono <a href="assets/Dock/mono.png" download aria-label="Download Mono PNG">PNG ↓</a></figcaption></figure>
+        </div>
+      </fieldset>
+    </section>
+
+    <nav class="contents" aria-label="On this page">
+      <a href="#identity">Identity</a><a href="#components">Components</a><a href="#motion">Motion</a><a href="#library">Asset library</a><a href="#contribute">Guides</a>
+    </nav>
+
+    <section id="identity" class="chapter" aria-labelledby="identity-title">
+      <h2 id="identity-title">The Tandem identity</h2>
+      <p class="summary">Two discs share one waterline. Violet stands for the person using WSurf. The smaller mint disc follows their lead and marks the assistant’s activity.</p>
+      <div class="pairs">
+        <article class="specimen" data-theme="light">
+          <div class="lockup"><img src="assets/Lockup/lockup-light.svg" alt="WSurf Tandem wordmark in day colors" width="274" height="60"></div>
+          <div class="sample-meta"><h3>Day</h3><a href="assets/Lockup/lockup-light.svg" download aria-label="Download Day lockup SVG">SVG ↓</a></div>
+          <ul class="colors"><li><i class="lead"></i>Lead <code>#3B1FD1</code></li><li><i class="follower"></i>Follower <code>#14C79A</code></li></ul>
+        </article>
+        <article class="specimen" data-theme="dark">
+          <div class="lockup"><img src="assets/Lockup/lockup-dark.svg" alt="WSurf Tandem wordmark in night colors" width="274" height="60"></div>
+          <div class="sample-meta"><h3>Night</h3><a href="assets/Lockup/lockup-dark.svg" download aria-label="Download Night lockup SVG">SVG ↓</a></div>
+          <ul class="colors"><li><i class="lead"></i>Lead <code>#6D55FF</code></li><li><i class="follower"></i>Follower <code>#2FE0B2</code></li></ul>
+        </article>
+      </div>
+      <p class="note">Use the small cut at 24 px and below. Keep a follower’s diameter of clear space around the mark or wordmark. Interface text uses the system font. The outlined wordmark uses Inter Display Bold.</p>
+      <div class="text-links"><a href="tokens.css">CSS tokens</a><a href="tokens.json">Token values (JSON)</a><a href="api/tokens.md">Type, spacing &amp; color reference</a></div>
+    </section>
+
+    <section id="components" class="chapter" aria-labelledby="component-title">
+      <h2 id="component-title">Components</h2>
+      <p class="summary">Open a working example to inspect its markup and keyboard behavior. In macOS Settings, use WSurf’s existing SwiftUI rows and native controls.</p>
+      <div class="component-list">
+        <a href="components/Button/preview.html"><strong>Button</strong><span>Primary, secondary and text actions</span></a>
+        <a href="components/AssistantBadge/preview.html"><strong>Assistant badge</strong><span>Thinking, acting and waiting</span></a>
+        <a href="components/Loader/preview.html"><strong>Tandem loader</strong><span>Working and reduced-motion states</span></a>
+        <a href="components/Callout/preview.html"><strong>Callout</strong><span>Explain a choice and its consequences</span></a>
+        <a href="components/CodeBlock/preview.html"><strong>Code block</strong><span>Selectable commands and examples</span></a>
+        <a href="components/FeatureCard/preview.html"><strong>Feature card</strong><span>Describe a product behavior</span></a>
+        <a href="components/SiteHeader/preview.html"><strong>Site header</strong><span>Wordmark and navigation</span></a>
+        <a href="components/Cover/preview.html"><strong>Cover</strong><span>Editorial brand composition</span></a>
+      </div>
+    </section>
+
+    <section id="motion" class="chapter" aria-labelledby="motion-title">
+      <h2 id="motion-title">Materials in motion</h2>
+      <p class="summary">The flat mark identifies WSurf at a glance. The satin and relief studies show the shape in light and shadow.</p>
+      <div class="pairs">
+        <figure class="film"><video controls preload="none" playsinline poster="assets/3D/mark-front-light.png" width="480" height="480" aria-label="A satin Tandem mark turns in soft light"><source src="assets/3D/turntable-light.mp4" type="video/mp4"></video><figcaption>Satin turntable <a href="assets/3D/turntable-light.mp4" download aria-label="Download satin turntable MP4">MP4 ↓</a></figcaption></figure>
+        <figure class="film"><video controls preload="none" playsinline poster="assets/Relief/relief-earth-moon-poster.jpg" width="480" height="480" aria-label="A mint moon orbits the violet relief globe"><source src="assets/Relief/relief-earth-moon.mp4" type="video/mp4"></video><figcaption>Earth &amp; Moon <a href="assets/Relief/relief-earth-moon.mp4" download aria-label="Download Earth and Moon MP4">MP4 ↓</a></figcaption></figure>
+      </div>
+      <p class="note">The illustrated product walkthroughs show a tab arriving in a shared Space and a page moving into a Micro window. Both use sample browsing data.</p>
+      <div class="text-links"><a href="../media/demos/spaces.mp4">Shared Space film</a><a href="../media/demos/micro.mp4">Micro window film</a><a href="https://github.com/wsagency/wsurf/tree/main/branding/tandem/motion-demos">Walkthrough source</a></div>
+    </section>
+
+    <section id="library" class="chapter" aria-labelledby="library-title">
+      <h2 id="library-title">Asset library</h2>
+      <p class="summary">Original files, grouped by use. Dock contains the app’s shipping finishes. Flux and Legacy preserve earlier identity studies.</p>
+      <div class="inventory">
+          <!-- Asset catalogue starts here. Generated by Tools/update-design-system.py. -->
+          <details class="asset-group">
+            <summary>3D <span>10 files</span></summary>
+            <a href="assets/3D/README.md">3D usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/3D/icon-3d-dark.png">icon-3d-dark.png</a></li>
+              <li><a href="assets/3D/icon-3d-light.png">icon-3d-light.png</a></li>
+              <li><a href="assets/3D/mark-front-dark.png">mark-front-dark.png</a></li>
+              <li><a href="assets/3D/mark-front-light.png">mark-front-light.png</a></li>
+              <li><a href="assets/3D/mark-hero-dark.png">mark-hero-dark.png</a></li>
+              <li><a href="assets/3D/mark-hero-light.png">mark-hero-light.png</a></li>
+              <li><a href="assets/3D/mark-threeq-dark.png">mark-threeq-dark.png</a></li>
+              <li><a href="assets/3D/mark-threeq-light.png">mark-threeq-light.png</a></li>
+              <li><a href="assets/3D/turntable-dark.mp4">turntable-dark.mp4</a></li>
+              <li><a href="assets/3D/turntable-light.mp4">turntable-light.mp4</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Dock <span>6 files</span></summary>
+            <a href="assets/Dock/README.md">Dock usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Dock/copper.png">copper.png</a></li>
+              <li><a href="assets/Dock/dark.png">dark.png</a></li>
+              <li><a href="assets/Dock/light.png">light.png</a></li>
+              <li><a href="assets/Dock/metal.png">metal.png</a></li>
+              <li><a href="assets/Dock/mono.png">mono.png</a></li>
+              <li><a href="assets/Dock/steel.png">steel.png</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Flux <span>15 files</span></summary>
+            <a href="assets/Flux/README.md">Flux usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Flux/Figtree-OFL.txt">Figtree-OFL.txt</a></li>
+              <li><a href="assets/Flux/lockup-flux-dark.svg">lockup-flux-dark.svg</a></li>
+              <li><a href="assets/Flux/lockup-flux-light.svg">lockup-flux-light.svg</a></li>
+              <li><a href="assets/Flux/mark-bloom-dark.svg">mark-bloom-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-bloom-light.svg">mark-bloom-light.svg</a></li>
+              <li><a href="assets/Flux/mark-ember-dark.svg">mark-ember-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-ember-light.svg">mark-ember-light.svg</a></li>
+              <li><a href="assets/Flux/mark-flux-dark.svg">mark-flux-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-flux-light.svg">mark-flux-light.svg</a></li>
+              <li><a href="assets/Flux/mark-graphite-dark.svg">mark-graphite-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-graphite-light.svg">mark-graphite-light.svg</a></li>
+              <li><a href="assets/Flux/mark-grove-dark.svg">mark-grove-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-grove-light.svg">mark-grove-light.svg</a></li>
+              <li><a href="assets/Flux/mark-tide-dark.svg">mark-tide-dark.svg</a></li>
+              <li><a href="assets/Flux/mark-tide-light.svg">mark-tide-light.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Icons <span>13 files</span></summary>
+            <a href="assets/Icons/README.md">Icons usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Icons/apple-touch-icon.png">apple-touch-icon.png</a></li>
+              <li><a href="assets/Icons/favicon-mono.svg">favicon-mono.svg</a></li>
+              <li><a href="assets/Icons/favicon.ico">favicon.ico</a></li>
+              <li><a href="assets/Icons/favicon.svg">favicon.svg</a></li>
+              <li><a href="assets/Icons/icon-192.png">icon-192.png</a></li>
+              <li><a href="assets/Icons/icon-512.png">icon-512.png</a></li>
+              <li><a href="assets/Icons/icon-dark-1024.png">icon-dark-1024.png</a></li>
+              <li><a href="assets/Icons/icon-dark.svg">icon-dark.svg</a></li>
+              <li><a href="assets/Icons/icon-light-1024.png">icon-light-1024.png</a></li>
+              <li><a href="assets/Icons/icon-light.svg">icon-light.svg</a></li>
+              <li><a href="assets/Icons/icon.json">icon.json</a></li>
+              <li><a href="assets/Icons/layer-follower.svg">layer-follower.svg</a></li>
+              <li><a href="assets/Icons/layer-lead.svg">layer-lead.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Legacy <span>2 files</span></summary>
+            <a href="assets/Legacy/README.md">Legacy usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Legacy/wsurf-mark-ocean.svg">wsurf-mark-ocean.svg</a></li>
+              <li><a href="assets/Legacy/wsurf-mark-turquoise.svg">wsurf-mark-turquoise.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Lockup <span>7 files</span></summary>
+            <a href="assets/Lockup/README.md">Lockup usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Lockup/Inter-OFL.txt">Inter-OFL.txt</a></li>
+              <li><a href="assets/Lockup/lockup-dark.svg">lockup-dark.svg</a></li>
+              <li><a href="assets/Lockup/lockup-light.svg">lockup-light.svg</a></li>
+              <li><a href="assets/Lockup/lockup.svg">lockup.svg</a></li>
+              <li><a href="assets/Lockup/wordmark-dark.svg">wordmark-dark.svg</a></li>
+              <li><a href="assets/Lockup/wordmark-light.svg">wordmark-light.svg</a></li>
+              <li><a href="assets/Lockup/wordmark.svg">wordmark.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Mark <span>9 files</span></summary>
+            <a href="assets/Mark/README.md">Mark usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Mark/mark-dark.svg">mark-dark.svg</a></li>
+              <li><a href="assets/Mark/mark-light.svg">mark-light.svg</a></li>
+              <li><a href="assets/Mark/mark-small-dark.svg">mark-small-dark.svg</a></li>
+              <li><a href="assets/Mark/mark-small-light.svg">mark-small-light.svg</a></li>
+              <li><a href="assets/Mark/mark-small.svg">mark-small.svg</a></li>
+              <li><a href="assets/Mark/mark-tight-dark.svg">mark-tight-dark.svg</a></li>
+              <li><a href="assets/Mark/mark-tight-light.svg">mark-tight-light.svg</a></li>
+              <li><a href="assets/Mark/mark-tight.svg">mark-tight.svg</a></li>
+              <li><a href="assets/Mark/mark.svg">mark.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Mono <span>10 files</span></summary>
+            <a href="assets/Mono/README.md">Mono usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Mono/lockup-black.svg">lockup-black.svg</a></li>
+              <li><a href="assets/Mono/lockup-mono.svg">lockup-mono.svg</a></li>
+              <li><a href="assets/Mono/lockup-white.svg">lockup-white.svg</a></li>
+              <li><a href="assets/Mono/mark-black-tight.svg">mark-black-tight.svg</a></li>
+              <li><a href="assets/Mono/mark-black.svg">mark-black.svg</a></li>
+              <li><a href="assets/Mono/mark-mono-small.svg">mark-mono-small.svg</a></li>
+              <li><a href="assets/Mono/mark-mono-tight.svg">mark-mono-tight.svg</a></li>
+              <li><a href="assets/Mono/mark-mono.svg">mark-mono.svg</a></li>
+              <li><a href="assets/Mono/mark-white-tight.svg">mark-white-tight.svg</a></li>
+              <li><a href="assets/Mono/mark-white.svg">mark-white.svg</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Motion <span>5 files</span></summary>
+            <a href="assets/Motion/README.md">Motion usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Motion/TandemLoader.swift">TandemLoader.swift</a></li>
+              <li><a href="assets/Motion/tandem-loader-dark.mp4">tandem-loader-dark.mp4</a></li>
+              <li><a href="assets/Motion/tandem-loader-light.mp4">tandem-loader-light.mp4</a></li>
+              <li><a href="assets/Motion/tandem-loader.css">tandem-loader.css</a></li>
+              <li><a href="assets/Motion/tandem-loader.gif">tandem-loader.gif</a></li>
+            </ul>
+          </details>
+          <details class="asset-group">
+            <summary>Relief <span>15 files</span></summary>
+            <a href="assets/Relief/README.md">Relief usage guide</a>
+            <ul class="file-list">
+              <li><a href="assets/Relief/moon_color.png">moon_color.png</a></li>
+              <li><a href="assets/Relief/moon_height.png">moon_height.png</a></li>
+              <li><a href="assets/Relief/moon_normal.png">moon_normal.png</a></li>
+              <li><a href="assets/Relief/planet_clouds.png">planet_clouds.png</a></li>
+              <li><a href="assets/Relief/planet_color.png">planet_color.png</a></li>
+              <li><a href="assets/Relief/planet_height.png">planet_height.png</a></li>
+              <li><a href="assets/Relief/planet_normal.png">planet_normal.png</a></li>
+              <li><a href="assets/Relief/relief-clay-poster.jpg">relief-clay-poster.jpg</a></li>
+              <li><a href="assets/Relief/relief-clay.mp4">relief-clay.mp4</a></li>
+              <li><a href="assets/Relief/relief-earth-moon-480.gif">relief-earth-moon-480.gif</a></li>
+              <li><a href="assets/Relief/relief-earth-moon-poster.jpg">relief-earth-moon-poster.jpg</a></li>
+              <li><a href="assets/Relief/relief-earth-moon.mp4">relief-earth-moon.mp4</a></li>
+              <li><a href="assets/Relief/relief-topographic-poster.jpg">relief-topographic-poster.jpg</a></li>
+              <li><a href="assets/Relief/relief-topographic.mp4">relief-topographic.mp4</a></li>
+              <li><a href="assets/Relief/texture-recipe.json">texture-recipe.json</a></li>
+            </ul>
+          </details>
+          <!-- Asset catalogue ends here. -->
+      </div>
+      <div class="text-links"><a href="manifest.json">Machine-readable inventory (JSON)</a></div>
+    </section>
+
+    <section id="contribute" class="chapter guide" aria-labelledby="guide-title">
+      <div>
+        <h2 id="guide-title">Build with WSurf</h2>
+        <p class="summary">Use the same files in a prototype, on the website or in an agent’s brief. Update the kit in the same pull request as a change to the design.</p>
+        <div class="text-links"><a href="AI.md">AI instructions</a><a href="README.md">Design guide</a><a href="Adoption.md">Maintainer workflow</a></div>
+      </div>
+      <figure class="snippet">
+        <figcaption>Web component starter</figcaption>
+        <pre tabindex="0" aria-label="HTML for a WSurf primary action"><code>&lt;link rel="stylesheet"
+  href="/design-system/tokens.css"&gt;
+&lt;link rel="stylesheet"
+  href="/design-system/components/bundle.css"&gt;
+
+&lt;a class="ws-button ws-button--primary label"
+   href="/#build"&gt;Build WSurf&lt;/a&gt;</code></pre>
+      </figure>
+    </section>
+  </main>
+  <footer class="foot wrap">
+    <a href="/">WSurf</a>
+    <div><a href="assets/Lockup/Inter-OFL.txt">Wordmark license</a><a href="https://github.com/wsagency/wsurf/blob/main/NOTICE">Attributions</a><a href="https://github.com/wsagency/wsurf/tree/main/wsurf.app/design-system">View source ↗</a></div>
+  </footer>
+</body>
+</html>

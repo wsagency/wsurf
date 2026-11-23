@@ -1,0 +1,197 @@
+{
+  "name": "WSurf Design System",
+  "guide": "README.md",
+  "instructions": "AI.md",
+  "tokens": {
+    "data": "tokens.json",
+    "css": "tokens.css"
+  },
+  "componentStyles": "components/bundle.css",
+  "components": {
+    "AssistantBadge": {
+      "preview": "components/AssistantBadge/preview.html",
+      "guide": "components/AssistantBadge/README.md"
+    },
+    "Button": {
+      "preview": "components/Button/preview.html",
+      "guide": "components/Button/README.md"
+    },
+    "Callout": {
+      "preview": "components/Callout/preview.html",
+      "guide": "components/Callout/README.md"
+    },
+    "CodeBlock": {
+      "preview": "components/CodeBlock/preview.html",
+      "guide": "components/CodeBlock/README.md"
+    },
+    "Cover": {
+      "preview": "components/Cover/preview.html"
+    },
+    "FeatureCard": {
+      "preview": "components/FeatureCard/preview.html",
+      "guide": "components/FeatureCard/README.md"
+    },
+    "Loader": {
+      "preview": "components/Loader/preview.html",
+      "guide": "components/Loader/README.md"
+    },
+    "SiteHeader": {
+      "preview": "components/SiteHeader/preview.html",
+      "guide": "components/SiteHeader/README.md"
+    }
+  },
+  "assets": {
+    "3D": {
+      "guide": "assets/3D/README.md",
+      "files": [
+        "assets/3D/icon-3d-dark.png",
+        "assets/3D/icon-3d-light.png",
+        "assets/3D/mark-front-dark.png",
+        "assets/3D/mark-front-light.png",
+        "assets/3D/mark-hero-dark.png",
+        "assets/3D/mark-hero-light.png",
+        "assets/3D/mark-threeq-dark.png",
+        "assets/3D/mark-threeq-light.png",
+        "assets/3D/turntable-dark.mp4",
+        "assets/3D/turntable-light.mp4"
+      ]
+    },
+    "Dock": {
+      "guide": "assets/Dock/README.md",
+      "files": [
+        "assets/Dock/copper.png",
+        "assets/Dock/dark.png",
+        "assets/Dock/light.png",
+        "assets/Dock/metal.png",
+        "assets/Dock/mono.png",
+        "assets/Dock/steel.png"
+      ]
+    },
+    "Flux": {
+      "guide": "assets/Flux/README.md",
+      "files": [
+        "assets/Flux/Figtree-OFL.txt",
+        "assets/Flux/lockup-flux-dark.svg",
+        "assets/Flux/lockup-flux-light.svg",
+        "assets/Flux/mark-bloom-dark.svg",
+        "assets/Flux/mark-bloom-light.svg",
+        "assets/Flux/mark-ember-dark.svg",
+        "assets/Flux/mark-ember-light.svg",
+        "assets/Flux/mark-flux-dark.svg",
+        "assets/Flux/mark-flux-light.svg",
+        "assets/Flux/mark-graphite-dark.svg",
+        "assets/Flux/mark-graphite-light.svg",
+        "assets/Flux/mark-grove-dark.svg",
+        "assets/Flux/mark-grove-light.svg",
+        "assets/Flux/mark-tide-dark.svg",
+        "assets/Flux/mark-tide-light.svg"
+      ]
+    },
+    "Icons": {
+      "guide": "assets/Icons/README.md",
+      "files": [
+        "assets/Icons/apple-touch-icon.png",
+        "assets/Icons/favicon-mono.svg",
+        "assets/Icons/favicon.ico",
+        "assets/Icons/favicon.svg",
+        "assets/Icons/icon-192.png",
+        "assets/Icons/icon-512.png",
+        "assets/Icons/icon-dark-1024.png",
+        "assets/Icons/icon-dark.svg",
+        "assets/Icons/icon-light-1024.png",
+        "assets/Icons/icon-light.svg",
+        "assets/Icons/icon.json",
+        "assets/Icons/layer-follower.svg",
+        "assets/Icons/layer-lead.svg"
+      ]
+    },
+    "Legacy": {
+      "guide": "assets/Legacy/README.md",
+      "files": [
+        "assets/Legacy/wsurf-mark-ocean.svg",
+        "assets/Legacy/wsurf-mark-turquoise.svg"
+      ]
+    },
+    "Lockup": {
+      "guide": "assets/Lockup/README.md",
+      "files": [
+        "assets/Lockup/Inter-OFL.txt",
+        "assets/Lockup/lockup-dark.svg",
+        "assets/Lockup/lockup-light.svg",
+        "assets/Lockup/lockup.svg",
+        "assets/Lockup/wordmark-dark.svg",
+        "assets/Lockup/wordmark-light.svg",
+        "assets/Lockup/wordmark.svg"
+      ]
+    },
+    "Mark": {
+      "guide": "assets/Mark/README.md",
+      "files": [
+        "assets/Mark/mark-dark.svg",
+        "assets/Mark/mark-light.svg",
+        "assets/Mark/mark-small-dark.svg",
+        "assets/Mark/mark-small-light.svg",
+        "assets/Mark/mark-small.svg",
+        "assets/Mark/mark-tight-dark.svg",
+        "assets/Mark/mark-tight-light.svg",
+        "assets/Mark/mark-tight.svg",
+        "assets/Mark/mark.svg"
+      ]
+    },
+    "Mono": {
+      "guide": "assets/Mono/README.md",
+      "files": [
+        "assets/Mono/lockup-black.svg",
+        "assets/Mono/lockup-mono.svg",
+        "assets/Mono/lockup-white.svg",
+        "assets/Mono/mark-black-tight.svg",
+        "assets/Mono/mark-black.svg",
+        "assets/Mono/mark-mono-small.svg",
+        "assets/Mono/mark-mono-tight.svg",
+        "assets/Mono/mark-mono.svg",
+        "assets/Mono/mark-white-tight.svg",
+        "assets/Mono/mark-white.svg"
+      ]
+    },
+    "Motion": {
+      "guide": "assets/Motion/README.md",
+      "files": [
+        "assets/Motion/TandemLoader.swift",
+        "assets/Motion/tandem-loader-dark.mp4",
+        "assets/Motion/tandem-loader-light.mp4",
+        "assets/Motion/tandem-loader.css",
+        "assets/Motion/tandem-loader.gif"
+      ]
+    },
+    "Relief": {
+      "guide": "assets/Relief/README.md",
+      "files": [
+        "assets/Relief/moon_color.png",
+        "assets/Relief/moon_height.png",
+        "assets/Relief/moon_normal.png",
+        "assets/Relief/planet_clouds.png",
+        "assets/Relief/planet_color.png",
+        "assets/Relief/planet_height.png",
+        "assets/Relief/planet_normal.png",
+        "assets/Relief/relief-clay-poster.jpg",
+        "assets/Relief/relief-clay.mp4",
+        "assets/Relief/relief-earth-moon-480.gif",
+        "assets/Relief/relief-earth-moon-poster.jpg",
+        "assets/Relief/relief-earth-moon.mp4",
+        "assets/Relief/relief-topographic-poster.jpg",
+        "assets/Relief/relief-topographic.mp4",
+        "assets/Relief/texture-recipe.json"
+      ]
+    }
+  },
+  "walkthroughs": {
+    "spaces": {
+      "film": "../media/demos/spaces.mp4",
+      "poster": "../media/demos/spaces.jpg"
+    },
+    "micro": {
+      "film": "../media/demos/micro.mp4",
+      "poster": "../media/demos/micro.jpg"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="../../tokens.css">
+  <link rel="stylesheet" href="../bundle.css">
+  <link rel="stylesheet" href="../preview.css">
+  <title>Cover — WSurf Design System</title>
+</head>
+<body class="ws-preview-cover">
+  <main class="ws-cover">
+    <div class="ws-cover-art" aria-hidden="true">
+      <svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      mark-lead 224x256 bled off the top (the lead disc's violet, the largest field) · mark-follower 96x96 (the follower's mint) · ink 128x192 bleeding off the right edge — about 38% of 960x288
+  arrangement one tall violet slab with two satellites, bottoms on one line space-48 above the edge, space-16 gutters
+  pattern     the Tandem pair itself, from "you lead, the assistant follows": a lead disc with a bite and a follower riding in it (follower 0.48 R, centre 0.77 R left and 0.52 R down, bite 0.64 R), three pairs shrinking left to right, each on its block's own waterline
+  scales      sides in space-16 multiples; gutters space-16; block corners radius-popover; pair radii 72, 40, 24
+-->
+        <rect class="lead blk" x="16" y="-24" width="224" height="256" rx="16"/>
+        <rect class="follow blk" x="256" y="136" width="96" height="96" rx="16"/>
+        <rect class="ink blk" x="368" y="40" width="128" height="192" rx="16"/>
+        <circle class="ground" cx="156" cy="128" r="72"/><circle class="lead" cx="100.5" cy="165.4" r="46.2"/><circle class="follow" cx="100.5" cy="165.4" r="34.6"/>
+        <circle class="ground" cx="320" cy="184" r="24"/><circle class="follow" cx="301.5" cy="196.5" r="15.4"/><circle class="ink" cx="301.5" cy="196.5" r="11.5"/>
+        <circle class="ground" cx="448" cy="152" r="40"/><circle class="ink" cx="417.2" cy="172.8" r="25.6"/><circle class="follow" cx="417.2" cy="172.8" r="19.2"/>
+      </svg>
+    </div>
+    <div class="ws-cover-words">
+      <h1 class="ws-cover-name">WSurf</h1>
+      <p class="ws-cover-tag">Your browser. Your assistant. Your call.</p>
+    </div>
+  </main>
+</body>
+</html>

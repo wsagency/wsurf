@@ -311,6 +311,7 @@ other: add `.serialized` when they share state.
 
 ## Keep copy and design consistent
 
+- The [design system](wsurf.app/design-system/README.md) lives alongside the website and is served at `/design-system/`. Update its affected tokens, artwork, examples and usage notes in the same change as the design. The [maintainer workflow](wsurf.app/design-system/Adoption.md) includes regeneration and local preview. The [AI guide](wsurf.app/design-system/AI.md) applies to assisted changes too.
 - Use the shortest familiar label that is unambiguous.
 - Never use forced metaphors, poetic phrasing, or marketing filler in product
   copy. State the action or result directly: “Import your bookmarks,” “Choose

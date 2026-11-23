@@ -1,0 +1,408 @@
+/* SPDX-FileCopyrightText: 2026 WSurf Agency
+   SPDX-License-Identifier: BUSL-1.1 */
+/* WSurf Design System — generated from tokens.json */
+:root {
+  --neutral-0: #ffffff; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-50: #f5f5f7; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-100: #e8e8ed; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-200: #d2d2d7; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-300: #aeaeb2; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-400: #86868b; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-450: #7c7c80; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-500: #636366; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-600: #48484a; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-700: #3a3a3c; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-800: #2c2c2e; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-900: #1c1c1e; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --neutral-950: #111113; /* Neutral grey (Apple system greys around the Flux surfaces #F5F5F7 and #1C1C1E). Build UI from the semantic tokens; use steps directly only for tints. */
+  --space-2: 2px; /* Hairline gaps, icon nudges. */
+  --space-4: 4px; /* Icon-to-label gap in chips, tight stacks. */
+  --space-6: 6px; /* Gap between a mark and the wordmark; compact row padding. */
+  --space-8: 8px; /* Gap between nav links and buttons in a row. */
+  --space-10: 10px; /* Inner padding of compact controls. */
+  --space-12: 12px; /* Default padding in app panels and between grouped controls. */
+  --space-14: 14px; /* Row height padding in the sidebar. */
+  --space-16: 16px; /* Card gap in grids; minimum page gutter on phones. */
+  --space-24: 24px; /* Card padding on phones; gap between a headline and its copy. */
+  --space-32: 32px; /* Card and panel padding on desktop. */
+  --space-48: 48px; /* Gap between hero columns; large panel padding. */
+  --space-64: 64px; /* Section padding on phones. */
+  --space-96: 96px; /* Section padding on desktop. */
+  --radius-tight: 4px; /* Theme.Radius.tight: focus outlines, tiny swatches, inline code. */
+  --radius-chip: 8px; /* Theme.Radius.chip: chips, badges, tab favicons. */
+  --radius-control: 10px; /* Theme.Radius.control: app buttons, inputs, hover backgrounds; website inputs. */
+  --radius-card: 12px; /* Theme.Radius.card: cards in the app; code blocks on the website. */
+  --radius-panel: 14px; /* Theme.Radius.panel: sidebars and floating panels. */
+  --radius-popover: 16px; /* Theme.Radius.popover: popovers and menus; feature cards on the website. */
+  --radius-stage: 24px; /* Website only: large callout panels and hero artwork. */
+  --radius-full: 999px; /* Stadium shapes that echo the Flux track: website buttons, the assistant badge, status pills. */
+  --wash-faint: 0.04; /* Faint fills behind grouped rows. */
+  --wash-hairline: 0.06; /* Hairline separators drawn with ink. */
+  --wash-hover: 0.08; /* Hover background of rows and buttons. */
+  --wash-selection: 0.12; /* Selected row background. */
+  --wash-strong: 0.16; /* Pressed state; strong fills. */
+  --wash-emphasis: 0.30; /* Disabled ink; emphasised strokes. */
+  --wash-scrim: 0.55; /* Scrim behind sheets. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --text-display-xl: 700 72px/1.02 var(--font-display); /* Hero headline on the website, one per page. Scale down with clamp(44px, 6.4vw, 72px). */
+  --text-display: 700 44px/1.1 var(--font-display); /* Section headlines (h2). clamp(32px, 4vw, 44px). */
+  --text-heading: 650 20px/1.3 var(--font-sans); /* Card and sub-section titles (h3). */
+  --text-lede: 400 19px/1.6 var(--font-sans); /* Intro paragraph under a hero or section headline, in muted. */
+  --text-body: 400 16px/1.65 var(--font-sans); /* Running text on the website. */
+  --text-small: 400 14px/1.55 var(--font-sans); /* Card copy and secondary paragraphs. */
+  --text-label: 600 14px/1.2 var(--font-sans); /* Buttons, navigation and text links. */
+  --text-eyebrow: 700 12px/1.2 var(--font-sans); /* Uppercase kicker above a headline, in accent-text. */
+  --text-caption: 400 12px/1.5 var(--font-sans); /* Release notes, footers, fine print, in muted. */
+  --text-code: 400 14px/1.9 var(--font-mono); /* Code blocks and commands. */
+  --text-app-title: 500 13px/1.4 var(--font-sans); /* Theme.Font.title: window and panel titles. */
+  --text-app-row-title: 500 12.5px/1.4 var(--font-sans); /* Theme.Font.rowTitle: sidebar section and row titles. */
+  --text-app-row: 400 12.5px/1.4 var(--font-sans); /* Theme.Font.row: tab and list rows. */
+  --text-app-control: 500 12px/1.4 var(--font-sans); /* Theme.Font.control: buttons and segmented controls. */
+  --text-app-body: 400 12px/1.4 var(--font-sans); /* Theme.Font.body: panel text. */
+  --text-app-secondary: 400 11.5px/1.4 var(--font-sans); /* Theme.Font.secondary: secondary text, in muted. */
+  --text-app-label: 400 11px/1.4 var(--font-sans); /* Theme.Font.label: field labels. */
+  --text-app-caption: 400 10.5px/1.4 var(--font-sans); /* Theme.Font.caption: timestamps and hints. */
+  --text-app-mono: 400 11.5px/1.4 var(--font-mono); /* Theme.Font.mono: model ids, URLs, code. */
+  --text-app-mono-caption: 400 10.5px/1.4 var(--font-mono); /* Theme.Font.monoCaption: shortcuts. */
+  --text-app-badge: 600 10px/1.4 var(--font-sans); /* Theme.Font.badge: counters and badges. */
+  --text-app-micro: 400 10px/1.4 var(--font-sans); /* Theme.Font.micro: the smallest UI text. */
+  --text-app-heading: 600 15px/1.4 var(--font-sans); /* Proposed token for the 15pt literals in the app (no token today). */
+  --text-app-title2: 600 17px/1.4 var(--font-sans); /* Proposed token for the 17pt literals (onboarding, settings headers). */
+  --text-app-display: 700 22px/1.4 var(--font-sans); /* Proposed token for the 21 and 22pt literals (onboarding). */
+}
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: var(--neutral-50); /* Page and window background. #F5F5F7 and #1C1C1E are the surfaces the Flux palettes were tuned for. */
+  --surface: var(--neutral-0); /* Cards, panels, inputs and secondary buttons on bg. */
+  --sidebar: var(--neutral-100); /* Sidebars and recessed areas such as code blocks. */
+  --line: var(--neutral-200); /* Hairline borders and dividers. Decorative only. */
+  --line-strong: var(--neutral-400); /* Borders that identify a control (inputs, toggles). At least 3:1 on bg and surface. */
+  --ink: #1d1d1f; /* Primary text on bg, surface and sidebar. Also the lockup wordmark ink (the Flux Mono inks). */
+  --muted: #636366; /* Secondary text on bg, surface and sidebar. */
+  --accent: var(--flux-track-deep); /* The one action colour: primary button fill, selection, active nav. The colour of the Tandem lead disc. By night the fill is 3.6:1 on bg but 2.9:1 on surface (Flux value kept); there the white label carries the button. */
+  --accent-hover: #2e17a8; /* Hover and pressed state of an accent fill. */
+  --on-accent: #ffffff; /* Text and icons on an accent fill (9.1:1 by day, 4.8:1 by night). */
+  --accent-text: #3b1fd1; /* Links, eyebrows and highlighted words on bg, surface and sidebar. */
+  --accent-wash: rgba(59, 31, 209, 0.07); /* Tinted panel behind accent-related content, such as the security callout. */
+  --focus: #3b1fd1; /* Solid 2px focus ring with a 2px offset. At least 6:1 on every surface. */
+  --assistant: var(--flux-knob-start); /* The colour of the Tandem follower disc, used for the assistant's own activity: thinking, reading or acting on a tab, speaking. Fills and dots only; by day it is 2:1 on bg, so pair it with a label. */
+  --on-assistant: #1d1d1f; /* Text on an assistant fill. */
+  --assistant-text: #08745a; /* Assistant labels and status text on bg, surface and sidebar. */
+  --assistant-wash: rgba(20, 199, 154, 0.14); /* Background of an assistant activity row or badge. */
+  --mark-lead: var(--flux-track-deep); /* The Tandem mark's lead disc (you): #3B1FD1 by day, #6D55FF by night. Only for the mark and the app icon. */
+  --mark-follower: var(--flux-knob-start); /* The Tandem mark's follower disc (the assistant): #14C79A by day, #2FE0B2 by night. The same mint as `assistant`. */
+  --success: #1e7b34; /* Success text and icons on bg and surface. Always with a word or icon, because it sits near the assistant mint. */
+  --warning: #b5540d; /* Warning text and icons on bg and surface (4.1:1 on sidebar by day). */
+  --danger: #d70015; /* Destructive actions and errors on bg and surface. Always with a word or icon. */
+  --flux-track-deep: #3b1fd1; /* Flux palette (the brand pair carried into Tandem: lead = track deep, follower = knob start), track gradient start; the silhouette, at least 3:1 on its surface. The only colour palette for the website, README and favicons. */
+  --flux-track-bright: #8a63ff; /* Flux palette: Track gradient end. */
+  --flux-knob-start: #14c79a; /* Flux palette: Knob gradient start; defines the knob edge against the ring. */
+  --flux-knob-end: #d9fff0; /* Flux palette: Knob gradient end; sits near the surface on purpose. */
+  --ember-track-deep: #a3153a; /* Ember palette, track gradient start; the silhouette, at least 3:1 on its surface. Momentum. From the superseded Flux palette draft (reference only; current Dock icon finishes are Default/Anodized, Steel, Copper, Light, Dark, and Mono). */
+  --ember-track-bright: #f0502f; /* Ember palette: Track gradient end. */
+  --ember-knob-start: #ffb02e; /* Ember palette: Knob gradient start; defines the knob edge against the ring. */
+  --ember-knob-end: #fff1cc; /* Ember palette: Knob gradient end; sits near the surface on purpose. */
+  --tide-track-deep: #0b3a8c; /* Tide palette, track gradient start; the silhouette, at least 3:1 on its surface. Calm, ocean heritage. From the superseded Flux palette draft (reference only; current Dock icon finishes are Default/Anodized, Steel, Copper, Light, Dark, and Mono). */
+  --tide-track-bright: #3c8cff; /* Tide palette: Track gradient end. */
+  --tide-knob-start: #00b8e6; /* Tide palette: Knob gradient start; defines the knob edge against the ring. */
+  --tide-knob-end: #eafbff; /* Tide palette: Knob gradient end; sits near the surface on purpose. */
+  --grove-track-deep: #0e4d3a; /* Grove palette, track gradient start; the silhouette, at least 3:1 on its surface. Growth. From the superseded Flux palette draft (reference only; current Dock icon finishes are Default/Anodized, Steel, Copper, Light, Dark, and Mono). */
+  --grove-track-bright: #2e9e6b; /* Grove palette: Track gradient end. */
+  --grove-knob-start: #8fcb1f; /* Grove palette: Knob gradient start; defines the knob edge against the ring. */
+  --grove-knob-end: #f7ffd9; /* Grove palette: Knob gradient end; sits near the surface on purpose. */
+  --bloom-track-deep: #8f1480; /* Bloom palette, track gradient start; the silhouette, at least 3:1 on its surface. Playful, punchy. From the superseded Flux palette draft (reference only; current Dock icon finishes are Default/Anodized, Steel, Copper, Light, Dark, and Mono). */
+  --bloom-track-bright: #f5309f; /* Bloom palette: Track gradient end. */
+  --bloom-knob-start: #00c2e0; /* Bloom palette: Knob gradient start; defines the knob edge against the ring. */
+  --bloom-knob-end: #e6fcff; /* Bloom palette: Knob gradient end; sits near the surface on purpose. */
+  --graphite-track-deep: #1d1f24; /* Graphite palette, track gradient start; the silhouette, at least 3:1 on its surface. Focus, neutral. A two-stop colour gradient, not monochrome. From the superseded Flux palette draft (reference only; current Dock icon finishes are Default/Anodized, Steel, Copper, Light, Dark, and Mono). */
+  --graphite-track-bright: #5a6170; /* Graphite palette: Track gradient end. */
+  --graphite-knob-start: #9aa3b2; /* Graphite palette: Knob gradient start; defines the knob edge against the ring. */
+  --graphite-knob-end: #ffffff; /* Graphite palette: Knob gradient end; sits near the surface on purpose. */
+  --shadow-raised: 0 4px 12px rgba(23, 23, 28, 0.10); /* Popovers, menus and hovered cards. */
+  --shadow-overlay: 0 18px 44px rgba(23, 23, 28, 0.18); /* Command palette and modal sheets. */
+}
+:root:not([data-theme]) {
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: var(--neutral-900);
+    --surface: var(--neutral-800);
+    --sidebar: var(--neutral-950);
+    --line: var(--neutral-700);
+    --line-strong: var(--neutral-450);
+    --ink: var(--neutral-50);
+    --muted: #98989d;
+    --accent: var(--flux-track-deep);
+    --accent-hover: #5a40f0;
+    --on-accent: #ffffff;
+    --accent-text: var(--flux-track-bright);
+    --accent-wash: rgba(180, 156, 255, 0.12);
+    --focus: var(--flux-track-bright);
+    --assistant: var(--flux-knob-start);
+    --on-assistant: #1c1c1e;
+    --assistant-text: var(--flux-knob-start);
+    --assistant-wash: rgba(47, 224, 178, 0.14);
+    --mark-lead: var(--flux-track-deep);
+    --mark-follower: var(--flux-knob-start);
+    --success: #30d158;
+    --warning: #e6a363;
+    --danger: #ff6961;
+    --flux-track-deep: #6d55ff;
+    --flux-track-bright: #b49cff;
+    --flux-knob-start: #2fe0b2;
+    --flux-knob-end: #effff9;
+    --ember-track-deep: #e0476a;
+    --ember-track-bright: #ff8a5b;
+    --ember-knob-start: #ffc24d;
+    --ember-knob-end: #fff6dc;
+    --tide-track-deep: #4c8dff;
+    --tide-track-bright: #8dbfff;
+    --tide-knob-start: #4fd8ff;
+    --tide-knob-end: #f2fdff;
+    --grove-track-deep: #2fae80;
+    --grove-track-bright: #6fd6a4;
+    --grove-knob-start: #b6e64a;
+    --grove-knob-end: #fbffe6;
+    --bloom-track-deep: #d43fc0;
+    --bloom-track-bright: #ff7fc8;
+    --bloom-knob-start: #2fd6f0;
+    --bloom-knob-end: #eefdff;
+    --graphite-track-deep: #7f8797;
+    --graphite-track-bright: #c3c9d4;
+    --graphite-knob-start: #d5dae3;
+    --graphite-knob-end: #ffffff;
+    --shadow-raised: 0 5px 11px rgba(0, 0, 0, 0.30);
+    --shadow-overlay: 0 18px 44px rgba(0, 0, 0, 0.40);
+  }
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: var(--neutral-900);
+  --surface: var(--neutral-800);
+  --sidebar: var(--neutral-950);
+  --line: var(--neutral-700);
+  --line-strong: var(--neutral-450);
+  --ink: var(--neutral-50);
+  --muted: #98989d;
+  --accent: var(--flux-track-deep);
+  --accent-hover: #5a40f0;
+  --on-accent: #ffffff;
+  --accent-text: var(--flux-track-bright);
+  --accent-wash: rgba(180, 156, 255, 0.12);
+  --focus: var(--flux-track-bright);
+  --assistant: var(--flux-knob-start);
+  --on-assistant: #1c1c1e;
+  --assistant-text: var(--flux-knob-start);
+  --assistant-wash: rgba(47, 224, 178, 0.14);
+  --mark-lead: var(--flux-track-deep);
+  --mark-follower: var(--flux-knob-start);
+  --success: #30d158;
+  --warning: #e6a363;
+  --danger: #ff6961;
+  --flux-track-deep: #6d55ff;
+  --flux-track-bright: #b49cff;
+  --flux-knob-start: #2fe0b2;
+  --flux-knob-end: #effff9;
+  --ember-track-deep: #e0476a;
+  --ember-track-bright: #ff8a5b;
+  --ember-knob-start: #ffc24d;
+  --ember-knob-end: #fff6dc;
+  --tide-track-deep: #4c8dff;
+  --tide-track-bright: #8dbfff;
+  --tide-knob-start: #4fd8ff;
+  --tide-knob-end: #f2fdff;
+  --grove-track-deep: #2fae80;
+  --grove-track-bright: #6fd6a4;
+  --grove-knob-start: #b6e64a;
+  --grove-knob-end: #fbffe6;
+  --bloom-track-deep: #d43fc0;
+  --bloom-track-bright: #ff7fc8;
+  --bloom-knob-start: #2fd6f0;
+  --bloom-knob-end: #eefdff;
+  --graphite-track-deep: #7f8797;
+  --graphite-track-bright: #c3c9d4;
+  --graphite-knob-start: #d5dae3;
+  --graphite-knob-end: #ffffff;
+  --shadow-raised: 0 5px 11px rgba(0, 0, 0, 0.30);
+  --shadow-overlay: 0 18px 44px rgba(0, 0, 0, 0.40);
+}
+.display-xl {
+  font-family: var(--font-display);
+  font-size: 72px;
+  line-height: 1.02;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.display {
+  font-family: var(--font-display);
+  font-size: 44px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.heading {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.lede {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  line-height: 1.6;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.small {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.label {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.caption {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.9;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-title {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app-row-title {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app-row {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-control {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app-body {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-secondary {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-caption {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-mono-caption {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-badge {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.app-micro {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.app-heading {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.app-title2 {
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.app-display {
+  font-family: var(--font-sans);
+  font-size: 22px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: 0;
+}

@@ -14,6 +14,8 @@ These rules apply to all code, documentation, and configuration changes in this 
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree setup and PR checklist, and [RELEASING.md](RELEASING.md#source-and-deployment-policy) for release and deployment gates.
 
+For interface, brand, motion or website changes, read the [design system and AI instructions](wsurf.app/design-system/AI.md). Update the affected guidance, examples and assets under `wsurf.app/design-system/` in the same PR. The [maintainer guide](wsurf.app/design-system/Adoption.md) identifies the source for each asset.
+
 ## Agent workflow
 
 - Use Superpowers for all work in this repository.
