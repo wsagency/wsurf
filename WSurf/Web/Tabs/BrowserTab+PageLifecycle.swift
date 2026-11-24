@@ -41,6 +41,8 @@ extension BrowserTab {
             }
         }
         pendingPDFOpening = nil
+        page.chromium?.trace("tab.navigationStarted \(ChromiumPage.tracePath(url)) nav=\(ChromiumPage.traceID(navigation)) "
+            + "loadingErr=\(isLoadingErrorPage) err=\(isShowingError) errDoc=\(navigation === errorDocumentNavigation)")
         // A Back, Reload or typed address that stops the error document while it loads reports nothing for it, so the flag would
         // outlive it: only the error document's own start (the one `navigationFailed` made) keeps it.
         if isLoadingErrorPage, navigation !== errorDocumentNavigation {
@@ -131,6 +133,8 @@ extension BrowserTab {
 
     func navigationFailed(_ navigation: PageNavigation?, error: Error) {
         guard !isClosed else { return }
+        page.chromium?.trace("tab.navigationFailed code=\((error as NSError).code) nav=\(ChromiumPage.traceID(navigation)) "
+            + "loadingErr=\(isLoadingErrorPage) err=\(isShowingError) silent=\(ErrorPage.isSilent(error))")
         if let navigation, leavingSignIn?.navigation === navigation {
             leavingSignIn = nil
         }
@@ -160,6 +164,7 @@ extension BrowserTab {
                 return
             }
             if isLoadingErrorPage {
+                page.chromium?.trace("tab.alertBranch")
                 isLoadingErrorPage = false
                 let failedPage = page
                 Task { [weak self, weak failedPage] in
@@ -182,6 +187,7 @@ extension BrowserTab {
                 isShowingError = true
                 isLoadingErrorPage = true
                 errorDocumentNavigation = ErrorPage.show(error, in: page, fallbackURL: fallback)
+                page.chromium?.trace("tab.errorDocument errDoc=\(ChromiumPage.traceID(errorDocumentNavigation))")
                 // A Back or Forward to a restored Chromium entry that failed keeps its place in the list (D3b).
                 page.chromium?.keepHopThroughErrorDocument(failed: navigation)
             }

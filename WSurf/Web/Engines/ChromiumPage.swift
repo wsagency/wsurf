@@ -62,6 +62,8 @@ final class ChromiumPage: NSView {
     var historyRecord = ChromiumHistoryRecord()
     var requestedURL: URL?
     var awaitingNativeNavigation = false
+    /// Diagnostic only (draft PR): a test's sink for the navigation trace (`ChromiumPage+Diagnostics`); nil in the app.
+    var diagnosticEventSink: ((String) -> Void)?
     /// The address of a same-document move the engine reported before it reported the address.
     private var awaitedMoveAddress: URL?
     /// Set while the awaited native navigation may stay inside the document, so it never reaches `willNavigate`.
@@ -365,6 +367,7 @@ final class ChromiumPage: NSView {
         navigationStarted = false
         owner?.isLoading = true
         owner?.estimatedProgress = 0
+        trace("load \(Self.tracePath(url)) nav=\(Self.traceID(next)) byPerson=\(byPerson)")
         pendingLoad = Task { [weak self] in
             guard let self else { return }
             do {
@@ -374,16 +377,27 @@ final class ChromiumPage: NSView {
                         attachmentWaiters.append(continuation)
                     }
                 }
-                guard !Task.isCancelled, navigation === next else { return }
+                guard !Task.isCancelled, navigation === next else {
+                    trace("loadNative.skip@attach \(Self.tracePath(url)) cancelled=\(Task.isCancelled) nav=\(Self.traceID(next)) now=\(Self.traceID(navigation))")
+                    return
+                }
                 try await ensureReady()
-                guard !Task.isCancelled, navigation === next else { return }
+                guard !Task.isCancelled, navigation === next else {
+                    trace("loadNative.skip@ready \(Self.tracePath(url)) cancelled=\(Task.isCancelled) nav=\(Self.traceID(next)) now=\(Self.traceID(navigation))")
+                    return
+                }
                 if !hasAppliedInitialSettings {
                     try await applySettings(context.settings)
                     hasAppliedInitialSettings = true
                 }
-                guard !Task.isCancelled, navigation === next else { return }
+                guard !Task.isCancelled, navigation === next else {
+                    trace("loadNative.skip@settings \(Self.tracePath(url)) cancelled=\(Task.isCancelled) nav=\(Self.traceID(next)) now=\(Self.traceID(navigation))")
+                    return
+                }
+                trace("loadNative \(Self.tracePath(url)) nav=\(Self.traceID(next))")
                 try loadNative(request)
             } catch {
+                trace("load.error \(Self.tracePath(url)) cancelled=\(Task.isCancelled) nav=\(Self.traceID(next)) now=\(Self.traceID(navigation))")
                 guard !Task.isCancelled, navigation === next else { return }
                 owner?.isLoading = false
                 owner?.onNavigationFailed?(next, error)
@@ -532,6 +546,7 @@ final class ChromiumPage: NSView {
         navigation = next
         awaitLoad(of: nil)
         navigationStarted = false
+        trace("reload.native nav=\(Self.traceID(next))")
         remote?.send(CefRemote.Op.reload) { $0.set(CefRemote.Key.flag, ignoreCache) }
         withBrowser { browser in
             if ignoreCache {
@@ -549,6 +564,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
+        trace("goBack.native nav=\(Self.traceID(navigation))")
         remote?.send(CefRemote.Op.goBack)
         withBrowser { $0.pointee.go_back?($0) }
         return navigation
@@ -560,6 +576,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
+        trace("goForward.native nav=\(Self.traceID(navigation))")
         remote?.send(CefRemote.Op.goForward)
         withBrowser { $0.pointee.go_forward?($0) }
         return navigation
@@ -636,6 +653,7 @@ final class ChromiumPage: NSView {
     func willNavigate(_ request: URLRequest, isRedirect: Bool) {
         guard !closing, !isClosed, let url = request.url else { return }
         if initialDocument && url.absoluteString == "about:blank" { return }
+        trace("willNavigate \(Self.tracePath(url)) redirect=\(isRedirect) \(traceState)")
         initialDocument = false
         // Before the request is sent, so the new document reads the store's camera and microphone choice.
         ChromiumRuntime.shared.mirrorCapture([url.absoluteString], in: context)
@@ -671,6 +689,7 @@ final class ChromiumPage: NSView {
     }
 
     func didStartLoad() {
+        trace("didStartLoad initial=\(initialDocument) \(traceState)")
         mainFrameGeneration &+= 1
         guard !initialDocument, !awaitingNativeNavigation, !closing, !isClosed else { return }
         updateNativeSecurity()
@@ -683,6 +702,7 @@ final class ChromiumPage: NSView {
             ChromiumRuntime.shared.recordOrigin(url, under: frame.isMainFrame ? nil : owner?.url, context: context)
         }
         guard frame.isMainFrame else { return }
+        trace("didNavigate \(Self.tracePath(frame.request.url)) cache=\(restoredFromCache) \(traceState)")
         guard !initialDocument,
               frame.request.url?.absoluteString != "about:blank" || requestedURL?.absoluteString == "about:blank" else { return }
         if restoredFromCache && !navigationStarted {
@@ -698,6 +718,7 @@ final class ChromiumPage: NSView {
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
         historyRecord.noteCommit(frame.request.url, navigation: navigation)
+        trace("noteCommit moved=\(historyRecord.hopHasMoved)")
         if startupEntry == .inHistory {
             dropStartupEntry()
         } else {
@@ -712,6 +733,7 @@ final class ChromiumPage: NSView {
     }
 
     func didFinishLoad(status: Int) {
+        trace("didFinishLoad status=\(status) \(traceState)")
         guard !closing, !isClosed else { return }
         guard !initialDocument, navigationStarted, !awaitingNativeNavigation else { return }
         updateNativeSecurity()
@@ -723,6 +745,7 @@ final class ChromiumPage: NSView {
     }
 
     func didFailLoad(code: Int, text: String, url: String) {
+        trace("didFailLoad code=\(code) \(Self.tracePath(url)) matches=\(requestedURL?.absoluteString == url) \(traceState)")
         guard code != -3, !closing, !isClosed else { return } // ERR_ABORTED is normal cancellation.
         guard !initialDocument, !awaitingNativeNavigation || requestedURL?.absoluteString == url else { return }
         let error = NSError(domain: "Chromium", code: code,
@@ -754,6 +777,7 @@ final class ChromiumPage: NSView {
         }
     }
     func didChangeURL(_ url: URL?) {
+        trace("didChangeURL \(Self.tracePath(url))")
         guard !initialDocument || url?.absoluteString != "about:blank" else { return }
         owner?.url = url
         requestedURL = url
@@ -768,6 +792,7 @@ final class ChromiumPage: NSView {
     /// The main frame moved inside its document. The owner is told once it also holds the new address, which the engine
     /// reports through `didChangeURL`, before or after this event.
     func didNavigateWithinDocument(to url: URL) {
+        trace("didNavigateWithinDocument \(Self.tracePath(url)) \(traceState)")
         guard !closing, !isClosed, !initialDocument else { return }
         completeAwaitedMoveWithinDocument()
         guard owner?.url == url else {
@@ -777,6 +802,7 @@ final class ChromiumPage: NSView {
         owner?.onNavigatedWithinDocument?()
     }
     func didChangeLoading(_ loading: Bool, canGoBack: Bool, canGoForward: Bool) {
+        trace("didChangeLoading loading=\(loading) \(traceState)")
         guard !closing, !isClosed, !initialDocument else { return }
         // Chromium counts the startup page while it is in the history, and reports it on every loading change.
         owner?.canGoBack = canGoBack && nativeCanGoBack() || !historyRecord.back.isEmpty

@@ -417,6 +417,29 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    /// Diagnostic only (draft PR): the page's ordered navigation callbacks (`ChromiumPage+Diagnostics`), each with its milliseconds
+    /// since the trace began, for the failure message of a test that fails on CI.
+    final class Trace {
+        private let start = ContinuousClock.now
+        private(set) var lines: [String] = []
+
+        func record(_ event: String) {
+            let elapsed = start.duration(to: .now).components
+            lines.append("+\(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000) \(event)")
+        }
+    }
+
+    private func traced(_ tab: BrowserTab) throws -> Trace {
+        let trace = Trace()
+        try #require(tab.page.chromium).diagnosticEventSink = { trace.record($0) }
+        return trace
+    }
+
+    private func diag(_ tab: BrowserTab, _ trace: Trace) -> String {
+        "\(lists(tab)) loading=\(tab.page.isLoading) err=\(tab.isShowingError) loadingErr=\(tab.isLoadingErrorPage) "
+            + "title=\(tab.page.title ?? "-") trace=[\(trace.lines.joined(separator: " | "))]"
+    }
+
     /// Whether `tab` has finished loading WSurf's error document, titled with its headline. Not the alert branch (which clears the
     /// flag too, and leaves `isShowingError` from the earlier failure) and not the engine's own error page.
     private func showsOwnErrorPage(_ tab: BrowserTab) async -> Bool {
@@ -472,10 +495,11 @@ struct ChromiumHistoryRestoreTests {
             try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
 
             let mark = log.count
+            let trace = try traced(tab)
             onceAfterFailure(of: tab) { [weak tab] in tab?.goBack() }
             tab.goBack()
-            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(diag(tab, trace))")
+            #expect(await showsOwnErrorPage(tab), "\(diag(tab, trace))")
             #expect(tab.urlString == dead.absoluteString, "the tab's address (saved as its current entry) is the failed one: \(tab.urlString)")
             let first = try rig.server.url("/a").absoluteString
             let left = try rig.server.url("/c").absoluteString
@@ -485,7 +509,7 @@ struct ChromiumHistoryRestoreTests {
             #expect(saved["back"]?.compactMap { $0["url"] } == [first] && saved["forward"]?.compactMap { $0["url"] } == [left],
                     "saved: the list in its order, no entry twice: \(saved)")
             tab.goBack()
-            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(diag(tab, trace))")
             #expect(await requests(log, since: mark, are: ["GET /a"]), "Back never went to /c: \(log.since(mark))")
         }
     }
@@ -499,13 +523,14 @@ struct ChromiumHistoryRestoreTests {
             try #require(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
 
             let mark = log.count
+            let trace = try traced(tab)
             onceAfterFailure(of: tab) { [weak tab] in tab?.goForward() }
             tab.goForward()
-            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(diag(tab, trace))")
+            #expect(await showsOwnErrorPage(tab), "\(diag(tab, trace))")
             #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
             tab.goForward()
-            #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+            #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(diag(tab, trace))")
             #expect(await requests(log, since: mark, are: ["GET /c"]), "\(log.since(mark))")
         }
     }
@@ -543,6 +568,7 @@ struct ChromiumHistoryRestoreTests {
             try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
 
             let mark = log.count
+            let trace = try traced(tab)
             onceAfterFailure(of: tab) { [weak tab] in
                 if typedAfterStop {
                     tab?.stopLoading()
@@ -552,8 +578,8 @@ struct ChromiumHistoryRestoreTests {
                 }
             }
             tab.goBack()
-            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(diag(tab, trace))")
+            #expect(await showsOwnErrorPage(tab), "\(diag(tab, trace))")
             #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
             let stored = try #require(tab.sessionState)
             let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])

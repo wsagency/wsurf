@@ -32,6 +32,7 @@ extension ChromiumPage {
     }
 
     func stopLoading() {
+        trace("stopLoading \(traceState)")
         pendingLoad?.cancel()
         client?.documentResponses.reset()
         remote?.send(CefRemote.Op.stop)

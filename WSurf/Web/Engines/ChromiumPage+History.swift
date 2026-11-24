@@ -235,7 +235,9 @@ extension ChromiumPage {
     // MARK: Restored entries (D3b)
 
     private func applyToRecord(_ list: [CefRemote.HistoryEntry]) {
-        switch historyRecord.update(native: list, navigation: navigation) {
+        let change = historyRecord.update(native: list, navigation: navigation)
+        trace("update \(Self.traceList(list)) -> \(Self.traceChange(change)) \(traceState)")
+        switch change {
         case .unchanged:
             return
         case .forwardDropped:
@@ -269,6 +271,7 @@ extension ChromiumPage {
     /// The person's (or the agent's) Back: natively while Chromium has an entry to go to, else a hop to the newest restored entry. While
     /// a hop's entry is in Chromium's list but not yet applied (`ChromiumHistoryRecord.hopHasMoved`), from where it started (`rehop`).
     func goBackInHistory() -> PageNavigation? {
+        trace("goBackInHistory \(traceState)")
         if historyRecord.hopHasMoved {
             return rehop(to: historyRecord.entryFromHop(-1))
         }
@@ -279,6 +282,7 @@ extension ChromiumPage {
     }
 
     func goForwardInHistory() -> PageNavigation? {
+        trace("goForwardInHistory \(traceState)")
         if historyRecord.hopHasMoved {
             return rehop(to: historyRecord.entryFromHop(1))
         }
@@ -298,17 +302,20 @@ extension ChromiumPage {
     /// WSurf's error document replaced the failed load `failed`: a hop that was that load keeps its place through the document.
     func keepHopThroughErrorDocument(failed: PageNavigation?) {
         historyRecord.failedHop(failed, errorDocument: navigation)
+        trace("failedHop failed=\(Self.traceID(failed)) \(traceState)")
     }
 
     /// Reload: while a failed hop holds the list, the failed entry again by GET in its place (`rehop`). A native reload of Chromium's
     /// error entry would make a second error document after it, and the failed entry would be in the list twice.
     func reloadInHistory(ignoreCache: Bool = false, byPerson: Bool = false) -> PageNavigation? {
-        historyRecord.hopHasMoved ? rehop(to: historyRecord.hopTarget, byPerson: byPerson) : reload(ignoreCache: ignoreCache, byPerson: byPerson)
+        trace("reloadInHistory \(traceState)")
+        return historyRecord.hopHasMoved ? rehop(to: historyRecord.hopTarget, byPerson: byPerson) : reload(ignoreCache: ignoreCache, byPerson: byPerson)
     }
 
     /// A load of the failed entry's own address while a failed hop holds the list (a reload after Stop, the address typed again)
     /// retries the hop, as a reload does. Any other load replaces it (`ChromiumHistoryRecord.superseded`).
     func loadInHistory(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
+        trace("loadInHistory \(Self.tracePath(request.url)) \(traceState)")
         if historyRecord.hopHasMoved, (request.httpMethod ?? "GET") == "GET", let target = historyRecord.hopTarget, request.url == target.url {
             return rehop(to: target, byPerson: byPerson)
         }
@@ -330,6 +337,7 @@ extension ChromiumPage {
         if historyRecord.hopHasMoved {
             guard let index = historyRecord.indexInHop(of: id), let next = load(URLRequest(url: url)) else { return nil }
             historyRecord.retargetHop(to: index, navigation: next)
+            trace("retargetHop pick index=\(index) \(traceState)")
             return next
         }
         let reachable = firstReachable(firstAddress: read.entries.first?.url, in: historyRecord.native)
@@ -338,6 +346,7 @@ extension ChromiumPage {
         }
         guard let next = load(URLRequest(url: url)) else { return nil }
         historyRecord.startHop(to: id, window: window, current: read.current - reachable, navigation: next)
+        trace("startHop \(Self.tracePath(url)) \(traceState)")
         return next
     }
 
@@ -346,6 +355,7 @@ extension ChromiumPage {
     private func rehop(to entry: (index: Int, url: URL)?, byPerson: Bool = false) -> PageNavigation? {
         guard let entry, let next = load(URLRequest(url: entry.url), byPerson: byPerson) else { return nil }
         historyRecord.retargetHop(to: entry.index, navigation: next)
+        trace("retargetHop \(Self.tracePath(entry.url)) index=\(entry.index) \(traceState)")
         return next
     }
 
