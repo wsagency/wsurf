@@ -101,6 +101,17 @@ done
 foundNames=()
 missingNames=()
 if [[ "${#shortNames[@]}" -gt 0 ]]; then
+    # /usr/bin/otool is a shim that asks DEVELOPER_DIR, else xcode-select, for the real tool. A test host is not given the
+    # caller's DEVELOPER_DIR (only TEST_RUNNER_DEVELOPER_DIR, passed on as it), and a runner's xcode-select can name a stale or
+    # missing Xcode: when the one asked for has no otool, an Xcode (or the Command Line Tools) that has it is chosen here.
+    if ! /usr/bin/xcrun --find otool >/dev/null 2>&1; then
+        for developer in /Applications/Xcode*.app/Contents/Developer /Library/Developer/CommandLineTools; do
+            if [[ -d "$developer" ]] && DEVELOPER_DIR="$developer" /usr/bin/xcrun --find otool >/dev/null 2>&1; then
+                export DEVELOPER_DIR="$developer"
+                break
+            fi
+        done
+    fi
     disassembly=$(/usr/bin/otool -tV "$target") || { echo "error: otool failed for $target" >&2; exit 2; }
     [[ -n "$disassembly" ]] || { echo "error: no disassembly of $target (otool -tV printed nothing)" >&2; exit 2; }
     scan=$(printf '%s\n' "$disassembly" | /usr/bin/python3 -I "$repo/Tools/check-service-immediates.py" /dev/stdin "${shortNames[@]}") || {

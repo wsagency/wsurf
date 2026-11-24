@@ -93,7 +93,9 @@ for suite in "$@"; do
 done
 echo "=== test-without-building: $*"
 code=0
-python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+# The test host gets the selected Xcode too: tools it runs (the strings check's otool) must not fall back to xcode-select.
+TEST_RUNNER_DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" \
+    python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
     -xctestrun "$xctestrun" \
     -destination 'platform=macOS,arch=arm64' \
     -resultBundlePath "$OUT/oop.xcresult" \
