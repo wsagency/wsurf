@@ -6,28 +6,43 @@
 # Hygiene Rules"):
 #
 #   Tools/clean-pro-disk.sh              # dry run (the default): list candidates and their size
-#   "$LOCK" Tools/clean-pro-disk.sh --apply
+#   Tools/clean-pro-disk.sh --apply      # takes the Pro lock first
 #
-# Run --apply under the Pro lock, so no build or test is using a clone or temp directory while it goes.
+# --apply runs under the Pro lock (WSURF_PRO_LOCK, the with-pro-lock.sh wrapper Tools/ci-local.sh uses), so no build or
+# test is using a clone or temp directory while it goes. --no-lock skips it: only when nothing else can build, such as
+# below the wrapper's own 15 GiB floor, where it starts nothing.
 #   1. Suffixed test identities' code_sign_clone directories in X/. Never io.wsagency.wsurf.code_sign_clone (the real
 #      app) or a Stage identity (io.wsagency.wsurf.stage.*).
-#   2. WSurf temp directories older than 24 hours at the top of the user temp directory and /private/tmp. Never
-#      /tmp/wsurf-cvs, which holds the Pro lock.
+#   2. WSurf temp directories older than 24 hours at the top of the user temp directory and /private/tmp. Never a
+#      wsurf-cvs directory (/tmp/wsurf-cvs holds the Pro lock), nor anything that resolves into one.
 #   3. .xcresult bundles older than 48 hours under each worktree's build/.
-#   4. Worktrees: report only. A merged, clean worktree is listed with its removal command; nothing is removed.
+#   4. Worktrees: report only. A merged, clean worktree with commits of its own is listed with its removal command;
+#      nothing is removed.
 # Deletes directly and prints the space freed: nothing goes to the Trash.
 #
 # Test overrides: WSURF_CODE_SIGN_CLONE_ROOT, WSURF_TMP_ROOTS (colon-separated), WSURF_REPO_ROOT.
 set -euo pipefail
 
 apply=
-case "${1:-}" in
-  --apply) apply=YES ;;
-  ''|--dry-run) ;;
-  *) echo "usage: $0 [--dry-run | --apply]" >&2; exit 2 ;;
-esac
+lock=YES
+for arg in "$@"; do
+  case "$arg" in
+    --apply) apply=YES ;;
+    --no-lock) lock= ;;
+    --dry-run) ;;
+    *) echo "usage: $0 [--dry-run | --apply [--no-lock]]" >&2; exit 2 ;;
+  esac
+done
 
 tools="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "$apply" ] && [ -n "$lock" ] && [ -z "${WSURF_CI_LOCAL_LOCKED:-}" ]; then
+  LOCK="${WSURF_PRO_LOCK-/Users/klukacin/Library/Application Support/Claude/side-session-notes/local_a84c7367-175a-4e1d-8e46-7298dec65c7f/release-0-1-1/with-pro-lock.sh}"
+  [ -n "$LOCK" ] && [ -x "$LOCK" ] || {
+    echo "error: Pro lock wrapper not found: '$LOCK'. Set WSURF_PRO_LOCK, or pass --no-lock when nothing else builds." >&2
+    exit 2
+  }
+  WSURF_CI_LOCAL_LOCKED=1 exec "$LOCK" "$0" "$@"
+fi
 # shellcheck source=Tools/disk-hygiene.sh
 . "$tools/disk-hygiene.sh"
 repo="${WSURF_REPO_ROOT:-$(dirname "$tools")}"
@@ -48,8 +63,8 @@ echo "== code_sign_clone directories in $clone_root"
 for path in "$clone_root/$WSURF_PRODUCTION_ID".*.code_sign_clone; do
   [ -d "$path" ] || continue
   id=$(basename "$path" .code_sign_clone)
-  case "$id" in
-    *.stage|*.stage.*|*.stage-*|"$WSURF_PRODUCTION_ID".CredentialExchange) continue ;;
+  case "$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')" in
+    *.stage|*.stage.*|*.stage-*|"$WSURF_PRODUCTION_ID".credentialexchange) continue ;;
   esac
   candidate "$path"
   [ -z "$apply" ] || wsurf_safe_remove_code_sign_clone "$id"
@@ -61,9 +76,10 @@ for root in "${roots[@]}"; do
   root="${root%/}"
   [ -d "$root" ] || continue
   while IFS= read -r path; do
-    resolved=$(cd "$(dirname "$path")" && pwd -P)/$(basename "$path")
+    # Resolves a symlink too, so a wsurf-run-* link into wsurf-cvs is skipped rather than followed.
+    resolved=$(cd "$path" 2>/dev/null && pwd -P || printf '%s' "$path")
     case "$resolved" in
-      /private/tmp/wsurf-cvs|/private/tmp/wsurf-cvs/*) continue ;;
+      */wsurf-cvs|*/wsurf-cvs/*) continue ;;
     esac
     candidate "$path"
     [ -z "$apply" ] || { chmod -R u+w "$path" 2>/dev/null || true; rm -rf -- "$path"; }
@@ -97,6 +113,8 @@ for tree in "${worktrees[@]}"; do
   branch=$(git -C "$tree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
   if [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
     echo "  keep (uncommitted changes, owner review): $tree [$branch]"
+  elif [ "$(git -C "$tree" rev-parse HEAD 2>/dev/null)" = "$(git -C "$repo" rev-parse origin/main 2>/dev/null)" ]; then
+    echo "  keep (no commits beyond origin/main yet, likely a new task): $tree [$branch]"
   elif git -C "$tree" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
     echo "  merged and clean: $tree [$branch]  ->  git -C '$repo' worktree remove '$tree' && git -C '$repo' worktree prune"
   else

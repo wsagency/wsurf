@@ -103,7 +103,7 @@ finish() {
     shasum -a 256 "$manifest" "$OUT"/results/*-tests.json > "$OUT/verified-results.sha256"
     local intermediates=("$PWD/build/DD-oop" "$PWD/build/cefkit-tests")
     [ "${WSURF_CLEAN_DERIVED_DATA:-0}" != 1 ] || intermediates+=("$DD")
-    wsurf_cleanup_pass_artifacts "$OUT" "${intermediates[@]}"
+    wsurf_cleanup_pass_artifacts "$OUT" "${intermediates[@]}" || echo "warning: some build intermediates were kept"
     echo "ci-local: PASS"
   else
     echo "ci-local: FAIL"

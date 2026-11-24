@@ -44,7 +44,9 @@ wsurf_print_disk_offenders() {
   tmp_root="${WSURF_TMP_ROOT:-/private/tmp}"
   echo "Largest WSurf leftovers (clean them with Tools/clean-pro-disk.sh; see AGENTS.md, Pro Disk Hygiene Rules):"
   {
-    for path in "$clone_root"/*.code_sign_clone "$PWD"/build/DD* "$tmp_root"/wsurf-* "$tmp_root"/WSurf-* "${N:-}"; do
+    local notes=""
+    case "${N:-}" in *side-session-notes*) notes="$N" ;; esac  # never measure an unrelated $N such as /
+    for path in "$clone_root"/*.code_sign_clone "$PWD"/build/DD* "$tmp_root"/wsurf-* "$tmp_root"/WSurf-* "$notes"; do
       [ -n "$path" ] && [ -e "$path" ] || continue
       du -sk "$path" 2>/dev/null || true
     done
@@ -70,19 +72,21 @@ wsurf_preflight_disk_guard() {
 }
 
 # Removes the code-signing clone macOS keeps for one suffixed test identity. Refuses the production app, every Stage
-# identity and anything that is not one plain bundle identifier.
+# identity and anything that is not one plain bundle identifier. APFS is case-insensitive here, so the Stage and
+# extension checks compare the lowercased id: io.wsagency.wsurf.STAGE.x names the same directory as .stage.x.
 wsurf_safe_remove_code_sign_clone() {
-  local id="${1:-}" root
+  local id="${1:-}" lower root
+  lower=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')
   case "$id" in
     "$WSURF_PRODUCTION_ID".?*) ;;
     *) echo "error: refusing code_sign_clone removal for '$id': not a suffixed $WSURF_PRODUCTION_ID identity" >&2; return 1 ;;
   esac
-  case "$id" in
+  case "$lower" in
     *..*|*/*|*[[:space:]]*|*'*'*|*'?'*|*'['*)
       echo "error: refusing code_sign_clone removal for '$id': not a plain bundle identifier" >&2; return 1 ;;
     *.stage|*.stage.*|*.stage-*)
       echo "error: refusing code_sign_clone removal for Stage identity '$id'" >&2; return 1 ;;
-    "$WSURF_PRODUCTION_ID".CredentialExchange)
+    "$WSURF_PRODUCTION_ID".credentialexchange)
       echo "error: refusing code_sign_clone removal for the production extension '$id'" >&2; return 1 ;;
   esac
   root=$(wsurf_code_sign_clone_root)
@@ -90,12 +94,14 @@ wsurf_safe_remove_code_sign_clone() {
   rm -rf -- "$root/$id.code_sign_clone"
 }
 
-# Gives this run its own temp directory: TMPDIR points into it until wsurf_cleanup_run_tmpdir removes it.
+# Gives this run its own temp directory: TMPDIR points into it until wsurf_cleanup_run_tmpdir removes it. A nested run
+# (the OOP lane under ci-local) makes a sibling in the same base, so TMPDIR never grows deeper: Chromium puts AF_UNIX
+# sockets under it, and their paths are limited to 104 bytes.
 wsurf_setup_run_tmpdir() {
-  local base="${TMPDIR:-/tmp/}"
+  local base="${WSURF_RUN_TMP_BASE:-${TMPDIR:-/tmp/}}"
   base="${base%/}/"
   WSURF_RUN_TMP=$(mktemp -d "${base}wsurf-run-XXXXXX") || return
-  export WSURF_RUN_TMP
+  export WSURF_RUN_TMP WSURF_RUN_TMP_BASE="$base"
   export TMPDIR="$WSURF_RUN_TMP/"
 }
 
@@ -137,8 +143,10 @@ wsurf_prune_old_failed_xcresults() {
 # After a local PASS: removes the .xcresult bundles under OUT_DIR (the JSON and checksum evidence stays) and each
 # DIR given (isolated DerivedData or other build intermediates). A pinned WSURF_SOURCE_PACKAGES_CACHE directly inside a
 # DIR is kept. Does nothing on GitHub Actions, which uploads the bundles, or with WSURF_KEEP_XCRESULT=1.
+# A DIR must sit inside a build/ directory or be named *DerivedData*, and must not be /, $HOME or a Git worktree's root:
+# a mistyped WSURF_OOP_DERIVED_DATA=$PWD is refused (return 1) instead of wiping the worktree.
 wsurf_cleanup_pass_artifacts() {
-  local out="${1:-}" dir cache="" entry
+  local out="${1:-}" dir cache="" entry home refused=0
   [ -n "$out" ] || { echo "error: wsurf_cleanup_pass_artifacts needs an output directory" >&2; return 1; }
   shift
   [ -z "${GITHUB_ACTIONS:-}" ] && [ "${WSURF_KEEP_XCRESULT:-0}" != 1 ] || return 0
@@ -146,9 +154,18 @@ wsurf_cleanup_pass_artifacts() {
   if [ -n "${WSURF_SOURCE_PACKAGES_CACHE:-}" ] && [ -d "$WSURF_SOURCE_PACKAGES_CACHE" ]; then
     cache=$(cd "$WSURF_SOURCE_PACKAGES_CACHE" && pwd -P)
   fi
+  home=$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")
   for dir in "$@"; do
     [ -d "$dir" ] || continue
     dir=$(cd "$dir" && pwd -P)
+    if [ "$dir" = / ] || [ "$dir" = "$home" ] || [ "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" = "$dir" ]; then
+      echo "error: refusing to remove $dir: not a build intermediate" >&2; refused=1; continue
+    fi
+    case "$dir" in
+      */build/*) ;;
+      *) [[ "${dir##*/}" == *DerivedData* ]] || {
+           echo "error: refusing to remove $dir: not under a build/ directory or named *DerivedData*" >&2; refused=1; continue; } ;;
+    esac
     case "$cache" in
       "$dir"|"$dir"/*/*) echo "warning: keeping $dir: it holds the pinned SourcePackages cache $cache" >&2 ;;
       "$dir"/*)
@@ -159,4 +176,5 @@ wsurf_cleanup_pass_artifacts() {
       *) rm -rf -- "$dir" ;;
     esac
   done
+  return "$refused"
 }

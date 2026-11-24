@@ -15,6 +15,11 @@
 # Disk hygiene (Tools/disk-hygiene.sh): aborts below 30 GB free, uses its own TMPDIR, removes the identity's code_sign_clone on
 # exit, deletes the result bundle after a pass and failed bundles older than 48 hours in build/results.
 set -eu
+# A relative WSURF_DERIVED_DATA is the caller's, so resolve it before moving to the repository root.
+case "${WSURF_DERIVED_DATA:-}" in
+  ''|/*) ;;
+  *) WSURF_DERIVED_DATA="$PWD/$WSURF_DERIVED_DATA" ;;
+esac
 cd "$(dirname "$0")/.."
 
 : "${WSURF_BUNDLE_ID_SUFFIX:?set WSURF_BUNDLE_ID_SUFFIX to the suffix of the build}"

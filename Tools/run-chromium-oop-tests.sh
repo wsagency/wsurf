@@ -119,7 +119,7 @@ xcrun xcresulttool get test-results tests --path "$OUT/oop.xcresult" --compact >
     || echo "warning: could not export the test cases"
 if [[ "$code" -eq 0 ]]; then
     if [[ "${WSURF_CLEAN_DERIVED_DATA:-0}" == 1 ]]; then
-        wsurf_cleanup_pass_artifacts "$OUT" "$DD"
+        wsurf_cleanup_pass_artifacts "$OUT" "$DD" || echo "warning: kept $DD"
     else
         wsurf_cleanup_pass_artifacts "$OUT"
     fi
