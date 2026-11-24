@@ -148,14 +148,21 @@ extension AppCoordinator {
     }
 
     @discardableResult
-    func openLinkInNewWindow(_ url: URL, isPrivate: Bool = false) -> AppCoordinator? {
+    func openLinkInNewWindow(_ url: URL, isPrivate: Bool = false, from opener: BrowserTab? = nil) -> AppCoordinator? {
         guard !isClosed else { return nil }
+        let opensPrivately = isPrivate || profiles.isPrivate
         let app = application ?? BrowserApplication.shared
         let settingsOwner = profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
-        return app.newWindow(
-            profile: (isPrivate || profiles.isPrivate) ? .privateBrowsing() : profiles.current,
-            settingsOwner: settingsOwner, urls: [url]
+        let inherited = opensPrivately ? nil : opener?.inheritedSignInEngine(for: url)
+        let coordinator = app.newWindow(
+            profile: opensPrivately ? .privateBrowsing() : profiles.current,
+            settingsOwner: settingsOwner, urls: inherited == nil ? [url] : []
         )
+        if let inherited, let tab = coordinator.browser.activeTab {
+            tab.signInEngine = inherited
+            tab.load(url, transition: .link, startedByUser: false, byPerson: true)
+        }
+        return coordinator
     }
 
     func closeWindow() {

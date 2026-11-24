@@ -297,6 +297,8 @@ final class BrowserTab: Identifiable {
     }
     /// Only the commit of the requested WebKit navigation can end the document's session.
     @ObservationIgnored var leavingSignIn: SignInDeparture?
+    /// Deferred opener sign-in for a pop-up that starts without an HTTP(S) URL (`about:blank`).
+    @ObservationIgnored var pendingOpenerSignIn: OpenerSignIn?
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?

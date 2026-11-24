@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import AppKit
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -347,5 +349,220 @@ struct EngineRoutingTests {
         let fresh = browser.makeTab(for: nil)
         #expect(fresh.preferredEngine(for: URL(string: site + "/org/repo/issues?q=open")) == .chromium)
         #expect(fresh.preferredEngine(for: URL(string: "https://other.example/org/repo/issues?q=open")) == .webKit)
+    }
+
+    private final class StubNewWindowAction: WKNavigationAction {
+        nonisolated(unsafe) var stubbedRequest = URLRequest(url: URL(string: "about:blank")!)
+
+        override var request: URLRequest {
+            stubbedRequest
+        }
+
+        override var modifierFlags: NSEvent.ModifierFlags {
+            []
+        }
+
+        override nonisolated func value(forKey key: String) -> Any? {
+            key == "_isUserInitiated" ? true : super.value(forKey: key)
+        }
+    }
+
+    private func openPopup(from tab: BrowserTab, to url: URL) throws -> BrowserTab {
+        let webView = try #require(tab.page.webKit)
+        let delegate = try #require(tab.navigationDelegate)
+        let action = StubNewWindowAction()
+        action.stubbedRequest = URLRequest(url: url)
+        let created = try #require(delegate.webView(
+            webView, createWebViewWith: WebViewPool.makeConfiguration(), for: action, windowFeatures: WKWindowFeatures()
+        ))
+        return try #require((created.navigationDelegate as? TabNavigationDelegate)?.tab)
+    }
+
+    @Test(.boundedWebViews, arguments: ["newWindow", "openInNewTab"])
+    func openingGoogleMeetFromSignedInCalendarKeepsWebKit(via: String) throws {
+        let permissions = temporaryPermissions()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let meet = try #require(URL(string: "https://meet.google.com/uag-ohsc-hbw?authuser=1&hs=122&ijlm=1795513003548"))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: meet))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let calendarTab = browser.newTab()
+        calendarTab.urlString = calendar.absoluteString
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+        try #require(calendarTab.signInEngine == .webKit && calendarTab.loadedEngine == .webKit)
+
+        let opened: BrowserTab
+        if via == "newWindow" {
+            opened = try openPopup(from: calendarTab, to: meet)
+            #expect(opened.permitsEngineNavigation(URLRequest(url: meet), isMainFrame: true))
+        } else {
+            calendarTab.onOpenInNewTab?(meet, true)
+            opened = try #require(browser.tabs.first { $0 !== calendarTab })
+            #expect(opened.permitsEngineNavigation(URLRequest(url: meet), isMainFrame: true))
+        }
+        #expect(opened.signInEngine == .webKit)
+        #expect(opened.loadedEngine == .webKit)
+        #expect(opened.preferredEngine(for: meet) == .webKit)
+    }
+
+    @Test(.boundedWebViews, arguments: ["newWindow", "openInNewTab"])
+    func openingAnExternalLinkInANewTabFromSignedInCalendarUsesItsChromiumSetting(via: String) async throws {
+        let permissions = temporaryPermissions()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let external = try #require(URL(string: "https://example.com/article"))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: external))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let calendarTab = browser.newTab()
+        calendarTab.urlString = calendar.absoluteString
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+        try #require(calendarTab.signInEngine == .webKit)
+
+        let opened: BrowserTab
+        if via == "newWindow" {
+            opened = try openPopup(from: calendarTab, to: external)
+            #expect(opened.signInEngine == nil)
+            #expect(opened.pendingOpenerSignIn == nil)
+            #expect(opened.preferredEngine(for: external) == .chromium)
+            #expect(!opened.permitsEngineNavigation(URLRequest(url: external), isMainFrame: true))
+            _ = await opened.waitForPendingNavigation()
+        } else {
+            calendarTab.onOpenInNewTab?(external, true)
+            opened = try #require(browser.tabs.first { $0 !== calendarTab })
+            _ = await opened.waitForPendingNavigation()
+        }
+        #expect(opened.signInEngine == nil)
+        #expect(opened.loadedEngine == .chromium)
+    }
+
+    @Test(.boundedWebViews, arguments: ["sameSite", "externalChromium", "externalWebKit"])
+    func aboutBlankPopupFromSignedInCalendarResolvesOnItsFirstHTTPDestination(destination: String) async throws {
+        let permissions = temporaryPermissions()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let aboutBlank = try #require(URL(string: "about:blank"))
+        let meet = try #require(URL(string: "https://meet.google.com/uag-ohsc-hbw?authuser=1&hs=122&ijlm=1795513003548"))
+        let external = try #require(URL(string: "https://example.com/article"))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: meet))
+        if destination == "externalChromium" {
+            permissions.setEngine(.chromium, for: SitePermissions.origin(for: external))
+        }
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let calendarTab = browser.newTab()
+        calendarTab.urlString = calendar.absoluteString
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+
+        let opened = try openPopup(from: calendarTab, to: aboutBlank)
+        #expect(opened.signInEngine == nil)
+        #expect(opened.pendingOpenerSignIn != nil)
+        #expect(opened.permitsEngineNavigation(URLRequest(url: aboutBlank), isMainFrame: true))
+        #expect(opened.permitsEngineNavigation(URLRequest(url: external), isMainFrame: false))
+        #expect(opened.pendingOpenerSignIn != nil, "about:blank and subframes do not consume the deferred opener sign-in")
+
+        switch destination {
+        case "sameSite":
+            #expect(opened.permitsEngineNavigation(URLRequest(url: meet), isMainFrame: true))
+            #expect(opened.signInEngine == .webKit)
+            #expect(opened.pendingOpenerSignIn == nil)
+            #expect(opened.loadedEngine == .webKit)
+        case "externalChromium":
+            #expect(!opened.permitsEngineNavigation(URLRequest(url: external), isMainFrame: true))
+            _ = await opened.waitForPendingNavigation()
+            #expect(opened.signInEngine == nil)
+            #expect(opened.pendingOpenerSignIn == nil)
+            #expect(opened.loadedEngine == .chromium)
+        default:
+            #expect(opened.permitsEngineNavigation(URLRequest(url: external), isMainFrame: true))
+            #expect(opened.signInEngine == nil)
+            #expect(opened.pendingOpenerSignIn == nil)
+            #expect(opened.loadedEngine == .webKit)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: ["newWindow", "openInNewTab", "peek"])
+    func openingGoogleMeetFromWebKitCalendarWithoutActiveSignInChainKeepsWebKit(via: String) async throws {
+        let permissions = temporaryPermissions()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let meet = try #require(URL(string: "https://meet.google.com/uag-ohsc-hbw?authuser=1&hs=122&ijlm=1795513003548"))
+        let external = try #require(URL(string: "https://example.com/article"))
+        let appExample = try #require(URL(string: "https://app.example/calendar"))
+        let meetExample = try #require(URL(string: "https://meet.example/room"))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: meet))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: external))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: meetExample))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+
+        let calendarTab = browser.newTab()
+        calendarTab.urlString = calendar.absoluteString
+        try #require(calendarTab.signInEngine == nil && calendarTab.loadedEngine == .webKit)
+
+        let opened: BrowserTab
+        switch via {
+        case "newWindow":
+            opened = try openPopup(from: calendarTab, to: meet)
+            #expect(opened.permitsEngineNavigation(URLRequest(url: meet), isMainFrame: true))
+        case "peek":
+            opened = browser.makePeekTab(meet, from: calendarTab)
+        default:
+            calendarTab.onOpenInNewTab?(meet, true)
+            opened = try #require(browser.tabs.first { $0 !== calendarTab })
+        }
+        defer {
+            if via == "peek" {
+                opened.detach()
+            }
+        }
+        #expect(opened.signInEngine == .webKit)
+        #expect(opened.loadedEngine == .webKit)
+
+        calendarTab.onOpenInNewTab?(external, false)
+        let externalTab = try #require(browser.tabs.first { $0.urlString == external.absoluteString })
+        _ = await externalTab.waitForPendingNavigation()
+        #expect(externalTab.signInEngine == nil)
+        #expect(externalTab.loadedEngine == .chromium)
+
+        // Ordinary websites without WebKit-only sign-in continue to respect per-origin Chromium settings.
+        let ordinaryTab = browser.newTab()
+        ordinaryTab.urlString = appExample.absoluteString
+        try #require(ordinaryTab.signInEngine == nil && ordinaryTab.loadedEngine == .webKit)
+        ordinaryTab.onOpenInNewTab?(meetExample, false)
+        let ordinaryOpened = try #require(browser.tabs.first { $0.urlString == meetExample.absoluteString })
+        _ = await ordinaryOpened.waitForPendingNavigation()
+        #expect(ordinaryOpened.signInEngine == nil)
+        #expect(ordinaryOpened.loadedEngine == .chromium)
+    }
+
+    @Test(.boundedWebViews) func leavingAnInheritedGoogleMeetTabToAnExternalSiteClearsSignInOnCommit() throws {
+        let permissions = temporaryPermissions()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let meet = try #require(URL(string: "https://meet.google.com/uag-ohsc-hbw?authuser=1&hs=122&ijlm=1795513003548"))
+        let outside = try #require(URL(string: "https://outside.example/article"))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: meet))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+
+        let calendarTab = browser.newTab()
+        calendarTab.urlString = calendar.absoluteString
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+        calendarTab.onOpenInNewTab?(meet, true)
+        let meetTab = try #require(browser.tabs.first { $0 !== calendarTab })
+        try #require(meetTab.signInEngine == .webKit && meetTab.loadedEngine == .webKit)
+
+        let departure = PageNavigation()
+        try #require(meetTab.permitsEngineNavigation(URLRequest(url: outside), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: meet)))
+        meetTab.navigationStarted(departure, url: outside)
+        #expect(meetTab.signInEngine == .webKit, "the sign-in stays active until the external document commits")
+        meetTab.navigationCommitted(departure)
+        #expect(meetTab.signInEngine == nil)
     }
 }

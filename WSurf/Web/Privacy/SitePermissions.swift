@@ -356,6 +356,10 @@ final class SitePermissions {
     /// so its sign-in origin must use that same engine from the first request.
     nonisolated static let webKitOnlyOrigins: Set<String> = ["https://accounts.google.com", "https://auth.openai.com"]
 
+    /// Websites whose sign-in runs only in WebKit. A WebKit page on one of these sites
+    /// holds a session Chromium cannot share even without a fresh sign-in redirect in the tab.
+    nonisolated static let webKitOnlySites: Set<String> = Set(webKitOnlyOrigins.map(site(for:)))
+
     func engine(for origin: String) -> BrowserEngine {
         let key = normalizeEngineOrigin(origin)
         guard !Self.webKitOnlyOrigins.contains(key) else { return .webKit }

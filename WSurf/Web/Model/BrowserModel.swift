@@ -236,7 +236,7 @@ final class BrowserModel {
         }
         tab.onNewWindow = { [weak self, weak tab] view, activate in
             guard let opened = self?.newTab(activate: activate, adopting: view, after: tab), let tab else { return }
-            self?.noteOpened(opened, by: tab)
+            self?.notePopupOpened(opened, by: tab)
         }
         tab.onOpenInNewTab = { [weak self, weak tab] url, activate in
             self?.openLinkedTab(url, activate: activate, from: tab, byPerson: true)
@@ -345,10 +345,19 @@ final class BrowserModel {
     /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
     /// A link or page that asked for a tab of its own. `byPerson`: a click or menu item did (a script's window does not).
     private func openLinkedTab(_ url: URL, activate: Bool, from tab: BrowserTab?, byPerson: Bool) {
-        let opened = newTab(url: url, activate: activate, after: tab, transition: .link, byPerson: byPerson)
+        let opened = makeTab(for: url)
+        opened.signInEngine = tab?.inheritedSignInEngine(for: url)
+        _ = open(opened, url: url, activate: activate, after: tab, transition: .link, byPerson: byPerson, hasAddress: true)
         if let tab {
             noteOpened(opened, by: tab)
         }
+    }
+
+    private func notePopupOpened(_ opened: BrowserTab, by tab: BrowserTab) {
+        if let context = tab.openerSignInContext, context.engine == opened.engine {
+            opened.pendingOpenerSignIn = context
+        }
+        noteOpened(opened, by: tab)
     }
 
     private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
@@ -386,7 +395,7 @@ final class BrowserModel {
         }
         tab.onNewChromiumPopup = { [weak self, weak tab] page, activate in
             guard let opened = self?.newTab(activate: activate, adoptingPage: page, after: tab), let tab else { return }
-            self?.noteOpened(opened, by: tab)
+            self?.notePopupOpened(opened, by: tab)
         }
     }
 
@@ -510,6 +519,21 @@ final class BrowserModel {
         } else if isAgentMicro {
             tab.defaultEngineOverride = agentCompanion?.defaultEngine ?? .chromium
         }
+        return open(
+            tab, url: url, activate: activate, after: opener, transition: transition, byPerson: byPerson,
+            hasAddress: url != nil || adopting != nil || adoptingPage != nil
+        )
+    }
+
+    private func open(
+        _ tab: BrowserTab,
+        url: URL?,
+        activate: Bool,
+        after opener: BrowserTab?,
+        transition: HistoryStore.Transition,
+        byPerson: Bool,
+        hasAddress: Bool
+    ) -> BrowserTab {
         if !tab.isMaterialised {
             tab.engine = tab.preferredEngine(for: url)
         }
@@ -521,10 +545,10 @@ final class BrowserModel {
             activeTabID = tab.id
         }
         if let url {
-            tab.load(url, transition: transition, byPerson: byPerson)
+            tab.load(url, transition: transition, startedByUser: tab.signInEngine == nil, byPerson: byPerson)
         }
         if transition != .agent {
-            revealWhenAddressed(tab, hasAddress: url != nil || adopting != nil || adoptingPage != nil)
+            revealWhenAddressed(tab, hasAddress: hasAddress)
         }
         scheduleSave()
         return tab
@@ -576,12 +600,18 @@ final class BrowserModel {
     // MARK: - Peek
 
     /// Exclude peeked pages from the sidebar, saved session, and extensions until kept.
-    func makePeekTab(_ url: URL) -> BrowserTab {
+    func makePeekTab(_ url: URL, from opener: BrowserTab? = nil) -> BrowserTab {
         let tab = makeTab(for: url)
         tab.onOpenInPeek = nil
         tab.onSummarizeLink = nil
-        tab.load(url, transition: .link, byPerson: true)
+        loadPeekTab(tab, url: url, from: opener)
         return tab
+    }
+
+    func loadPeekTab(_ tab: BrowserTab, url: URL, from opener: BrowserTab?) {
+        let inherited = opener?.inheritedSignInEngine(for: url)
+        tab.signInEngine = inherited
+        tab.load(url, transition: .link, startedByUser: inherited == nil, byPerson: true)
     }
 
     func keepPeekTab(_ tab: BrowserTab, after opener: BrowserTab?) {

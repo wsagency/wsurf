@@ -66,13 +66,13 @@ extension AppCoordinator {
         browser.onOpenInPeek = { [weak self] tab, url, origin in
             self?.openPeek(url: url, from: tab, at: origin)
         }
-        browser.onOpenInNewWindow = { [weak self] _, url, isPrivate in
+        browser.onOpenInNewWindow = { [weak self] tab, url, isPrivate in
             guard let self else { return }
             if isAgentMicro {
                 browser.newTab(url: url, transition: .agent)
                 return
             }
-            openLinkInNewWindow(url, isPrivate: isPrivate)
+            openLinkInNewWindow(url, isPrivate: isPrivate, from: tab)
         }
         browser.onSummarizeLink = { [weak self] tab, url, anchor in
             guard let self, let tab else { return }

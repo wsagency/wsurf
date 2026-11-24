@@ -8,9 +8,75 @@ import Foundation
 import WebKit
 
 extension BrowserTab {
+    struct OpenerSignIn {
+        let engine: BrowserEngine
+        let origin: String
+    }
+
+    /// The canonical HTTP(S) origin of this tab's current document, used to match same-site sign-in continuations.
+    var signInOrigin: String {
+        for candidate in [committedURL, liveView?.url, URL(string: urlString)] {
+            let origin = SitePermissions.webOrigin(for: candidate)
+            if !origin.isEmpty {
+                return origin
+            }
+        }
+        return ""
+    }
+
+    /// Whether navigating from `origin` to `destination` stays within the same sign-in session.
+    /// Same-site pages (such as `calendar.google.com` and `meet.google.com`) and sign-in provider hops keep it;
+    /// unrelated websites leave it so their own engine setting applies.
+    static func continuesSignIn(from origin: String, to destination: String) -> Bool {
+        guard !origin.isEmpty, !destination.isEmpty else { return false }
+        return SitePermissions.webKitOnlyOrigins.contains(origin)
+            || SitePermissions.webKitOnlyOrigins.contains(destination)
+            || SitePermissions.site(for: origin) == SitePermissions.site(for: destination)
+    }
+
+    /// The sign-in session this tab can pass to a same-site tab or pop-up it opens.
+    /// Covers both an active `signInEngine` chain and a WebKit page on a WebKit-only sign-in site
+    /// whose session Chromium cannot share.
+    var openerSignInContext: OpenerSignIn? {
+        let origin = signInOrigin
+        guard !origin.isEmpty else { return nil }
+        if let signInEngine {
+            return OpenerSignIn(engine: signInEngine, origin: origin)
+        }
+        let currentEngine = loadedEngine ?? engine
+        if currentEngine == .webKit,
+           engineOverride == nil,
+           SitePermissions.webKitOnlySites.contains(SitePermissions.site(for: origin)) {
+            return OpenerSignIn(engine: .webKit, origin: origin)
+        }
+        return nil
+    }
+
+    /// The sign-in engine this tab passes to a newly opened tab or window for `url`, when `url` continues the session.
+    func inheritedSignInEngine(for url: URL?) -> BrowserEngine? {
+        guard let context = openerSignInContext,
+              let destination = url.map(SitePermissions.webOrigin(for:)),
+              Self.continuesSignIn(from: context.origin, to: destination)
+        else { return nil }
+        return context.engine
+    }
+
+    /// Resolves a deferred opener sign-in (such as an `about:blank` pop-up) on its first HTTP(S) destination.
+    func resolveOpenerSignIn(for url: URL?) {
+        guard let pending = pendingOpenerSignIn else { return }
+        let destination = SitePermissions.webOrigin(for: url)
+        guard !destination.isEmpty else { return }
+        pendingOpenerSignIn = nil
+        if signInEngine == nil, engine == pending.engine,
+           Self.continuesSignIn(from: pending.origin, to: destination) {
+            signInEngine = pending.engine
+        }
+    }
+
     @discardableResult
     func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
         leavingSignIn = nil
+        pendingOpenerSignIn = nil
         coverHold?.cancel()
         coverHold = nil
         releaseCurrentDevelopment(reason: .engineReplaced)

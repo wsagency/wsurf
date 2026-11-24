@@ -194,10 +194,12 @@ extension BrowserTab {
     func noteNavigation(to url: URL, startedByUser: Bool, submittingWith engine: BrowserEngine? = nil) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
             leavingSignIn = nil
+            pendingOpenerSignIn = nil
             let ongoing = startedByUser ? nil : signInEngine
             signInEngine = engine ?? ongoing ?? .webKit
         } else if startedByUser {
             leavingSignIn = nil
+            pendingOpenerSignIn = nil
             signInEngine = nil
         }
     }
@@ -213,13 +215,20 @@ extension BrowserTab {
         if isRedirect, let navigation, let provisionalNavigation, provisionalNavigation !== navigation {
             return true
         }
+        resolveOpenerSignIn(for: url)
         let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
             && request.httpBody == nil && request.httpBodyStream == nil
+        let destination = SitePermissions.webOrigin(for: url)
+        if canReissue, signInEngine == nil, engine == .webKit, engineOverride == nil,
+           let source = committedURL.map(SitePermissions.webOrigin(for:)),
+           !source.isEmpty, !destination.isEmpty, source != destination,
+           SitePermissions.webKitOnlySites.contains(SitePermissions.site(for: source)),
+           SitePermissions.site(for: source) == SitePermissions.site(for: destination),
+           preferredEngine(for: url) != .webKit {
+            signInEngine = .webKit
+        }
         let leavesSignIn = canReissue && sourceOrigin.map { origin in
-            let destination = SitePermissions.webOrigin(for: url)
-            return !origin.isEmpty && !destination.isEmpty
-                && !SitePermissions.webKitOnlyOrigins.contains(origin) && !SitePermissions.webKitOnlyOrigins.contains(destination)
-                && SitePermissions.site(for: origin) != SitePermissions.site(for: destination)
+            !origin.isEmpty && !destination.isEmpty && !Self.continuesSignIn(from: origin, to: destination)
         } == true
         if !isRedirect {
             leavingSignIn = nil
@@ -600,7 +609,10 @@ extension BrowserTab {
         // The site's engine setting wins: a pop-up of a site set to WebKit (Google sign-in among them) opens as a plain WebKit tab,
         // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
         let origin = SitePermissions.origin(for: url)
-        guard let onNewChromiumPopup, origin.isEmpty || sitePermissions.engine(for: origin) == .chromium else {
+        let staysInChromium = origin.isEmpty
+            || sitePermissions.engine(for: origin) == .chromium
+            || inheritedSignInEngine(for: url) == .chromium
+        guard let onNewChromiumPopup, staysInChromium else {
             openTabForChromiumWindow(url, userGesture: userGesture, click: click)
             return nil
         }
