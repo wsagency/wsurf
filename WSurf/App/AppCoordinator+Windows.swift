@@ -72,6 +72,9 @@ extension AppCoordinator {
             extensionTabClosed?(tab)
             self?.tabDidClose(tab)
             self?.releaseMicroPlaceholders(for: [tab.id])
+            if let self, self.isAgentMicro {
+                self.application?.agentWindowRegistry.notifyTabsChanged(for: self.browser)
+            }
             self?.closeMicroWindowIfEmpty()
         }
         browser.onShowWindow = { [weak self] model in
@@ -87,6 +90,9 @@ extension AppCoordinator {
             followMedia(to: newTab, from: previousTab)
             applyHoverShield()
             updateWindowAppearance()
+            if isAgentMicro {
+                application?.agentWindowRegistry.notifyTabsChanged(for: browser)
+            }
         }
         configureMicroCallbacks()
     }
@@ -221,8 +227,8 @@ extension AppCoordinator {
     func windowDidClose() {
         guard application?.isTerminating != true, beginClosingWindow() else { return }
         if !profiles.isPrivate {
-            // A micro window whose page left or closed has nothing to reopen.
-            if isMicro, browser.tabs.isEmpty {
+            // A micro window whose page left or closed, or an ephemeral Agent Micro Window, has nothing to reopen.
+            if isAgentMicro || (isMicro && browser.tabs.isEmpty) {
                 browser.retireSession()
                 forgetWindowFrame()
             } else {

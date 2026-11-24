@@ -25,9 +25,10 @@ struct MicroWindowView: View {
                 coordinator: coordinator,
                 settingsWorkspace: settingsWorkspace,
                 canvasTrailingInset: 0,
-                isFullHeight: true,
-                findBarTop: MicroShell.findBarTop
+                isFullHeight: !coordinator.isAgentMicro,
+                findBarTop: MicroShell.findBarTop + (coordinator.isAgentMicro ? AgentMicroControlBar.height : 0)
             )
+            .padding(.top, coordinator.isAgentMicro ? AgentMicroControlBar.height : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             MicroShell(browser: browser, coordinator: coordinator)

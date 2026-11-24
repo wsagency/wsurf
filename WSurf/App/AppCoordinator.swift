@@ -432,10 +432,10 @@ final class AppCoordinator {
         isKeyWindow && NSApp.isActive
     }
 
-    func showBrowser(activate: Bool = true) {
+    func showBrowser(activate: Bool = true, orderBack: Bool = false) {
         guard !isClosed else { return }
         prepareWindowHost()
-        host?.show(activate: activate)
+        host?.show(activate: activate, orderBack: orderBack)
         updateWindowAppearance()
     }
 

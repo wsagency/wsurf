@@ -14,7 +14,27 @@ extension MCPBrowserSession {
     private static let alreadyRequested =
         "Access has already been requested. The user can disconnect and reconnect to share different tabs."
 
+    /// Ensures every non-private HTTP(S) tab in a window-scoped Agent Micro Window carries its pre-approved grant.
+    func syncAgentWindowGrants() {
+        guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return }
+        for tab in browser.tabs where !tab.isClosed && !tab.isPrivate && tab.microTabID == nil {
+            guard let url = webURL(of: tab), tab.assistantAccess.explicitPolicy != .deny else { continue }
+            let origin = SitePermissions.origin(for: url)
+            if grants[tab.id]?.origin != origin || grants[tab.id]?.source != .agentWindow || grants[tab.id]?.access != scope.access {
+                grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
+            }
+        }
+    }
+
     func requestAccess(development: Bool, developer: Bool = false) async -> CallTool.Result {
+        if let scope = agentWindowScope {
+            guard scope.isActive() else { return failure("Access was not granted.") }
+            guard scope.isAgentOwned() else {
+                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.")
+            }
+            syncAgentWindowGrants()
+            return tabList()
+        }
         let tabs = browser.splitPanes ?? browser.activeTab.map { [$0] } ?? []
         let candidates = tabs.compactMap { tab -> (page: MCPAccessConsent.Page, standing: MCPAccessConsent.Access?)? in
             guard !tab.isPrivate, let url = webURL(of: tab), tab.assistantAccess.explicitPolicy != .deny else { return nil }
@@ -82,6 +102,21 @@ extension MCPBrowserSession {
     }
 
     func navigate(_ raw: String, tab: BrowserTab, grant: Grant) async -> CallTool.Result {
+        if grant.source == .agentWindow, let scope = agentWindowScope {
+            guard scope.isActive(), scope.isAgentOwned(), let url = webDestination(raw) else {
+                return failure("Use a valid HTTP(S) URL.")
+            }
+            let origin = SitePermissions.origin(for: url)
+            guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
+                return failure("Assistant access is off for this website.")
+            }
+            observations[tab.id] = nil
+            grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
+            let immediate = tab.load(url, transition: .agent)
+            let navigation = await tab.waitForPendingNavigation() ?? immediate
+            guard navigation != nil else { return failure("Navigation could not be started.") }
+            return success("Navigation started. Use readPage after the page loads.")
+        }
         guard let url = permittedDestination(raw, grant: grant) else {
             return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.")
         }
@@ -115,6 +150,22 @@ extension MCPBrowserSession {
     /// `engine` opens the tab in that engine, whatever the website's setting says; it is a development tool, so it needs
     /// development access to a shared page, or a standing grant for the address.
     func openNewTab(_ raw: String, engine: BrowserEngine? = nil) async -> CallTool.Result {
+        if let scope = agentWindowScope {
+            guard scope.isActive(), scope.isAgentOwned(), isConnected, available(), !Task.isCancelled,
+                  let url = webDestination(raw)
+            else {
+                return failure("Opening a tab requires an active Agent Micro Window and a valid HTTP(S) URL.")
+            }
+            let origin = SitePermissions.origin(for: url)
+            guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
+                return failure("Assistant access is off for this website.")
+            }
+            let chosenEngine = engine ?? .chromium
+            let tab = openInBackground(url, engine: chosenEngine)
+            grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
+            keepInWindow(tab)
+            return success("Opened tab \(tab.id.uuidString) in the Agent Micro Window. It runs in \(String(localized: chosenEngine.label)). Use readPage after it loads.")
+        }
         if engine != nil, !mayChooseEngine(for: webDestination(raw)) {
             return failure(Self.engineNeedsDevelopment)
         }
@@ -282,13 +333,17 @@ extension MCPBrowserSession {
         else { return nil }
         let origin = SitePermissions.origin(for: url)
         if origin != grant.origin {
-            // A page-initiated move between developer sites keeps the grant; any other move ends it. A standing grant that
-            // no longer holds is dropped: the app asks again, and gets it back only where it applies.
-            guard followsDeveloperSites(grant, to: url) else {
-                dropIfConditional(id)
-                return nil
+            if grant.source == .agentWindow, let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() {
+                grants[id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
+            } else {
+                // A page-initiated move between developer sites keeps the grant; any other move ends it. A standing grant that
+                // no longer holds is dropped: the app asks again, and gets it back only where it applies.
+                guard followsDeveloperSites(grant, to: url) else {
+                    dropIfConditional(id)
+                    return nil
+                }
+                grants[id] = Grant(origin: origin, access: grant.access, source: grant.source)
             }
-            grants[id] = Grant(origin: origin, access: grant.access, source: grant.source)
         }
         guard let current = grants[id], effectiveAccess(of: current, at: url) != nil else {
             dropIfConditional(id)
@@ -333,6 +388,12 @@ extension MCPBrowserSession {
             return grant.access.rank <= standing.rank ? grant.access : standing
         case .appDefault:
             return followsWebsiteDefault(at: url) ? grant.access : nil
+        case .agentWindow:
+            guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return nil }
+            if pairedClient != nil, livePairedClient.map({ !$0.paused }) != true {
+                return nil
+            }
+            return grant.access
         }
     }
 

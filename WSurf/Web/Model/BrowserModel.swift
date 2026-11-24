@@ -505,7 +505,11 @@ final class BrowserModel {
         byPerson: Bool = false
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
-        tab.engineOverride = engine
+        let effectiveEngine = engine ?? agentCompanion?.defaultEngine
+        tab.engineOverride = effectiveEngine
+        if let effectiveEngine, !tab.isMaterialised {
+            tab.engine = effectiveEngine
+        }
         insert(tab, after: opener)
         // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
         tab.isUnseen = !activate && activeTab !== tab
@@ -719,6 +723,13 @@ final class BrowserModel {
 
     /// Set once by `BrowserApplication.newWindow` before the window's coordinator exists, and never changed afterwards.
     @ObservationIgnored var windowKind: WindowKind = .standard
+
+    /// Present while this micro window is detached and driven by an external host (e.g. T3 Code).
+    var agentCompanion: AgentCompanionInfo?
+
+    var isAgentMicro: Bool {
+        windowKind == .micro && agentCompanion != nil
+    }
 }
 
 struct WeakBrowserModel {

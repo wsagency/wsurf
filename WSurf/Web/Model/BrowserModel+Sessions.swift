@@ -98,6 +98,7 @@ extension BrowserModel {
     }
 
     func markSessionClosed() {
+        guard !isAgentMicro else { return }
         sessionClosedAt = Date()
         saveBlocking()
     }
@@ -210,6 +211,7 @@ extension BrowserModel {
     }
 
     func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now, renamed: SidebarItem? = nil) {
+        guard !isAgentMicro else { return }
         noteCloudTabsChange()
         publishProfilePins()
         sharedSpaceService?.capture(self, renamed: renamed)
@@ -229,6 +231,7 @@ extension BrowserModel {
     }
 
     func saveNow() {
+        guard !isAgentMicro else { return }
         saveWaitingSince = nil
         let snapshot = snapshot()
         let database = database
@@ -289,6 +292,7 @@ extension BrowserModel {
     }
 
     func saveBlocking() {
+        guard !isAgentMicro else { return }
         noteCloudTabsChange()
         cancelPendingSave()
         for tab in tabs {
