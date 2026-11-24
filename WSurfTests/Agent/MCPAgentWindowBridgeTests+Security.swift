@@ -248,4 +248,76 @@ extension MCPAgentWindowBridgeTests {
         #expect(secondList["ok"] as? Bool == true)
         await secondAuthed.close()
     }
+
+    @Test(.timeLimit(.minutes(1))) func closeAgentWindowBlockedUnderTakeOverAndSucceedsAfterHandBack() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/login": .html("<!doctype html><title>Sign In</title><p>Complete login</p>"),
+        ])
+        let loginURL = try fixture.url("/login")
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer {
+                stopHarness(harness)
+                withExtendedLifetime(fixture) {}
+            }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+            let client = try await connectAuthenticated(harness)
+            defer { Task { await client.close() } }
+
+            let (openResp, _) = try await client.request(
+                id: "close-to-1", op: "openAgentWindow",
+                params: [
+                    "threadId": "thread-close-takeover",
+                    "profileId": profile.id.uuidString,
+                    "url": loginURL.absoluteString,
+                    "engine": "webkit",
+                ]
+            )
+            let openResult = try #require(openResp["result"] as? [String: Any])
+            let windowId = try #require(openResult["windowId"] as? String)
+            let tabId = try #require(openResult["tabId"] as? String)
+            let agentWindow = try #require(harness.app.windows.first { $0.windowID.uuidString == windowId })
+            let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
+            try #require(await waitUntil { agentTab.liveView?.url == loginURL && !agentTab.isLoading })
+
+            // User clicks Take Over: direct closeAgentWindow MUST fail with humanControl and leave window + tab intact!
+            agentWindow.takeOverAgentMicroWindow()
+            _ = try await client.waitForEvent(named: "ownerChanged")
+
+            let (blockedByWindow, _) = try await client.request(
+                id: "close-to-2", op: "closeAgentWindow",
+                params: ["windowId": windowId]
+            )
+            #expect(blockedByWindow["ok"] as? Bool == false)
+            #expect((blockedByWindow["error"] as? [String: Any])?["code"] as? String == "humanControl")
+
+            let (blockedByThread, _) = try await client.request(
+                id: "close-to-3", op: "closeAgentWindow",
+                params: ["threadId": "thread-close-takeover"]
+            )
+            #expect(blockedByThread["ok"] as? Bool == false)
+            #expect((blockedByThread["error"] as? [String: Any])?["code"] as? String == "humanControl")
+            #expect(!agentWindow.isClosed)
+            #expect(agentWindow.browser.tabs.count == 1)
+            #expect(agentWindow.browser.tabs.first?.id.uuidString == tabId)
+
+            // User clicks Hand Back: closeAgentWindow now succeeds cleanly!
+            agentWindow.handBackAgentMicroWindow()
+            _ = try await client.waitForEvent(named: "ownerChanged")
+
+            let (closeResp, closeEvents) = try await client.request(
+                id: "close-to-4", op: "closeAgentWindow",
+                params: ["windowId": windowId]
+            )
+            #expect(closeResp["ok"] as? Bool == true)
+            #expect((closeResp["result"] as? [String: Any])?["closed"] as? Bool == true)
+            let sawClosed = closeEvents.contains { ($0["event"] as? String) == "windowClosed" }
+            if !sawClosed {
+                let pushed = try await client.waitForEvent(named: "windowClosed")
+                #expect((pushed["payload"] as? [String: Any])?["windowId"] as? String == windowId)
+            }
+            #expect(agentWindow.isClosed)
+            #expect(!harness.registry.hasActiveWindows)
+        }
+    }
 }

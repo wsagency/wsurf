@@ -305,6 +305,11 @@ final class MCPAgentWindowRegistry {
         guard let record = findRecord(pairedClientId: pairedClientId, threadId: threadId, windowId: windowId) else {
             throw MCPAgentWindowError(.notFound, "No matching Agent Micro Window found.")
         }
+        guard record.coordinator?.browser.agentCompanion?.owner != .human,
+              !record.lockedByHumanTakeOver
+        else {
+            throw MCPAgentWindowError(.humanControl, "Window is under user control.")
+        }
         let coordinator = record.coordinator
         teardown(record, clearCompanion: false, emitClosed: true)
         coordinator?.closeWindow()
