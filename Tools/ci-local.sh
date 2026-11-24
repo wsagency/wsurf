@@ -162,7 +162,9 @@ build_for_testing() {
 run_test_plan() {
   local plan="$1" limit="$2"
   shift 2
-  WSURF_CI_TEST_LIMIT_SECONDS="$limit" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+  # The test host gets the selected Xcode too: tools it runs (the strings check's otool) must not fall back to xcode-select.
+  WSURF_CI_TEST_LIMIT_SECONDS="$limit" TEST_RUNNER_DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" \
+    python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
     -xctestrun "$xctestrun" \
     -destination 'platform=macOS,arch=arm64' \
     -resultBundlePath "$OUT/results/$plan.xcresult" \
