@@ -801,8 +801,10 @@ extension PageDriver {
     }
 
     /// Writes approved Vault credentials directly into the main document's login form using `callAsyncJavaScript`
-    /// arguments (never interpolating plaintext credentials into JavaScript source) and never targeting iframes.
-    /// Re-verifies `expectedOrigin` natively against `webView.url` immediately before running.
+    /// arguments (passed as structured arguments in WebKit and CDP JSON-encoded function arguments in Chromium rather
+    /// than interpolating credentials into the script body) and never targeting iframes.
+    /// Re-verifies `expectedOrigin` both natively against `webView.url` immediately before running and in-page against
+    /// `location.origin` before touching any input element.
     static func fillVaultLogin(
         username: String, password: String, submit: Bool, expectedOrigin: String, in webView: BrowserPage
     ) async -> VaultFillResult {
@@ -811,12 +813,15 @@ extension PageDriver {
                 ok: false, documentID: nil, fieldsFilled: [], submitted: false,
                 error: "Page access changed before credentials could be filled.")
         }
-        guard let currentURL = webView.url, SitePermissions.origin(for: currentURL) == expectedOrigin else {
+        guard !expectedOrigin.isEmpty, let currentURL = webView.url, SitePermissions.origin(for: currentURL) == expectedOrigin else {
             return VaultFillResult(
                 ok: false, documentID: nil, fieldsFilled: [], submitted: false,
                 error: "The page navigated to another origin before credentials could be filled.")
         }
         let body = scriptedAsync("""
+            if (typeof expectedOrigin !== 'string' || !expectedOrigin || location.origin !== expectedOrigin) {
+              return JSON.stringify({ error: 'The page navigated to another origin before credentials could be filled.' });
+            }
             if (!document.body) return JSON.stringify({ error: 'The page has no body to fill.' });
             const isPassword = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
               && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
@@ -868,7 +873,12 @@ extension PageDriver {
         do {
             raw = try await webView.callAsyncJavaScript(
                 body,
-                arguments: ["uVal": username, "pVal": password, "shouldSubmit": submit],
+                arguments: [
+                    "uVal": username,
+                    "pVal": password,
+                    "shouldSubmit": submit,
+                    "expectedOrigin": expectedOrigin,
+                ],
                 in: nil,
                 contentWorld: PageAutomationGuard.world
             )

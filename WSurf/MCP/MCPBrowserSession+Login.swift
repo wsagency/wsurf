@@ -45,7 +45,7 @@ extension MCPBrowserSession {
     /// (`BrowserTab.notifyDocumentCommitted`), never by `history.pushState`/hash changes or pure read queries.
     struct CredentialTaint: Equatable, Sendable {
         let commitEpoch: UInt64
-        let runtimeDocumentID: String
+        let runtimeDocumentID: String?
         let mainDocumentID: String?
     }
 
@@ -53,7 +53,7 @@ extension MCPBrowserSession {
 
     /// Marks `tab`'s current document as credential-tainted, registers a commit observer so real main-frame navigation
     /// clears taint cleanly, and strips any already-buffered diagnostics bodies/previews on this document.
-    func markCredentialTainted(tab: BrowserTab, runtimeDocumentID: String, mainDocumentID: String?) {
+    func markCredentialTainted(tab: BrowserTab, runtimeDocumentID: String?, mainDocumentID: String?) {
         let epoch = tab.documentCommitEpoch
         credentialTaintedDocuments[tab.id] = CredentialTaint(
             commitEpoch: epoch, runtimeDocumentID: runtimeDocumentID, mainDocumentID: mainDocumentID)
@@ -226,9 +226,10 @@ extension MCPBrowserSession {
             guard fill.ok else {
                 return failure(fill.error ?? "Could not fill the login form.")
             }
-            if let documentID = fill.documentID ?? preSubmitRuntimeDocumentID {
-                markCredentialTainted(tab: tab, runtimeDocumentID: documentID, mainDocumentID: preSubmitMainDocumentID)
-            }
+            markCredentialTainted(
+                tab: tab,
+                runtimeDocumentID: fill.documentID ?? preSubmitRuntimeDocumentID,
+                mainDocumentID: preSubmitMainDocumentID)
             let message = fill.submitted
                 ? "WSurf Vault filled the login form and requested sign-in. Values remain hidden and this document is credential-protected."
                 : "WSurf Vault filled the login form without submitting. Values remain hidden and this document is credential-protected."

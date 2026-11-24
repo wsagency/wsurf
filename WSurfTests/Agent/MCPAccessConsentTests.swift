@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import AppKit
 import Foundation
 import Testing
 
@@ -103,14 +104,77 @@ struct MCPAccessConsentTests {
             client: "Claude Code", url: url, accounts: [first, second], allowsManualTakeOver: false, reason: nil)
         #expect(multi.showsAccountPicker)
         #expect(multi.buttons.map(\.action) == [.fill, .fillAndSignIn, .decline])
-        #expect(multi.choice(forButton: 0, selectedAccountIndex: 1) == .fill(accountID: second.id))
-        #expect(multi.choice(forButton: 1, selectedAccountIndex: 1) == .fillAndSignIn(accountID: second.id))
-        #expect(multi.choice(forButton: 2, selectedAccountIndex: 1) == .decline)
+        #expect(multi.choice(forButton: 0, selectedAccountID: second.id) == .fill(accountID: second.id))
+        #expect(multi.choice(forButton: 1, selectedAccountID: second.id) == .fillAndSignIn(accountID: second.id))
+        #expect(multi.choice(forButton: 2, selectedAccountID: second.id) == .decline)
+        // Missing or unrecognized selectedAccountID on a multi-account sheet fails closed to .decline.
+        #expect(multi.choice(forButton: 0, selectedAccountID: nil) == .decline)
+        #expect(multi.choice(forButton: 0, selectedAccountID: UUID()) == .decline)
 
         let withoutVault = MCPAccessConsent.loginSheet(
             client: "codex-mcp-client", url: url, accounts: [], allowsManualTakeOver: true, reason: nil)
         #expect(withoutVault.message.contains("Codex"))
         #expect(withoutVault.buttons.map(\.action) == [.takeOver, .decline])
         #expect(withoutVault.buttons.last?.isEscape == true)
+    }
+
+    @Test func accountPickerPreservesDuplicateLabelsAndMapsByRepresentedUUID() throws {
+        let url = URL(string: "https://app.example.com/login")!
+        let firstA = MCPAccessConsent.LoginAccount(id: UUID(), label: "alice@example.com")
+        let middleB = MCPAccessConsent.LoginAccount(id: UUID(), label: "bob@example.com")
+        let secondA = MCPAccessConsent.LoginAccount(id: UUID(), label: "alice@example.com")
+        let accounts = [firstA, middleB, secondA]
+
+        let sheet = MCPAccessConsent.loginSheet(
+            client: "Claude Code", url: url, accounts: accounts, allowsManualTakeOver: true, reason: nil)
+        let popup = MCPAccessConsent.makeAccountPicker(for: sheet.accounts)
+
+        #expect(popup.numberOfItems == 3, "NSPopUpButton must never deduplicate identical account labels")
+        #expect(popup.itemTitles == ["alice@example.com", "bob@example.com", "alice@example.com"])
+
+        popup.selectItem(at: 0)
+        #expect(MCPAccessConsent.selectedAccountID(from: popup) == firstA.id)
+        #expect(sheet.choice(forButton: 0, selectedAccountID: MCPAccessConsent.selectedAccountID(from: popup)) == .fill(accountID: firstA.id))
+
+        popup.selectItem(at: 1)
+        #expect(MCPAccessConsent.selectedAccountID(from: popup) == middleB.id)
+        #expect(sheet.choice(forButton: 0, selectedAccountID: MCPAccessConsent.selectedAccountID(from: popup)) == .fill(accountID: middleB.id))
+
+        popup.selectItem(at: 2)
+        #expect(MCPAccessConsent.selectedAccountID(from: popup) == secondA.id)
+        #expect(sheet.choice(forButton: 1, selectedAccountID: MCPAccessConsent.selectedAccountID(from: popup)) == .fillAndSignIn(accountID: secondA.id))
+    }
+
+    @Test func vaultBridgeDisambiguatesDuplicateAccountLabels() {
+        let personalID = UUID()
+        let workID = UUID()
+        let first = VaultBlindLoginBridge.Summary(id: UUID(), label: "alice@example.com", vaultID: personalID, revision: 1, epoch: 1)
+        let unique = VaultBlindLoginBridge.Summary(id: UUID(), label: "bob@example.com", vaultID: personalID, revision: 1, epoch: 1)
+        let workCopy = VaultBlindLoginBridge.Summary(id: UUID(), label: "alice@example.com", vaultID: workID, revision: 1, epoch: 1)
+
+        let acrossVaults = VaultBlindLoginBridge.disambiguateLabels([
+            (first, "Personal"),
+            (unique, "Personal"),
+            (workCopy, "Work"),
+        ])
+        #expect(acrossVaults.map(\.id) == [first.id, unique.id, workCopy.id])
+        #expect(acrossVaults.map(\.label) == ["alice@example.com (Personal)", "bob@example.com", "alice@example.com (Work)"])
+
+        let sameVaultCopy = VaultBlindLoginBridge.Summary(id: UUID(), label: "alice@example.com", vaultID: personalID, revision: 1, epoch: 1)
+        let withinSameVault = VaultBlindLoginBridge.disambiguateLabels([
+            (first, "Personal"),
+            (sameVaultCopy, "Personal"),
+        ])
+        #expect(withinSameVault.map(\.id) == [first.id, sameVaultCopy.id])
+        #expect(withinSameVault.map(\.label) == ["alice@example.com (Personal) #1", "alice@example.com (Personal) #2"])
+
+        let hiddenOne = VaultBlindLoginBridge.Summary(id: UUID(), label: "app.example.com", vaultID: personalID, revision: 1, epoch: 1)
+        let hiddenTwo = VaultBlindLoginBridge.Summary(id: UUID(), label: "app.example.com", vaultID: workID, revision: 1, epoch: 1)
+        let unnamedVaults = VaultBlindLoginBridge.disambiguateLabels([
+            (hiddenOne, nil),
+            (hiddenTwo, ""),
+        ])
+        #expect(unnamedVaults.map(\.id) == [hiddenOne.id, hiddenTwo.id])
+        #expect(unnamedVaults.map(\.label) == ["app.example.com #1", "app.example.com #2"])
     }
 }

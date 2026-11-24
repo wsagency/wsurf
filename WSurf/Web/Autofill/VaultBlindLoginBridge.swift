@@ -30,13 +30,15 @@ enum VaultBlindLoginBridge {
         let scope = browser.vaultScope(for: tab)
         let listing = (try? await scope.listing()) ?? []
         let unlocked = scope.unlockedManagers
-        var results: [(summary: Summary, matchKey: String)] = []
+        var results: [(summary: Summary, vaultName: String?, matchKey: String)] = []
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }),
                 let epoch = manager.authorizationEpoch,
                 let projection = try? await manager.autofillCandidates(),
                 manager.authorizationEpoch == epoch
             else { continue }
+            let vaultName = vault.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanedVaultName = (vaultName?.isEmpty == false) ? vaultName : nil
             for candidate in projection.candidates where candidate.hasPassword && candidate.origins.contains(origin) {
                 let label: String
                 if !candidate.usernameIsConcealed, !candidate.username.isEmpty {
@@ -53,17 +55,57 @@ enum VaultBlindLoginBridge {
                     revision: projection.revision,
                     epoch: epoch)
                 let matchKey = (label + " " + (candidate.usernameIsConcealed ? "" : candidate.username)).lowercased()
-                results.append((summary, matchKey))
+                results.append((summary, cleanedVaultName, matchKey))
             }
         }
-        guard let hint = accountHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hint.isEmpty else {
-            return results.map(\.summary)
+        let ordered: [(summary: Summary, vaultName: String?)]
+        if let hint = accountHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hint.isEmpty {
+            ordered = results.sorted { lhs, rhs in
+                let leftMatch = lhs.matchKey.contains(hint)
+                let rightMatch = rhs.matchKey.contains(hint)
+                return leftMatch && !rightMatch
+            }.map { ($0.summary, $0.vaultName) }
+        } else {
+            ordered = results.map { ($0.summary, $0.vaultName) }
         }
-        return results.sorted { lhs, rhs in
-            let leftMatch = lhs.matchKey.contains(hint)
-            let rightMatch = rhs.matchKey.contains(hint)
-            return leftMatch && !rightMatch
-        }.map(\.summary)
+        return disambiguateLabels(ordered)
+    }
+
+    /// Disambiguates duplicate sheet display labels so the user can tell accounts apart in the login picker:
+    /// appends ` (\(vaultName))` when labels collide across named vaults, and ` #N` for any remaining duplicates.
+    static func disambiguateLabels(_ items: [(summary: Summary, vaultName: String?)]) -> [Summary] {
+        var baseCounts: [String: Int] = [:]
+        for item in items {
+            baseCounts[item.summary.label, default: 0] += 1
+        }
+        let withVault: [Summary] = items.map { item in
+            guard (baseCounts[item.summary.label] ?? 0) > 1,
+                let vaultName = item.vaultName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !vaultName.isEmpty
+            else { return item.summary }
+            return Summary(
+                id: item.summary.id,
+                label: "\(item.summary.label) (\(vaultName))",
+                vaultID: item.summary.vaultID,
+                revision: item.summary.revision,
+                epoch: item.summary.epoch)
+        }
+        var finalCounts: [String: Int] = [:]
+        for summary in withVault {
+            finalCounts[summary.label, default: 0] += 1
+        }
+        var seen: [String: Int] = [:]
+        return withVault.map { summary in
+            guard (finalCounts[summary.label] ?? 0) > 1 else { return summary }
+            let index = seen[summary.label, default: 0] + 1
+            seen[summary.label] = index
+            return Summary(
+                id: summary.id,
+                label: "\(summary.label) #\(index)",
+                vaultID: summary.vaultID,
+                revision: summary.revision,
+                epoch: summary.epoch)
+        }
     }
 
     /// Reads the single user-approved login from its unlocked vault and writes it directly into `view` without returning

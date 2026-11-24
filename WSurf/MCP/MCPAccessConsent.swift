@@ -177,14 +177,23 @@ enum MCPAccessConsent {
         let showsAccountPicker: Bool
         let buttons: [Button]
 
-        func choice(forButton index: Int, selectedAccountIndex: Int = 0) -> LoginChoice {
+        func choice(forButton index: Int, selectedAccountID: UUID? = nil) -> LoginChoice {
             guard buttons.indices.contains(index) else { return .decline }
-            let selectedID = accounts.indices.contains(selectedAccountIndex) ? accounts[selectedAccountIndex].id : nil
+            let resolvedID: UUID?
+            if let selectedAccountID {
+                resolvedID = accounts.contains(where: { $0.id == selectedAccountID }) ? selectedAccountID : nil
+            } else if !showsAccountPicker, accounts.count == 1 {
+                resolvedID = accounts[0].id
+            } else {
+                resolvedID = nil
+            }
             switch buttons[index].action {
             case .fill:
-                return .fill(accountID: selectedID)
+                guard let resolvedID else { return .decline }
+                return .fill(accountID: resolvedID)
             case .fillAndSignIn:
-                return .fillAndSignIn(accountID: selectedID)
+                guard let resolvedID else { return .decline }
+                return .fillAndSignIn(accountID: resolvedID)
             case .takeOver:
                 return .takeOver
             case .decline:
@@ -241,6 +250,27 @@ enum MCPAccessConsent {
         )
     }
 
+    /// Builds the account picker using explicit `NSMenuItem` entries with `representedObject = account.id` (never
+    /// `NSPopUpButton.addItem(withTitle:)`, which silently removes duplicate titles and shifts item indices).
+    static func makeAccountPicker(for accounts: [LoginAccount]) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        popup.autoenablesItems = false
+        popup.removeAllItems()
+        for account in accounts {
+            let item = NSMenuItem(title: account.label, action: nil, keyEquivalent: "")
+            item.representedObject = account.id
+            popup.menu?.addItem(item)
+        }
+        if !accounts.isEmpty {
+            popup.selectItem(at: 0)
+        }
+        return popup
+    }
+
+    static func selectedAccountID(from picker: NSPopUpButton?) -> UUID? {
+        picker?.selectedItem?.representedObject as? UUID
+    }
+
     static func requestLogin(
         client: String, url: URL, accounts: [LoginAccount], allowsManualTakeOver: Bool = true, reason: String?, in window: NSWindow?
     ) async -> LoginChoice {
@@ -252,11 +282,7 @@ enum MCPAccessConsent {
         alert.informativeText = sheet.message
         var picker: NSPopUpButton?
         if sheet.showsAccountPicker {
-            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
-            for account in sheet.accounts {
-                popup.addItem(withTitle: account.label)
-            }
-            popup.selectItem(at: 0)
+            let popup = makeAccountPicker(for: sheet.accounts)
             alert.accessoryView = popup
             picker = popup
         }
@@ -267,10 +293,10 @@ enum MCPAccessConsent {
             }
         }
         let response = await present(alert, in: window)
-        let selectedIndex = max(0, picker?.indexOfSelectedItem ?? 0)
+        let chosenID = sheet.showsAccountPicker ? selectedAccountID(from: picker) : nil
         return sheet.choice(
             forButton: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue,
-            selectedAccountIndex: selectedIndex)
+            selectedAccountID: chosenID)
     }
 
     private static func displayName(for client: String) -> String {

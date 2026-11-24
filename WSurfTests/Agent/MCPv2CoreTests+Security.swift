@@ -330,9 +330,10 @@ extension MCPv2CoreTests {
             let denied = try await call(session, "evaluateScript", tab: rig.owner, ["source": "location.href"])
             #expect(denied.isError == true && denied.structuredContent?.objectValue?["code"]?.stringValue == "protectedSecretPresent")
 
-            // Conservative nil mainDocumentID handling: stays tainted for current commit epoch until real navigation commits.
-            session.markCredentialTainted(tab: rig.owner, runtimeDocumentID: "rt-nil-main", mainDocumentID: nil)
+            // Conservative nil document ID handling: stays tainted for current commit epoch even when both IDs are nil.
+            session.markCredentialTainted(tab: rig.owner, runtimeDocumentID: nil, mainDocumentID: nil)
             #expect(session.isMainDocumentCredentialTainted(tab: rig.owner, mainDocumentID: rig.owner.page.mainDocumentID ?? "any"))
+            #expect(await session.isDocumentCredentialProtected(tab: rig.owner, view: rig.owner.page))
 
             // Real main-frame document commit clears taint cleanly via BrowserTab commit observer.
             let dashURL = try rig.server.url("/dashboard")
