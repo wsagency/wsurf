@@ -14,6 +14,7 @@ nonisolated enum AgentWindowOwner: String, Codable, Sendable, Equatable {
 nonisolated enum AgentWindowAccess: String, Codable, Sendable, Equatable {
     case control
     case development
+    case developer
 
     @MainActor var mcpAccess: MCPAccessConsent.Access {
         switch self {
@@ -21,6 +22,8 @@ nonisolated enum AgentWindowAccess: String, Codable, Sendable, Equatable {
             .control
         case .development:
             .development
+        case .developer:
+            .developer
         }
     }
 }
@@ -35,11 +38,12 @@ nonisolated struct AgentCompanionInfo: Equatable, Sendable {
     var isWorking: Bool = false
     var allowsMultipleTabs: Bool = true
     var defaultEngine: BrowserEngine = .chromium
-    var access: AgentWindowAccess = .development
+    var access: AgentWindowAccess = .control
 
     var displayHostName: String {
         let trimmed = hostName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased() == "t3-code" || trimmed.lowercased() == "t3" {
+        let lowered = trimmed.lowercased()
+        if lowered == "t3-code" || lowered == "t3" || lowered == "t3 code" {
             return "T3"
         }
         return trimmed.isEmpty ? "Agent" : trimmed
@@ -61,6 +65,7 @@ nonisolated enum MCPAgentWindowErrorCode: String, Sendable, Equatable {
     case unknownOperation
     case notFound
     case forbidden
+    case unsupported
     case agentMismatch
     case humanControl
     case staleGeneration

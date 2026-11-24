@@ -199,9 +199,11 @@ final class MCPBrowserSession: Identifiable {
         guard !busy else { return failure("Another operation is running. Wait for its result.") }
         busy = true
         lastTool = name
-        agentWindowScope?.onWorkingChanged(true)
+        let workToken = agentWindowScope?.onBeginWorking()
         defer {
-            agentWindowScope?.onWorkingChanged(false)
+            if let workToken {
+                agentWindowScope?.onEndWorking(workToken)
+            }
             busy = false
             completedCalls += 1
         }

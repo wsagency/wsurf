@@ -10,7 +10,6 @@ import MCP
 @MainActor
 extension MCPAgentWindowRegistry {
     func invokePreview(
-        hostId: UUID,
         pairedClientId: UUID,
         hostName: String,
         params: [String: Any]
@@ -39,7 +38,6 @@ extension MCPAgentWindowRegistry {
 
         if operation == "open" {
             return try await handlePreviewOpen(
-                hostId: hostId,
                 pairedClientId: pairedClientId,
                 hostName: hostName,
                 threadId: threadId,
@@ -50,7 +48,7 @@ extension MCPAgentWindowRegistry {
         }
 
         let (record, coordinator, tab) = try resolvePreviewTarget(
-            hostId: hostId,
+            pairedClientId: pairedClientId,
             threadId: threadId,
             tabId: requestedTabId,
             operation: operation,
@@ -78,10 +76,32 @@ extension MCPAgentWindowRegistry {
         }
     }
 
+    /// Refuses mutating or scripting operations when the tab's current website is marked Read Only or Off (`deny`).
+    func ensureSiteWritable(tab: BrowserTab, browser: BrowserModel) throws {
+        guard let url = Self.activeWebURL(of: tab) else { return }
+        tab.assistantAccess.pageChanged(url: url)
+        let origin = SitePermissions.origin(for: url)
+        let policy = tab.assistantAccess.explicitPolicy ?? browser.sitePermissions.assistantRecord(for: origin)
+        if policy == .deny {
+            throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
+        }
+        if policy == .readOnly {
+            throw MCPAgentWindowError(.forbidden, "This website is set to Read Only for assistant access.")
+        }
+    }
+
+    private static func activeWebURL(of tab: BrowserTab) -> URL? {
+        for candidate in [tab.liveView?.url, URL(string: tab.urlString)].compactMap({ $0 }) {
+            if let scheme = candidate.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     // MARK: - Target Resolution & Ownership Validation
 
     private func handlePreviewOpen(
-        hostId: UUID,
         pairedClientId: UUID,
         hostName: String,
         threadId: String,
@@ -89,11 +109,11 @@ extension MCPAgentWindowRegistry {
         expectedGeneration: Int?,
         opParams: [String: Any]
     ) async throws -> [String: Any] {
-        if let tabId, let (existingRecord, _, _) = findTab(hostId: hostId, tabId: tabId),
+        if let tabId, let (existingRecord, _, _) = findTab(pairedClientId: pairedClientId, tabId: tabId),
            existingRecord.threadId != threadId {
             throw MCPAgentWindowError(.agentMismatch, "Tab belongs to another thread.")
         }
-        if let existing = record(hostId: hostId, threadId: threadId),
+        if let existing = record(pairedClientId: pairedClientId, threadId: threadId),
            let companion = existing.coordinator?.browser.agentCompanion {
             if companion.owner == .human {
                 throw MCPAgentWindowError(.humanControl, "Window is under human control.")
@@ -105,7 +125,6 @@ extension MCPAgentWindowRegistry {
         var openParams = opParams
         openParams["threadId"] = threadId
         return try await openAgentWindow(
-            hostId: hostId,
             pairedClientId: pairedClientId,
             hostName: hostName,
             params: openParams
@@ -113,7 +132,7 @@ extension MCPAgentWindowRegistry {
     }
 
     private func resolvePreviewTarget(
-        hostId: UUID,
+        pairedClientId: UUID,
         threadId: String,
         tabId: UUID?,
         operation: String,
@@ -121,7 +140,7 @@ extension MCPAgentWindowRegistry {
     ) throws -> (Record, AppCoordinator, BrowserTab) {
         let resolved: (Record, AppCoordinator, BrowserTab)
         if let tabId {
-            guard let found = findTab(hostId: hostId, tabId: tabId) else {
+            guard let found = findTab(pairedClientId: pairedClientId, tabId: tabId) else {
                 throw MCPAgentWindowError(.notFound, "Tab not found.")
             }
             guard found.0.threadId == threadId else {
@@ -129,7 +148,7 @@ extension MCPAgentWindowRegistry {
             }
             resolved = found
         } else {
-            guard let record = record(hostId: hostId, threadId: threadId),
+            guard let record = record(pairedClientId: pairedClientId, threadId: threadId),
                   let coordinator = record.coordinator,
                   !coordinator.isClosed,
                   let tab = coordinator.browser.activeTab ?? coordinator.browser.tabs.first(where: { !$0.isClosed })
@@ -160,8 +179,8 @@ extension MCPAgentWindowRegistry {
         expectedGeneration: Int,
         body: @escaping @MainActor () async throws -> [String: Any]
     ) async throws -> [String: Any] {
-        setWorking(true, for: record)
-        defer { setWorking(false, for: record) }
+        let workToken = beginWorking(for: record)
+        defer { endWorking(workToken, for: record) }
 
         let task = Task<Result<PreviewPayloadBox, any Error>, Never> { @MainActor in
             do {
@@ -242,7 +261,7 @@ extension MCPAgentWindowRegistry {
         case "set_appearance":
             return try await previewSetAppearance(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
         case "dialog":
-            return try await previewDialog(opParams: opParams, tab: tab, session: session)
+            return try await previewDialog(opParams: opParams, coordinator: coordinator, tab: tab, session: session)
         case "set_engine":
             return try await previewSetEngine(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
         case "close":
@@ -293,15 +312,20 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         guard let rawURL = opParams["url"] as? String,
               let url = MCPAgentBridgeProtocol.parseWebURL(rawURL)
         else {
             throw MCPAgentWindowError(.invalidParams, "navigate requires a valid HTTP(S) url.")
         }
+        let destinationOrigin = SitePermissions.origin(for: url)
+        guard coordinator.browser.sitePermissions.assistantRecord(for: destinationOrigin) != .deny else {
+            throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
+        }
         session.keepInWindow(tab)
         session.observations[tab.id] = nil
         session.grants[tab.id] = MCPBrowserSession.Grant(
-            origin: SitePermissions.origin(for: url),
+            origin: destinationOrigin,
             access: record.access.mcpAccess,
             source: .agentWindow
         )
@@ -393,6 +417,7 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         guard let action = opParams["action"] as? String, !action.isEmpty else {
             throw MCPAgentWindowError(.invalidParams, "act requires action.")
         }
@@ -423,8 +448,10 @@ extension MCPAgentWindowRegistry {
         session: MCPBrowserSession,
         startGeneration: Int
     ) async throws -> [String: Any] {
-        guard record.access == .development else {
-            throw MCPAgentWindowError(.forbidden, "evaluate requires development access on this Agent Micro Window.")
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
+        session.syncAgentWindowGrants()
+        guard session.mayProceed(tab, capability: .developer) else {
+            throw MCPAgentWindowError(.forbidden, MCPBrowserSession.developerRefusal)
         }
         let rawSource = (opParams["expression"] as? String) ?? (opParams["source"] as? String) ?? ""
         let source = MCPBrowserSession.scriptExpression(rawSource)
@@ -439,10 +466,18 @@ extension MCPAgentWindowRegistry {
         let view = tab.page
         let pageGeneration = tab.pageGeneration
         guard tab.isLive(view, generation: pageGeneration),
-              let url = session.webURL(of: tab),
-              tab.assistantAccess.explicitPolicy != .deny
+              let url = session.webURL(of: tab)
         else {
             throw MCPAgentWindowError(.actionFailed, "The webpage is unavailable for scripting.")
+        }
+        if await PageSensitiveProbe.hasFilledSensitiveField(in: view) {
+            throw MCPAgentWindowError(.forbidden, "Refused to evaluate script on a page with a filled sensitive or password field.")
+        }
+        guard session.mayProceed(tab, capability: .developer),
+              tab.isLive(view, generation: pageGeneration),
+              session.webURL(of: tab) == url
+        else {
+            throw MCPAgentWindowError(.forbidden, MCPBrowserSession.developerRefusal)
         }
         let world = PageScripting.World(rawValue: (opParams["world"] as? String) ?? "page") ?? .page
         let timeoutMs = min(
@@ -452,15 +487,15 @@ extension MCPAgentWindowRegistry {
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString,
             snapshot: nil,
-            validate: { [weak self, weak record, weak coordinator, weak tab, weak view] in
-                guard let self, let record, let coordinator, let tab, let view,
+            validate: { [weak self, weak record, weak coordinator, weak tab, weak view, weak session] in
+                guard let self, let record, let coordinator, let tab, let view, let session,
                       self.isActiveRecord(record),
                       !coordinator.isClosed,
                       let companion = coordinator.browser.agentCompanion,
                       companion.owner == .agent,
                       companion.generation == startGeneration,
                       tab.isLive(view, generation: pageGeneration),
-                      !Task.isCancelled
+                      session.mayProceed(tab, capability: .developer)
                 else {
                     return false
                 }
@@ -477,6 +512,16 @@ extension MCPAgentWindowRegistry {
         guard scope.validate() else {
             throw MCPAgentWindowError(.staleGeneration, "Page access changed while evaluating script.")
         }
+        return try decodeEvaluateOutcome(outcome, tab: tab, world: world, elapsedMs: elapsedMs, session: session)
+    }
+
+    private func decodeEvaluateOutcome(
+        _ outcome: PageScripting.Outcome,
+        tab: BrowserTab,
+        world: PageScripting.World,
+        elapsedMs: Int,
+        session: MCPBrowserSession
+    ) throws -> [String: Any] {
         switch outcome {
         case .stale:
             throw MCPAgentWindowError(.staleGeneration, "The page changed while the script ran.")
@@ -502,17 +547,10 @@ extension MCPAgentWindowRegistry {
                 "elapsedMs": elapsedMs,
                 "untrusted": true,
             ]
-            if let type = reply["type"] {
-                response["type"] = type
-            }
-            if let value = reply["value"] {
-                response["value"] = value
-            }
-            if let truncated = reply["truncated"] {
-                response["truncated"] = truncated
-            }
-            if let redacted = reply["redacted"] {
-                response["redacted"] = redacted
+            for key in ["type", "value", "truncated", "redacted"] {
+                if let field = reply[key] {
+                    response[key] = field
+                }
             }
             return response
         }
@@ -545,7 +583,7 @@ extension MCPAgentWindowRegistry {
         }
         var args: [String: Value] = [
             "tabID": .string(tab.id.uuidString),
-            "timeout": .int(max(1, min(30, (timeoutMs + 999) / 1_000))),
+            "timeout": .int(max(1, min(15, (timeoutMs + 999) / 1_000))),
         ]
         if let condition = opParams["condition"] as? String, !condition.isEmpty {
             args["condition"] = .string(condition)
@@ -578,6 +616,7 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         guard let width = opParams["width"] as? Int, let height = opParams["height"] as? Int,
               width >= PageViewport.minAxis, width <= PageViewport.maxAxis,
               height >= PageViewport.minAxis, height <= PageViewport.maxAxis
@@ -589,7 +628,7 @@ extension MCPAgentWindowRegistry {
             let clampedHeight = max(CGFloat(height), MicroWindowMetrics.minSize.height)
             window.setContentSize(NSSize(width: clampedWidth, height: clampedHeight))
         }
-        if record.access == .development, session.webURL(of: tab) != nil {
+        if session.mayProceed(tab, capability: .development), session.webURL(of: tab) != nil {
             let result = try await session.call(name: "setViewport", arguments: [
                 "tabID": .string(tab.id.uuidString),
                 "width": .int(width),
@@ -619,18 +658,22 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         guard let rawScheme = opParams["colorScheme"] as? String,
               ["dark", "light", "system"].contains(rawScheme)
         else {
             throw MCPAgentWindowError(.invalidParams, "colorScheme must be dark, light, or system.")
         }
-        guard record.access == .development else {
-            throw MCPAgentWindowError(.forbidden, "set_appearance requires development access.")
+        guard record.access.mcpAccess.rank >= MCPAccessConsent.Access.development.rank else {
+            throw MCPAgentWindowError(.forbidden, "set_appearance requires development or developer access.")
         }
         let targetScheme: DevelopmentMedia.ColorScheme? = rawScheme == "system"
             ? nil
             : DevelopmentMedia.ColorScheme(rawValue: rawScheme)
         if session.webURL(of: tab) != nil {
+            guard session.mayProceed(tab, capability: .development) else {
+                throw MCPAgentWindowError(.forbidden, "set_appearance requires development access on this page.")
+            }
             session.keepInWindow(tab)
             tab.realizeDeferredSession()
             let view = tab.page
@@ -654,9 +697,11 @@ extension MCPAgentWindowRegistry {
 
     private func previewDialog(
         opParams: [String: Any],
+        coordinator: AppCoordinator,
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         var args: [String: Value] = ["tabID": .string(tab.id.uuidString)]
         let dialogID = (opParams["dialogID"] as? String) ?? tab.dialogs.pending(for: session.id).first?.id
         if let dialogID {
@@ -689,14 +734,24 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        try ensureSiteWritable(tab: tab, browser: coordinator.browser)
         guard let rawEngine = opParams["engine"] as? String,
               let targetEngine = BrowserEngine(rawValue: rawEngine.lowercased())
         else {
             throw MCPAgentWindowError(.invalidParams, "engine must be chromium or webkit.")
         }
-        tab.engineOverride = targetEngine
+        let currentURL = Self.activeWebURL(of: tab)
+        let origin = currentURL.map(SitePermissions.origin(for:)) ?? ""
+        if targetEngine == .chromium, !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
+            throw MCPAgentWindowError(.unsupported, "Origin \(origin) requires WebKit and cannot switch to Chromium.")
+        }
+        tab.engineOverride = nil
+        tab.defaultEngineOverride = targetEngine
         session.observations[tab.id] = nil
         if tab.isMaterialised || !tab.urlString.isEmpty {
+            if let currentURL {
+                tab.noteNavigation(to: currentURL, startedByUser: true)
+            }
             let switched = await tab.switchEngine(to: targetEngine)
             guard switched else {
                 throw MCPAgentWindowError(.actionFailed, "Could not switch engine to \(targetEngine.rawValue).")
@@ -720,7 +775,7 @@ extension MCPAgentWindowRegistry {
     ) throws -> [String: Any] {
         let isLastTab = coordinator.browser.tabs.filter { !$0.isClosed }.count <= 1
         if isLastTab {
-            _ = try closeAgentWindow(hostId: record.hostId, threadId: record.threadId, windowId: record.windowId)
+            _ = try closeAgentWindow(pairedClientId: record.pairedClientId, threadId: record.threadId, windowId: record.windowId)
             return ["closed": true, "windowClosed": true]
         }
         coordinator.browser.close(tab, recordForReopening: false)

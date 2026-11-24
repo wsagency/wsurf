@@ -18,12 +18,12 @@ extension AppCoordinator {
 
     /// Whether tabs opened inside this micro window stay here instead of handing off to the user's main window.
     var keepsOwnTabs: Bool {
-        browser.agentCompanion?.allowsMultipleTabs == true
+        isAgentMicro || browser.agentCompanion?.allowsMultipleTabs == true
     }
 
     /// User clicked Take Over in an Agent Micro Window's MicroBar.
     func takeOverAgentMicroWindow() {
-        guard isAgentMicro else { return }
+        guard browser.agentCompanion != nil else { return }
         if let registry = application?.agentWindowRegistry {
             registry.takeOver(window: browser)
         } else if var companion = browser.agentCompanion {
@@ -37,7 +37,7 @@ extension AppCoordinator {
 
     /// User clicked Hand Back in an Agent Micro Window's MicroBar.
     func handBackAgentMicroWindow() {
-        guard isAgentMicro else { return }
+        guard browser.agentCompanion != nil else { return }
         if let registry = application?.agentWindowRegistry {
             registry.handBack(window: browser)
         } else if var companion = browser.agentCompanion {
@@ -49,11 +49,11 @@ extension AppCoordinator {
 
     /// User clicked Stop in an Agent Micro Window's MicroBar.
     func stopAgentMicroWindow() {
-        guard isAgentMicro else { return }
+        guard browser.agentCompanion != nil else { return }
         if let registry = application?.agentWindowRegistry {
             registry.stop(window: browser)
         } else {
-            mcpServer.disconnect(browser: browser)
+            mcpServer.stop(window: browser)
             browser.agentCompanion = nil
         }
     }

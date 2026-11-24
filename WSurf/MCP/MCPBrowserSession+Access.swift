@@ -160,11 +160,14 @@ extension MCPBrowserSession {
             guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
                 return failure("Assistant access is off for this website.")
             }
-            let chosenEngine = engine ?? .chromium
-            let tab = openInBackground(url, engine: chosenEngine)
+            if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
+                return failure("This website requires WebKit and cannot open in Chromium.")
+            }
+            let tab = openInBackground(url, engine: engine)
             grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
             keepInWindow(tab)
-            return success("Opened tab \(tab.id.uuidString) in the Agent Micro Window. It runs in \(String(localized: chosenEngine.label)). Use readPage after it loads.")
+            let effectiveEngine = tab.preferredEngine(for: url)
+            return success("Opened tab \(tab.id.uuidString) in the Agent Micro Window. It runs in \(String(localized: effectiveEngine.label)). Use readPage after it loads.")
         }
         if engine != nil, !mayChooseEngine(for: webDestination(raw)) {
             return failure(Self.engineNeedsDevelopment)
@@ -389,9 +392,11 @@ extension MCPBrowserSession {
         case .appDefault:
             return followsWebsiteDefault(at: url) ? grant.access : nil
         case .agentWindow:
-            guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return nil }
-            if pairedClient != nil, livePairedClient.map({ !$0.paused }) != true {
-                return nil
+            guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned(),
+                  let client = livePairedClient, !client.paused
+            else { return nil }
+            if grant.access == .developer {
+                return developerTierHolds(at: url) ? .developer : .development
             }
             return grant.access
         }

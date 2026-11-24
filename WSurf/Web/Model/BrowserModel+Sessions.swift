@@ -255,6 +255,7 @@ extension BrowserModel {
     /// Persist both owners together before a close or a delayed save can race the move.
     @discardableResult
     func saveTransferredSession(from source: BrowserModel) -> Bool {
+        guard !isAgentMicro, !source.isAgentMicro else { return false }
         sharedSpaceService?.capture(self)
         source.cancelPendingSave()
         cancelPendingSave()

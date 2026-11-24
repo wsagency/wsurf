@@ -31,4 +31,25 @@ enum PageSensitiveProbe {
         let result = await PageDriver.evaluateJSON(PageDriver.scripted(script), in: page)
         return result?["sensitive"] as? Bool ?? true
     }
+
+    /// Checks whether any sensitive or password field (visible or hidden, including open shadow roots and same-origin
+    /// frames) currently holds a non-empty value so scripted `evaluate` never runs against live filled credentials.
+    static let filledSensitiveScript = """
+        if (!document.body) return JSON.stringify({ filledSensitive: false });
+        const fields = 'input:not([type=hidden]), textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"], [role="searchbox"]';
+        for (const el of R.walk(document.body)) {
+          if (!el.matches(fields) || !R.isSensitiveField(el)) continue;
+          const raw = el.isContentEditable ? (el.innerText || el.textContent || '') : (typeof el.value === 'string' ? el.value : '');
+          if (raw.trim().length > 0) {
+            return JSON.stringify({ filledSensitive: true });
+          }
+        }
+        return JSON.stringify({ filledSensitive: false });
+        """
+
+    /// Fails closed (returns true) when the page does not answer.
+    static func hasFilledSensitiveField(in page: BrowserPage) async -> Bool {
+        let result = await PageDriver.evaluateJSON(PageDriver.scripted(filledSensitiveScript), in: page)
+        return result?["filledSensitive"] as? Bool ?? true
+    }
 }

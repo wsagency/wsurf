@@ -505,10 +505,13 @@ final class BrowserModel {
         byPerson: Bool = false
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
-        let effectiveEngine = engine ?? agentCompanion?.defaultEngine
-        tab.engineOverride = effectiveEngine
-        if let effectiveEngine, !tab.isMaterialised {
-            tab.engine = effectiveEngine
+        if let engine {
+            tab.engineOverride = engine
+        } else if isAgentMicro {
+            tab.defaultEngineOverride = agentCompanion?.defaultEngine ?? .chromium
+        }
+        if !tab.isMaterialised {
+            tab.engine = tab.preferredEngine(for: url)
         }
         insert(tab, after: opener)
         // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
@@ -724,11 +727,16 @@ final class BrowserModel {
     /// Set once by `BrowserApplication.newWindow` before the window's coordinator exists, and never changed afterwards.
     @ObservationIgnored var windowKind: WindowKind = .standard
 
-    /// Present while this micro window is detached and driven by an external host (e.g. T3 Code).
+    /// Set once when `BrowserApplication.openAgentMicroWindow` creates an ephemeral Agent Micro Window, and never cleared.
+    /// Keeps SQLite persistence, CloudTabs publishing, frame memorization, and main-window tab hand-off permanently disabled
+    /// even after `agentCompanion` is cleared by Stop, Close, or revoke.
+    @ObservationIgnored var isEphemeralAgentWindow = false
+
+    /// Present while this micro window is detached and actively controlled by an external host (e.g. T3 Code).
     var agentCompanion: AgentCompanionInfo?
 
     var isAgentMicro: Bool {
-        windowKind == .micro && agentCompanion != nil
+        windowKind == .micro && (isEphemeralAgentWindow || agentCompanion != nil)
     }
 }
 

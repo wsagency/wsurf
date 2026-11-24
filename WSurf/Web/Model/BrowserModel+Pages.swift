@@ -237,23 +237,29 @@ extension BrowserModel {
         return true
     }
 
-    /// The engine `tab` is set to run: its own (comparison or pinned), else the website's.
+    /// The engine `tab` is set to run: its own (comparison, pinned, or agent default), else the website's.
     func engine(for tab: BrowserTab) -> BrowserEngine {
         let origin = siteOrigin(for: tab)
+        if !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return .webKit
+        }
         if let engineOverride = tab.engineOverride {
             return engineOverride
         }
         if let pinned = tab.pinnedEngine, pinned.origin == origin {
             return pinned.engine
         }
+        if let defaultEngine = tab.defaultEngineOverride {
+            return defaultEngine
+        }
         return sitePermissions.engine(for: origin)
     }
 
     func applyStoredEngine(to origin: String) async {
         let engine = sitePermissions.engine(for: origin)
-        // A comparison tab, an explicit tab choice and a live sign-in chain keep their current engine.
+        // A comparison tab, an explicit tab choice, an agent default and a live sign-in chain keep their current engine.
         for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised && tab.engineOverride == nil
-            && tab.pinnedEngine?.origin != origin && tab.signInEngine == nil {
+            && tab.defaultEngineOverride == nil && tab.pinnedEngine?.origin != origin && tab.signInEngine == nil {
             guard tab.page.engine != engine else { continue }
             _ = await tab.switchEngine(to: engine)
         }

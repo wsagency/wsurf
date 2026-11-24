@@ -181,6 +181,7 @@ final class BrowserApplication {
         let context = BrowserProfileContext.shared(for: resolvedProfile, settingsOwner: resolvedProfile)
         let browser = BrowserModel(context: context, windowID: UUID())
         browser.windowKind = .micro
+        browser.isEphemeralAgentWindow = true
         var info = companion
         info.defaultEngine = engine
         browser.agentCompanion = info

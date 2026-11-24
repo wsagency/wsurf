@@ -277,6 +277,9 @@ final class BrowserTab: Identifiable {
     }
 
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
+    /// Default engine for tabs in an Agent Micro Window when neither a WebKit-only origin, an active `signInEngine` hold,
+    /// nor an explicit `engineOverride`/`pinnedEngine` chooses otherwise.
+    var defaultEngineOverride: BrowserEngine?
     /// The engine chosen for this tab on one origin. Explicitly setting the website default clears it.
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
     /// Holds a sign-in's redirects in the engine that accepted its first request.
@@ -303,14 +306,23 @@ final class BrowserTab: Identifiable {
     var onBackToOpener: (() -> Void)?
     func preferredEngine(for url: URL?, keepingSignIn: Bool = true) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
-        guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
-        let origin = SitePermissions.origin(for: url)
-        guard !origin.isEmpty else { return .webKit }
+        let origin = url.map(SitePermissions.origin(for:)) ?? ""
         if keepingSignIn, let signInEngine {
             return signInEngine
         }
+        if !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return .webKit
+        }
+        if let engineOverride {
+            return engineOverride
+        }
+        guard let url else { return defaultEngineOverride ?? .webKit }
+        guard !origin.isEmpty else { return defaultEngineOverride ?? .webKit }
         if let pinnedEngine, pinnedEngine.origin == origin {
             return pinnedEngine.engine
+        }
+        if let defaultEngineOverride {
+            return defaultEngineOverride
         }
         return sitePermissions.engine(for: origin)
     }

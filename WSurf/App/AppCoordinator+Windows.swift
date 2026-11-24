@@ -227,8 +227,11 @@ extension AppCoordinator {
     func windowDidClose() {
         guard application?.isTerminating != true, beginClosingWindow() else { return }
         if !profiles.isPrivate {
-            // A micro window whose page left or closed, or an ephemeral Agent Micro Window, has nothing to reopen.
-            if isAgentMicro || (isMicro && browser.tabs.isEmpty) {
+            // An ephemeral Agent Micro Window never writes SQLite session or retirement rows.
+            if isAgentMicro {
+                browser.cancelPendingSave()
+                forgetWindowFrame()
+            } else if isMicro, browser.tabs.isEmpty {
                 browser.retireSession()
                 forgetWindowFrame()
             } else {

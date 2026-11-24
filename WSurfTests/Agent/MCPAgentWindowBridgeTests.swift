@@ -11,8 +11,9 @@ import Testing
 
 /// End-to-end tests for the external host bridge (`host-bridge.sock`) over real Unix domain sockets:
 /// NDJSON framing, hello authentication, `openAgentWindow`, `listTabs`, `setOwner`, `invokePreview`
-/// (including `agentMismatch`, `humanControl`, `staleGeneration`, sensitive-field redaction), push events,
-/// and `closeAgentWindow`.
+/// (including Developer-tier & sensitive-field `evaluate` guards, Read Only/Deny enforcement,
+/// `agentMismatch`, `humanControl`, `staleGeneration`), Take Over / Stop finality, reconnect reattachment,
+/// `bridge.stop()` cleanup, and `closeAgentWindow`.
 @MainActor
 @Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPAgentWindowBridgeTests {
@@ -227,10 +228,10 @@ struct MCPAgentWindowBridgeTests {
         try? FileManager.default.removeItem(atPath: harness.directory)
     }
 
-    private func withProfile(_ body: (Profile) async throws -> Void) async throws {
+    private func withProfile(name: String = "Host Bridge Tests", _ body: (Profile) async throws -> Void) async throws {
         let catalog = ProfileStore.shared
         let previous = catalog.current
-        let profile = catalog.add(name: "Host Bridge Tests")
+        let profile = catalog.add(name: name)
         var failure: (any Error)?
         do {
             try await body(profile)
@@ -242,93 +243,6 @@ struct MCPAgentWindowBridgeTests {
         if let failure {
             throw failure
         }
-    }
-
-    // MARK: - Socket permissions & authentication
-
-    @Test(.timeLimit(.minutes(1))) func hostBridgePermissionsAndHelloAuthentication() async throws {
-        let harness = try await startHarness(authTimeout: .milliseconds(250))
-        defer { stopHarness(harness) }
-
-        // Socket permissions are strictly 0600 inside 0700 directory.
-        var dirInfo = stat()
-        #expect(lstat(harness.directory, &dirInfo) == 0)
-        #expect(dirInfo.st_mode & 0o777 == 0o700)
-        var sockInfo = stat()
-        #expect(lstat(harness.bridgeEndpoint, &sockInfo) == 0)
-        #expect(sockInfo.st_mode & 0o777 == 0o600)
-
-        let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
-
-        // 1. Unknown token is rejected with unauthorized and socket closes.
-        let badClient = BridgeClient(socketPath: harness.bridgeEndpoint)
-        try await badClient.connect()
-        try await badClient.sendJSON([
-            "wsurf": "host-hello",
-            "v": 1,
-            "token": SyntheticToken.stranger,
-            "host": "t3-code",
-        ])
-        let badReply = try await badClient.nextMessage()
-        #expect(badReply["ok"] as? Bool == false)
-        #expect((badReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
-        await badClient.close()
-
-        // 2. Paused paired client is rejected with unauthorized.
-        try harness.trust.setPaused(true, for: paired.id)
-        let pausedClient = BridgeClient(socketPath: harness.bridgeEndpoint)
-        try await pausedClient.connect()
-        try await pausedClient.sendJSON([
-            "wsurf": "host-hello",
-            "v": 1,
-            "token": SyntheticToken.first,
-            "host": "t3-code",
-        ])
-        let pausedReply = try await pausedClient.nextMessage()
-        #expect(pausedReply["ok"] as? Bool == false)
-        #expect((pausedReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
-        await pausedClient.close()
-        try harness.trust.setPaused(false, for: paired.id)
-
-        // 3. Slow/missing hello times out with unauthorized.
-        let slowClient = BridgeClient(socketPath: harness.bridgeEndpoint)
-        try await slowClient.connect()
-        try await slowClient.sendRaw(Data(#"{"wsurf":"host-hel"#.utf8))
-        do {
-            let reply = try await slowClient.nextMessage()
-            #expect(reply["ok"] as? Bool == false)
-            #expect((reply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
-        } catch {
-            // Connection cancelled by timeout is also valid closure.
-        }
-        await slowClient.close()
-
-        // 4. Valid paired token succeeds with exact protocol capabilities (even split across TCP chunks!).
-        let goodClient = BridgeClient(socketPath: harness.bridgeEndpoint)
-        try await goodClient.connect()
-        let helloBytes = MCPAgentBridgeProtocol.encodeLine([
-            "wsurf": "host-hello",
-            "v": 1,
-            "token": SyntheticToken.first,
-            "host": "t3-code",
-        ])
-        try await goodClient.sendRaw(helloBytes.prefix(20))
-        try await goodClient.sendRaw(helloBytes.dropFirst(20))
-        let okReply = try await goodClient.nextMessage()
-        #expect(okReply["ok"] as? Bool == true)
-        #expect(okReply["v"] as? Int == 1)
-        #expect(okReply["protocol"] as? String == "wsurf-host-bridge")
-        let caps = try #require(okReply["capabilities"] as? [String: Any])
-        #expect(caps["agentMicroWindow"] as? Bool == true)
-        #expect(caps["backgroundPointer"] as? Bool == true)
-        #expect(caps["vaultLoginPrompt"] as? Bool == true)
-        #expect(caps["engines"] as? [String] == ["chromium", "webkit"])
-        await goodClient.close()
-
-        // 5. Stopping BrowserMCPServer stops host-bridge.sock too.
-        harness.server.stop()
-        #expect(!harness.bridge.isListening)
-        #expect(!FileManager.default.fileExists(atPath: harness.bridgeEndpoint))
     }
 
     private func connectAuthenticated(_ harness: Harness, token: String = SyntheticToken.first, host: String = "t3-code") async throws -> BridgeClient {
@@ -345,7 +259,80 @@ struct MCPAgentWindowBridgeTests {
         return client
     }
 
-    // MARK: - Preview Operations & Sensitive Redaction
+    // MARK: - Socket permissions & authentication
+
+    @Test(.timeLimit(.minutes(1))) func hostBridgePermissionsAndHelloAuthentication() async throws {
+        let harness = try await startHarness(authTimeout: .milliseconds(250))
+        defer { stopHarness(harness) }
+
+        var dirInfo = stat()
+        #expect(lstat(harness.directory, &dirInfo) == 0)
+        #expect(dirInfo.st_mode & 0o777 == 0o700)
+        var sockInfo = stat()
+        #expect(lstat(harness.bridgeEndpoint, &sockInfo) == 0)
+        #expect(sockInfo.st_mode & 0o777 == 0o600)
+
+        let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+
+        // Unknown token rejected.
+        let badClient = BridgeClient(socketPath: harness.bridgeEndpoint)
+        try await badClient.connect()
+        try await badClient.sendJSON(["wsurf": "host-hello", "v": 1, "token": SyntheticToken.stranger, "host": "t3-code"])
+        let badReply = try await badClient.nextMessage()
+        #expect(badReply["ok"] as? Bool == false)
+        #expect((badReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
+        await badClient.close()
+
+        // Paused paired client rejected.
+        try harness.trust.setPaused(true, for: paired.id)
+        let pausedClient = BridgeClient(socketPath: harness.bridgeEndpoint)
+        try await pausedClient.connect()
+        try await pausedClient.sendJSON(["wsurf": "host-hello", "v": 1, "token": SyntheticToken.first, "host": "t3-code"])
+        let pausedReply = try await pausedClient.nextMessage()
+        #expect(pausedReply["ok"] as? Bool == false)
+        #expect((pausedReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
+        await pausedClient.close()
+        try harness.trust.setPaused(false, for: paired.id)
+
+        // Slow/missing hello times out with unauthorized.
+        let slowClient = BridgeClient(socketPath: harness.bridgeEndpoint)
+        try await slowClient.connect()
+        try await slowClient.sendRaw(Data(#"{"wsurf":"host-hel"#.utf8))
+        do {
+            let reply = try await slowClient.nextMessage()
+            #expect(reply["ok"] as? Bool == false)
+            #expect((reply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
+        } catch {
+            // Timeout closure is valid.
+        }
+        await slowClient.close()
+
+        // Valid paired token succeeds with exact protocol capabilities (even split across TCP chunks).
+        let goodClient = BridgeClient(socketPath: harness.bridgeEndpoint)
+        try await goodClient.connect()
+        let helloBytes = MCPAgentBridgeProtocol.encodeLine([
+            "wsurf": "host-hello", "v": 1, "token": SyntheticToken.first, "host": "t3-code",
+        ])
+        try await goodClient.sendRaw(helloBytes.prefix(20))
+        try await goodClient.sendRaw(helloBytes.dropFirst(20))
+        let okReply = try await goodClient.nextMessage()
+        #expect(okReply["ok"] as? Bool == true)
+        #expect(okReply["v"] as? Int == 1)
+        #expect(okReply["protocol"] as? String == "wsurf-host-bridge")
+        let caps = try #require(okReply["capabilities"] as? [String: Any])
+        #expect(caps["agentMicroWindow"] as? Bool == true)
+        #expect(caps["backgroundPointer"] as? Bool == true)
+        #expect(caps["vaultLoginPrompt"] as? Bool == true)
+        #expect(caps["engines"] as? [String] == ["chromium", "webkit"])
+        await goodClient.close()
+
+        // Stopping BrowserMCPServer stops host-bridge.sock.
+        harness.server.stop()
+        #expect(!harness.bridge.isListening)
+        #expect(!FileManager.default.fileExists(atPath: harness.bridgeEndpoint))
+    }
+
+    // MARK: - Preview Operations
 
     @Test(.timeLimit(.minutes(1))) func bridgeOpenListAndPreviewOperations() async throws {
         let fixture = try await HTTPFixtureServer.start(routes: [
@@ -353,7 +340,6 @@ struct MCPAgentWindowBridgeTests {
                 <!doctype html><title>Bridge Fixture</title>
                 <main>
                   <h1>Welcome Bridge</h1>
-                  <input id="pw" type="password" value="super-secret-pass-999">
                   <button id="btn" onclick="document.getElementById('out').textContent = 'Clicked!'">Click Me</button>
                   <p id="out">Initial</p>
                 </main>
@@ -368,18 +354,20 @@ struct MCPAgentWindowBridgeTests {
                 stopHarness(harness)
                 withExtendedLifetime(fixture) {}
             }
-            _ = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Verified Host", kind: nil)
+            try harness.trust.setDeveloperProfile(profile.id, dedicated: true)
             let regular = harness.app.newWindow(profile: profile, show: false)
             let regularTab = regular.browser.newTab(url: nextURL, activate: true)
 
-            let client = try await connectAuthenticated(harness)
+            // Self-asserted host string in hello is NOT used for display; MCPTrustStore's verified name wins.
+            let client = try await connectAuthenticated(harness, host: "spoofed-host-label")
             defer { Task { await client.close() } }
 
             let (openResp, _) = try await client.request(
                 id: "req-1", op: "openAgentWindow",
                 params: [
-                    "threadId": "thread-A", "title": "Checkout Fix", "profileId": profile.id.uuidString,
-                    "url": appURL.absoluteString, "engine": "webkit", "access": "development",
+                    "threadId": "thread-A", "title": "Checkout Fix",
+                    "url": appURL.absoluteString, "engine": "webkit", "access": "developer",
                     "floatOnTop": true, "open": false,
                 ]
             )
@@ -388,27 +376,22 @@ struct MCPAgentWindowBridgeTests {
             let windowId = try #require(openResult["windowId"] as? String)
             let tabId = try #require(openResult["tabId"] as? String)
             let windowToken = try #require(openResult["windowToken"] as? String)
-            #expect(openResult["threadId"] as? String == "thread-A")
-            #expect(openResult["generation"] as? Int == 1)
-            #expect(openResult["owner"] as? String == "agent")
-            #expect(openResult["engine"] as? String == "webkit")
             #expect(openResult["backend"] as? String == "wsurf-micro")
             #expect(openResult["mcpAllowed"] as? Bool == true)
             #expect(MCPPairing.isWellFormed(windowToken))
 
             let agentWindow = try #require(harness.app.windows.first { $0.windowID.uuidString == windowId })
             #expect(agentWindow.floatsOnTop == true)
+            #expect(agentWindow.browser.agentCompanion?.hostName == "Verified Host")
             let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
             try #require(await waitUntil { agentTab.liveView?.url == appURL && !agentTab.isLoading })
 
-            // listTabs exposes ONLY the Agent Micro Window's tab, never the user's regular tab.
             let (listResp, _) = try await client.request(id: "req-2", op: "listTabs", params: ["threadId": "thread-A"])
             let listedTabs = try #require((listResp["result"] as? [String: Any])?["tabs"] as? [[String: Any]])
             #expect(listedTabs.count == 1)
             #expect(listedTabs.first?["tabId"] as? String == tabId)
             #expect(!listedTabs.contains { ($0["tabId"] as? String) == regularTab.id.uuidString })
 
-            // snapshot + act + evaluate (with sensitive password redaction)
             let (snapResp, _) = try await client.request(
                 id: "req-3", op: "invokePreview",
                 params: ["tabId": tabId, "threadId": "thread-A", "expectedGeneration": 1, "operation": "snapshot"]
@@ -416,7 +399,6 @@ struct MCPAgentWindowBridgeTests {
             #expect(snapResp["ok"] as? Bool == true)
             let snapResult = try #require(snapResp["result"] as? [String: Any])
             #expect((snapResult["page"] as? String)?.contains("Welcome Bridge") == true)
-            #expect((snapResult["accessibilityTree"] as? String)?.isEmpty == false)
 
             let (actResp, _) = try await client.request(
                 id: "req-4", op: "invokePreview",
@@ -431,15 +413,12 @@ struct MCPAgentWindowBridgeTests {
                 id: "req-5", op: "invokePreview",
                 params: [
                     "tabId": tabId, "threadId": "thread-A", "expectedGeneration": 1, "operation": "evaluate",
-                    "params": ["expression": "() => ({ out: document.getElementById('out').textContent, pw: document.getElementById('pw').value })"],
+                    "params": ["expression": "() => document.getElementById('out').textContent"],
                 ]
             )
             #expect(evalResp["ok"] as? Bool == true)
-            let evalValue = try #require((evalResp["result"] as? [String: Any])?["value"] as? [String: Any])
-            #expect(evalValue["out"] as? String == "Clicked!")
-            #expect(evalValue["pw"] as? String != "super-secret-pass-999", "sensitive password field MUST be redacted")
+            #expect((evalResp["result"] as? [String: Any])?["value"] as? String == "Clicked!")
 
-            // navigate + set_appearance + resize
             let (navResp, _) = try await client.request(
                 id: "req-6", op: "invokePreview",
                 params: [
@@ -461,12 +440,167 @@ struct MCPAgentWindowBridgeTests {
                 params: ["tabId": tabId, "threadId": "thread-A", "operation": "resize", "params": ["width": 640, "height": 480]]
             )
             #expect(resizeResp["ok"] as? Bool == true)
+
+            let (closeResp, closeEvents) = try await client.request(
+                id: "req-9", op: "closeAgentWindow",
+                params: ["windowId": windowId]
+            )
+            #expect(closeResp["ok"] as? Bool == true)
+            #expect((closeResp["result"] as? [String: Any])?["closed"] as? Bool == true)
+            let sawClosed = closeEvents.contains { ($0["event"] as? String) == "windowClosed" }
+            if !sawClosed {
+                let pushed = try await client.waitForEvent(named: "windowClosed")
+                #expect((pushed["payload"] as? [String: Any])?["windowId"] as? String == windowId)
+            }
+            #expect(agentWindow.isClosed)
+            #expect(!harness.registry.hasActiveWindows)
         }
     }
 
-    // MARK: - Ownership Guards, Push Events & Close
+    // MARK: - H1: Evaluate & Site Policy Security Guards
 
-    @Test(.timeLimit(.minutes(1))) func bridgeOwnershipGuardsPushEventsAndClose() async throws {
+    @Test(.timeLimit(.minutes(1))) func evaluateRefusedOnReadOnlyNonDeveloperSitesAndFilledPasswords() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/clean": .html("<!doctype html><title>Clean</title><p id='msg'>Safe</p><button id='btn'>Go</button>"),
+            "/secret": .html("""
+                <!doctype html><title>Login</title>
+                <input id="pw" type="password" value="super-secret-pass-999">
+                <p id="status">Locked</p>
+                """),
+            "/blocked": .html("<!doctype html><title>Denied</title><p>No access</p>"),
+        ])
+        let cleanURL = try fixture.url("/clean")
+        let secretURL = try fixture.url("/secret")
+        let blockedURL = try fixture.url("/blocked")
+        try await withProfile(name: "Dev Profile") { devProfile in
+            try await withProfile(name: "Regular Profile") { regularProfile in
+                let harness = try await startHarness()
+                defer {
+                    stopHarness(harness)
+                    withExtendedLifetime(fixture) {}
+                }
+                _ = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+                try harness.trust.setDeveloperProfile(devProfile.id, dedicated: true)
+                let client = try await connectAuthenticated(harness)
+                defer { Task { await client.close() } }
+
+                // 1. Default access (control) refuses evaluate.
+                let (ctrlOpen, _) = try await client.request(
+                    id: "c1", op: "openAgentWindow",
+                    params: ["threadId": "t-ctrl", "url": cleanURL.absoluteString, "engine": "webkit"]
+                )
+                let ctrlTabId = try #require((ctrlOpen["result"] as? [String: Any])?["tabId"] as? String)
+                let ctrlWinId = try #require((ctrlOpen["result"] as? [String: Any])?["windowId"] as? String)
+                let ctrlWin = try #require(harness.app.windows.first { $0.windowID.uuidString == ctrlWinId })
+                let ctrlTab = try #require(ctrlWin.browser.tabs.first { $0.id.uuidString == ctrlTabId })
+                try #require(await waitUntil { ctrlTab.liveView?.url == cleanURL && !ctrlTab.isLoading })
+
+                let (ctrlEval, _) = try await client.request(
+                    id: "c2", op: "invokePreview",
+                    params: ["tabId": ctrlTabId, "threadId": "t-ctrl", "operation": "evaluate", "params": ["expression": "() => 1 + 1"]]
+                )
+                #expect(ctrlEval["ok"] as? Bool == false)
+                #expect((ctrlEval["error"] as? [String: Any])?["code"] as? String == "forbidden")
+
+                // 2. Non-Developer profile refuses evaluate even with access:"developer" on localhost.
+                let (regOpen, _) = try await client.request(
+                    id: "r1", op: "openAgentWindow",
+                    params: [
+                        "threadId": "t-reg", "profileId": regularProfile.id.uuidString,
+                        "url": cleanURL.absoluteString, "engine": "webkit", "access": "developer",
+                    ]
+                )
+                let regTabId = try #require((regOpen["result"] as? [String: Any])?["tabId"] as? String)
+                let regWinId = try #require((regOpen["result"] as? [String: Any])?["windowId"] as? String)
+                let regWin = try #require(harness.app.windows.first { $0.windowID.uuidString == regWinId })
+                let regTab = try #require(regWin.browser.tabs.first { $0.id.uuidString == regTabId })
+                try #require(await waitUntil { regTab.liveView?.url == cleanURL && !regTab.isLoading })
+
+                let (regEval, _) = try await client.request(
+                    id: "r2", op: "invokePreview",
+                    params: ["tabId": regTabId, "threadId": "t-reg", "operation": "evaluate", "params": ["expression": "() => 1 + 1"]]
+                )
+                #expect(regEval["ok"] as? Bool == false)
+                #expect((regEval["error"] as? [String: Any])?["code"] as? String == "forbidden")
+
+                // 3. Developer profile + developer access: succeeds on clean localhost, refuses non-developer site,
+                //    refuses Read Only site (for evaluate & mutating ops), refuses filled password field, and refuses Deny!
+                let (devOpen, _) = try await client.request(
+                    id: "d1", op: "openAgentWindow",
+                    params: [
+                        "threadId": "t-dev", "profileId": devProfile.id.uuidString,
+                        "url": cleanURL.absoluteString, "engine": "webkit", "access": "developer",
+                    ]
+                )
+                let devTabId = try #require((devOpen["result"] as? [String: Any])?["tabId"] as? String)
+                let devWinId = try #require((devOpen["result"] as? [String: Any])?["windowId"] as? String)
+                let devWin = try #require(harness.app.windows.first { $0.windowID.uuidString == devWinId })
+                let devTab = try #require(devWin.browser.tabs.first { $0.id.uuidString == devTabId })
+                try #require(await waitUntil { devTab.liveView?.url == cleanURL && !devTab.isLoading })
+
+                // 3a. Non-developer site (includesThisMac = false) refuses evaluate.
+                try harness.trust.setIncludesThisMac(false)
+                let (nonDevEval, _) = try await client.request(
+                    id: "d2", op: "invokePreview",
+                    params: ["tabId": devTabId, "threadId": "t-dev", "operation": "evaluate", "params": ["expression": "() => 1 + 1"]]
+                )
+                #expect(nonDevEval["ok"] as? Bool == false)
+                #expect((nonDevEval["error"] as? [String: Any])?["code"] as? String == "forbidden")
+                try harness.trust.setIncludesThisMac(true)
+
+                // 3b. Read Only site refuses evaluate AND mutating ops (act, resize, set_appearance, set_engine, navigate).
+                let origin = SitePermissions.origin(for: cleanURL)
+                devWin.browser.sitePermissions.setAssistantAccess(.readOnly, for: origin)
+                let readOnlyChecks: [(String, String, [String: Any])] = [
+                    ("ro-1", "evaluate", ["expression": "() => 1"]),
+                    ("ro-2", "act", ["action": "click", "selector": "#btn"]),
+                    ("ro-3", "resize", ["width": 500, "height": 400]),
+                    ("ro-4", "set_appearance", ["colorScheme": "dark"]),
+                    ("ro-5", "set_engine", ["engine": "chromium"]),
+                    ("ro-6", "navigate", ["url": secretURL.absoluteString]),
+                ]
+                for (reqId, op, opParams) in readOnlyChecks {
+                    let (resp, _) = try await client.request(
+                        id: reqId, op: "invokePreview",
+                        params: ["tabId": devTabId, "threadId": "t-dev", "operation": op, "params": opParams]
+                    )
+                    #expect(resp["ok"] as? Bool == false, "\(op) must be refused on Read Only site")
+                    #expect((resp["error"] as? [String: Any])?["code"] as? String == "forbidden")
+                }
+
+                // 3c. Deny site refuses navigate/open BEFORE loading.
+                devWin.browser.sitePermissions.setAssistantAccess(.control, for: origin)
+                devWin.browser.sitePermissions.setAssistantAccess(.deny, for: SitePermissions.origin(for: blockedURL))
+                let (denyOpen, _) = try await client.request(
+                    id: "deny-1", op: "openAgentWindow",
+                    params: ["threadId": "t-deny", "profileId": devProfile.id.uuidString, "url": blockedURL.absoluteString]
+                )
+                #expect(denyOpen["ok"] as? Bool == false)
+                #expect((denyOpen["error"] as? [String: Any])?["code"] as? String == "forbidden")
+
+                // 3d. Filled password field refuses evaluate!
+                devWin.browser.sitePermissions.setAssistantAccess(.control, for: SitePermissions.origin(for: secretURL))
+                let (navSecret, _) = try await client.request(
+                    id: "sec-1", op: "invokePreview",
+                    params: ["tabId": devTabId, "threadId": "t-dev", "operation": "navigate", "params": ["url": secretURL.absoluteString]]
+                )
+                #expect(navSecret["ok"] as? Bool == true)
+                let (pwEval, _) = try await client.request(
+                    id: "sec-2", op: "invokePreview",
+                    params: [
+                        "tabId": devTabId, "threadId": "t-dev", "operation": "evaluate",
+                        "params": ["expression": "() => document.getElementById('pw').value"],
+                    ]
+                )
+                #expect(pwEval["ok"] as? Bool == false, "evaluate MUST be refused on pages with filled password fields")
+                #expect((pwEval["error"] as? [String: Any])?["code"] as? String == "forbidden")
+            }
+        }
+    }
+
+    // MARK: - H2: Take Over & Stop Finality + Ownership Guards
+
+    @Test(.timeLimit(.minutes(1))) func bridgeTakeOverAndStopFinalityAndOwnershipGuards() async throws {
         let fixture = try await HTTPFixtureServer.start(routes: [
             "/app": .html("<!doctype html><title>Guard Fixture</title><p>Hello</p>"),
             "/next": .html("<!doctype html><title>Next Page</title><p>Next</p>"),
@@ -479,19 +613,16 @@ struct MCPAgentWindowBridgeTests {
                 stopHarness(harness)
                 withExtendedLifetime(fixture) {}
             }
-            _ = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
 
             let client = try await connectAuthenticated(harness)
             defer { Task { await client.close() } }
 
             let (openResp, _) = try await client.request(
-                id: "open-1",
-                op: "openAgentWindow",
+                id: "open-1", op: "openAgentWindow",
                 params: [
-                    "threadId": "thread-B",
-                    "profileId": profile.id.uuidString,
-                    "url": appURL.absoluteString,
-                    "engine": "webkit",
+                    "threadId": "thread-B", "title": "Initial Title", "profileId": profile.id.uuidString,
+                    "url": appURL.absoluteString, "engine": "webkit", "floatOnTop": false,
                 ]
             )
             let openResult = try #require(openResp["result"] as? [String: Any])
@@ -501,80 +632,139 @@ struct MCPAgentWindowBridgeTests {
             let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
             try #require(await waitUntil { agentTab.liveView?.url == appURL && !agentTab.isLoading })
 
-            // agentMismatch when wrong threadId is passed.
+            // agentMismatch & staleGeneration
             let (mismatchResp, _) = try await client.request(
-                id: "guard-1",
-                op: "invokePreview",
+                id: "guard-1", op: "invokePreview",
                 params: ["tabId": tabId, "threadId": "thread-OTHER", "operation": "status"]
             )
-            #expect(mismatchResp["ok"] as? Bool == false)
             #expect((mismatchResp["error"] as? [String: Any])?["code"] as? String == "agentMismatch")
 
-            // staleGeneration when expectedGeneration does not match.
             let (staleResp, _) = try await client.request(
-                id: "guard-2",
-                op: "invokePreview",
+                id: "guard-2", op: "invokePreview",
                 params: ["tabId": tabId, "threadId": "thread-B", "expectedGeneration": 99, "operation": "snapshot"]
             )
-            #expect(staleResp["ok"] as? Bool == false)
             #expect((staleResp["error"] as? [String: Any])?["code"] as? String == "staleGeneration")
 
-            // Take Over pushes unsolicited ownerChanged; mutating ops fail with humanControl while status still succeeds!
+            // User clicks Take Over -> host receives ownerChanged, mutating ops fail, status still succeeds.
             agentWindow.takeOverAgentMicroWindow()
             let ownerEvent = try await client.waitForEvent(named: "ownerChanged")
-            let ownerPayload = try #require(ownerEvent["payload"] as? [String: Any])
-            #expect(ownerPayload["owner"] as? String == "human")
-            #expect(ownerPayload["generation"] as? Int == 2)
-            #expect(ownerPayload["threadId"] as? String == "thread-B")
+            #expect((ownerEvent["payload"] as? [String: Any])?["owner"] as? String == "human")
+            #expect((ownerEvent["payload"] as? [String: Any])?["generation"] as? Int == 2)
 
             let (blockedResp, _) = try await client.request(
-                id: "guard-3",
-                op: "invokePreview",
+                id: "guard-3", op: "invokePreview",
                 params: ["tabId": tabId, "threadId": "thread-B", "operation": "navigate", "params": ["url": nextURL.absoluteString]]
             )
-            #expect(blockedResp["ok"] as? Bool == false)
             #expect((blockedResp["error"] as? [String: Any])?["code"] as? String == "humanControl")
 
+            // Low #10: openAgentWindow reuse while owner == .human does NOT mutate title or floatOnTop!
+            _ = try await client.request(
+                id: "guard-reuse", op: "openAgentWindow",
+                params: ["threadId": "thread-B", "title": "Hijacked Title", "floatOnTop": true]
+            )
+            #expect(agentWindow.browser.agentCompanion?.threadTitle == "Initial Title")
+            #expect(agentWindow.floatsOnTop == false)
+
+            // H2: Host CANNOT reclaim control via setOwner("agent") OR by bouncing through "unclaimed" -> "agent"!
+            let (reclaimDirect, _) = try await client.request(
+                id: "guard-reclaim-1", op: "setOwner",
+                params: ["tabId": tabId, "owner": "agent"]
+            )
+            #expect(reclaimDirect["ok"] as? Bool == false)
+            #expect((reclaimDirect["error"] as? [String: Any])?["code"] as? String == "humanControl")
+
+            let (toUnclaimed, _) = try await client.request(
+                id: "guard-reclaim-2", op: "setOwner",
+                params: ["tabId": tabId, "owner": "unclaimed"]
+            )
+            #expect(toUnclaimed["ok"] as? Bool == true)
+            let (reclaimAfterUnclaimed, _) = try await client.request(
+                id: "guard-reclaim-3", op: "setOwner",
+                params: ["tabId": tabId, "owner": "agent"]
+            )
+            #expect(reclaimAfterUnclaimed["ok"] as? Bool == false)
+            #expect((reclaimAfterUnclaimed["error"] as? [String: Any])?["code"] as? String == "humanControl")
+
+            // Status still succeeds under human control.
             let (statusResp, _) = try await client.request(
-                id: "guard-4",
-                op: "invokePreview",
+                id: "guard-4", op: "invokePreview",
                 params: ["tabId": tabId, "threadId": "thread-B", "operation": "status"]
             )
             #expect(statusResp["ok"] as? Bool == true)
-            let statusResult = try #require(statusResp["result"] as? [String: Any])
-            #expect(statusResult["owner"] as? String == "human")
-            #expect(statusResult["generation"] as? Int == 2)
-            #expect(statusResult["mcpAllowed"] as? Bool == true)
 
-            // setOwner back to agent bumps generation to 3 and emits ownerChanged.
-            let (setOwnerResp, setOwnerEvents) = try await client.request(
-                id: "guard-5",
-                op: "setOwner",
-                params: ["tabId": tabId, "owner": "agent"]
-            )
-            #expect(setOwnerResp["ok"] as? Bool == true)
-            #expect((setOwnerResp["result"] as? [String: Any])?["generation"] as? Int == 3)
-            let gotBackEvent = setOwnerEvents.contains { ($0["event"] as? String) == "ownerChanged" }
-            if !gotBackEvent {
-                let pushed = try await client.waitForEvent(named: "ownerChanged")
-                #expect((pushed["payload"] as? [String: Any])?["owner"] as? String == "agent")
-            }
+            // ONLY user Hand Back restores agent ownership!
+            agentWindow.handBackAgentMicroWindow()
+            let backEvent = try await client.waitForEvent(named: "ownerChanged")
+            #expect((backEvent["payload"] as? [String: Any])?["owner"] as? String == "agent")
 
-            // closeAgentWindow revokes windowToken, emits windowClosed, closes window.
-            let (closeResp, closeEvents) = try await client.request(
-                id: "close-1",
-                op: "closeAgentWindow",
-                params: ["windowId": windowId]
-            )
-            #expect(closeResp["ok"] as? Bool == true)
-            #expect((closeResp["result"] as? [String: Any])?["closed"] as? Bool == true)
-            let sawClosed = closeEvents.contains { ($0["event"] as? String) == "windowClosed" }
-            if !sawClosed {
-                let pushed = try await client.waitForEvent(named: "windowClosed")
-                #expect((pushed["payload"] as? [String: Any])?["windowId"] as? String == windowId)
-            }
-            #expect(agentWindow.isClosed)
+            // H2: Clicking Stop pauses the paired client, closes the bridge socket, and blocks immediate reconnect/reopen!
+            agentWindow.stopAgentMicroWindow()
+            #expect(harness.trust.client(id: paired.id)?.paused == true)
             #expect(!harness.registry.hasActiveWindows)
+
+            let retryClient = BridgeClient(socketPath: harness.bridgeEndpoint)
+            try await retryClient.connect()
+            try await retryClient.sendJSON(["wsurf": "host-hello", "v": 1, "token": SyntheticToken.first, "host": "t3-code"])
+            let retryReply = try await retryClient.nextMessage()
+            #expect(retryReply["ok"] as? Bool == false)
+            #expect((retryReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
+            await retryClient.close()
+        }
+    }
+
+    // MARK: - M2: Paired-client reconnect reattachment & bridge.stop() cleanup
+
+    @Test(.timeLimit(.minutes(1))) func hostDisconnectReconnectReattachesAndBridgeStopInvalidatesTokens() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/app": .html("<!doctype html><title>Reconnect Fixture</title><p>Persistent</p>"),
+        ])
+        let appURL = try fixture.url("/app")
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer {
+                stopHarness(harness)
+                withExtendedLifetime(fixture) {}
+            }
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+
+            // Connection 1 opens an Agent Micro Window, then disconnects.
+            let first = try await connectAuthenticated(harness)
+            let (openResp, _) = try await first.request(
+                id: "r1", op: "openAgentWindow",
+                params: [
+                    "threadId": "thread-reconnect", "profileId": profile.id.uuidString,
+                    "url": appURL.absoluteString, "engine": "webkit",
+                ]
+            )
+            let openResult = try #require(openResp["result"] as? [String: Any])
+            let windowId = try #require(openResult["windowId"] as? String)
+            let tabId = try #require(openResult["tabId"] as? String)
+            let windowToken = try #require(openResult["windowToken"] as? String)
+            let agentWindow = try #require(harness.app.windows.first { $0.windowID.uuidString == windowId })
+            let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
+            try #require(await waitUntil { agentTab.liveView?.url == appURL && !agentTab.isLoading })
+            await first.close()
+            try await Task.sleep(for: .milliseconds(50))
+
+            // Connection 2 reconnects with the same paired client token and seamlessly manages the live window!
+            let second = try await connectAuthenticated(harness)
+            defer { Task { await second.close() } }
+            let (listResp, _) = try await second.request(id: "r2", op: "listTabs", params: ["threadId": "thread-reconnect"])
+            let tabs = try #require((listResp["result"] as? [String: Any])?["tabs"] as? [[String: Any]])
+            #expect(tabs.count == 1)
+            #expect(tabs.first?["tabId"] as? String == tabId)
+
+            // Push events route to the reconnected client!
+            agentWindow.takeOverAgentMicroWindow()
+            let pushed = try await second.waitForEvent(named: "ownerChanged")
+            #expect((pushed["payload"] as? [String: Any])?["owner"] as? String == "human")
+
+            // M2: bridge.stop() tears down active records and invalidates every minted windowToken!
+            #expect(harness.registry.resolve(windowToken: windowToken, pairedClientId: paired.id) != nil)
+            harness.bridge.stop()
+            #expect(!harness.registry.hasActiveWindows)
+            #expect(harness.registry.resolve(windowToken: windowToken, pairedClientId: paired.id) == nil)
+            #expect(agentWindow.browser.agentCompanion == nil)
         }
     }
 

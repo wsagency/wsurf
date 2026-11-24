@@ -19,16 +19,17 @@ struct MicroWindowView: View {
     }
 
     var body: some View {
+        let showsAgentBar = browser.agentCompanion != nil
         ZStack(alignment: .top) {
             ContentArea(
                 browser: browser,
                 coordinator: coordinator,
                 settingsWorkspace: settingsWorkspace,
                 canvasTrailingInset: 0,
-                isFullHeight: !coordinator.isAgentMicro,
-                findBarTop: MicroShell.findBarTop + (coordinator.isAgentMicro ? AgentMicroControlBar.height : 0)
+                isFullHeight: !showsAgentBar,
+                findBarTop: MicroShell.findBarTop + (showsAgentBar ? AgentMicroControlBar.height : 0)
             )
-            .padding(.top, coordinator.isAgentMicro ? AgentMicroControlBar.height : 0)
+            .padding(.top, showsAgentBar ? AgentMicroControlBar.height : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             MicroShell(browser: browser, coordinator: coordinator)

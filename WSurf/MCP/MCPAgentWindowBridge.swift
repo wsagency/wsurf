@@ -32,8 +32,11 @@ final class MCPAgentWindowBridge {
         self.trustStore = trustStore
         self.registry = registry
         self.authTimeout = authTimeout
-        registry.onEvent = { [weak self] hostId, event, payload in
-            self?.broadcastEvent(to: hostId, event: event, payload: payload)
+        registry.onEvent = { [weak self] pairedClientId, event, payload in
+            self?.broadcastEvent(to: pairedClientId, event: event, payload: payload)
+        }
+        registry.onStopClient = { [weak self] pairedClientId in
+            self?.disconnectConnections(clientID: pairedClientId)
         }
         trustStore.onChange { [weak self] in
             self?.enforceTrustStoreState()
@@ -67,6 +70,8 @@ final class MCPAgentWindowBridge {
         isListening = false
         listener?.stop()
         listener = nil
+        // Tear down all active window tokens and sessions so disabling MCP leaves no usable windowToken behind.
+        registry.teardownAll()
         let active = Array(connections.values)
         connections.removeAll()
         for client in active {
@@ -75,12 +80,16 @@ final class MCPAgentWindowBridge {
     }
 
     func disconnect(clientID: UUID) {
+        disconnectConnections(clientID: clientID)
+        registry.revokeClient(clientID)
+    }
+
+    private func disconnectConnections(clientID: UUID) {
         let matching = connections.values.filter { $0.pairedClientId == clientID }
         for client in matching {
             connections.removeValue(forKey: client.id)
             Task { await client.close() }
         }
-        registry.revokeClient(clientID)
     }
 
     // MARK: - Private
@@ -117,8 +126,11 @@ final class MCPAgentWindowBridge {
         guard let paired = trustStore.authenticate(token: hello.token), !paired.paused else {
             return nil
         }
-        connections[connectionId]?.markAuthenticated(pairedClientId: paired.id, hostName: hello.host)
-        return (paired.id, hello.host)
+        // Always display the verified paired client name from `MCPTrustStore`, not the self-asserted hello string.
+        let verifiedName = MCPAgentBridgeProtocol.cleanText(paired.name, maxLength: 60)
+        let resolvedName = verifiedName.isEmpty ? "Agent" : verifiedName
+        connections[connectionId]?.markAuthenticated(pairedClientId: paired.id, hostName: resolvedName)
+        return (paired.id, resolvedName)
     }
 
     private func handleRequest(connectionId: UUID, line: Data) async -> Data {
@@ -152,7 +164,6 @@ final class MCPAgentWindowBridge {
             let result = try await dispatch(
                 op: op,
                 params: params,
-                hostId: connectionId,
                 pairedClientId: pairedClientId,
                 hostName: hostName
             )
@@ -167,14 +178,12 @@ final class MCPAgentWindowBridge {
     private func dispatch(
         op: String,
         params: [String: Any],
-        hostId: UUID,
         pairedClientId: UUID,
         hostName: String
     ) async throws -> [String: Any] {
         switch op {
         case "openAgentWindow":
             return try await registry.openAgentWindow(
-                hostId: hostId,
                 pairedClientId: pairedClientId,
                 hostName: hostName,
                 params: params
@@ -190,7 +199,7 @@ final class MCPAgentWindowBridge {
             } else {
                 windowId = nil
             }
-            return try registry.closeAgentWindow(hostId: hostId, threadId: threadId, windowId: windowId)
+            return try registry.closeAgentWindow(pairedClientId: pairedClientId, threadId: threadId, windowId: windowId)
         case "setOwner":
             guard let rawTabId = params["tabId"] as? String,
                   let tabId = UUID(uuidString: rawTabId),
@@ -199,12 +208,11 @@ final class MCPAgentWindowBridge {
             else {
                 throw MCPAgentWindowError(.invalidParams, "setOwner requires valid tabId and owner (agent, human, or unclaimed).")
             }
-            return try registry.setOwner(hostId: hostId, tabId: tabId, owner: owner)
+            return try registry.setOwner(pairedClientId: pairedClientId, tabId: tabId, owner: owner)
         case "listTabs":
-            return registry.listTabs(hostId: hostId, threadId: params["threadId"] as? String)
+            return registry.listTabs(pairedClientId: pairedClientId, threadId: params["threadId"] as? String)
         case "invokePreview":
             return try await registry.invokePreview(
-                hostId: hostId,
                 pairedClientId: pairedClientId,
                 hostName: hostName,
                 params: params
@@ -214,15 +222,22 @@ final class MCPAgentWindowBridge {
         }
     }
 
-    private func broadcastEvent(to hostId: UUID, event: String, payload: [String: Any]) {
-        guard let client = connections[hostId] else { return }
+    private func broadcastEvent(to pairedClientId: UUID, event: String, payload: [String: Any]) {
+        let targets = connections.values.filter { $0.pairedClientId == pairedClientId }
+        guard !targets.isEmpty else { return }
         let line = MCPAgentBridgeProtocol.eventLine(name: event, payload: payload)
-        Task { await client.enqueueSend(line) }
+        for client in targets {
+            Task { await client.enqueueSend(line) }
+        }
     }
 
     private func connectionDidClose(_ connectionId: UUID) {
-        connections.removeValue(forKey: connectionId)
-        registry.disconnectHost(connectionId)
+        let closedClient = connections.removeValue(forKey: connectionId)
+        guard let pairedClientId = closedClient?.pairedClientId else { return }
+        let stillConnected = connections.values.contains { $0.pairedClientId == pairedClientId }
+        if !stillConnected {
+            registry.cancelInFlightOperations(for: pairedClientId)
+        }
     }
 
     private func enforceTrustStoreState() {
@@ -236,7 +251,7 @@ final class MCPAgentWindowBridge {
     }
 }
 
-/// Manages one NDJSON Unix socket connection for `MCPAgentWindowBridge` with serialized writes and concurrent request tasks.
+/// Manages one NDJSON Unix socket connection for `MCPAgentWindowBridge` with serialized writes and bounded concurrency.
 private final class BridgeClientConnection: @unchecked Sendable {
     let id: UUID
     @MainActor private(set) var pairedClientId: UUID?
@@ -281,6 +296,8 @@ private final class BridgeClientConnection: @unchecked Sendable {
 }
 
 private actor BridgeSocketIO {
+    private static let maxInFlightRequests = 16
+
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "WSurf.mcp.hostBridge.connection")
     private let authTimeout: Duration
@@ -412,12 +429,35 @@ private actor BridgeSocketIO {
     }
 
     private func dispatchRequest(_ line: Data) {
+        guard requestTasks.count < Self.maxInFlightRequests else {
+            let requestId = Self.extractRequestID(from: line)
+            let rejected = MCPAgentBridgeProtocol.responseErrorLine(
+                id: requestId,
+                code: .actionFailed,
+                message: "Too many concurrent requests (max \(Self.maxInFlightRequests))."
+            )
+            Task { await self.send(rejected) }
+            return
+        }
         let taskId = UUID()
         let task = Task {
             let response = await onRequest(line)
             await finishRequest(taskId: taskId, response: response)
         }
         requestTasks[taskId] = task
+    }
+
+    private nonisolated static func extractRequestID(from line: Data) -> String {
+        guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
+            return ""
+        }
+        if let id = object["id"] as? String {
+            return id
+        }
+        if let id = object["id"] as? Int {
+            return String(id)
+        }
+        return ""
     }
 
     private func finishRequest(taskId: UUID, response: Data) async {
