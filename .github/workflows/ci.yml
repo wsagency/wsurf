@@ -175,6 +175,8 @@ jobs:
               /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$app" \
                 || echo "::warning::could not unregister $id"
             fi
+            # The code-signing clone macOS keeps per launched identity (a full app copy; AGENTS.md, Pro Disk Hygiene Rules).
+            rm -rf "$(dirname "$(getconf DARWIN_USER_TEMP_DIR)")/X/$id.code_sign_clone"
             defaults delete "$id" 2>/dev/null || true
             for path in "Preferences/$id.plist" "WebKit/$id" "Caches/$id" "HTTPStorages/$id" \
                         "HTTPStorages/$id.binarycookies" "Saved Application State/$id.savedState"; do

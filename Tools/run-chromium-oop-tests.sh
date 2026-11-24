@@ -22,6 +22,10 @@
 # Like every build and test run it must hold the Pro lock: start it as above, detached. The lock is not taken here, so that a
 # caller that holds it for several steps takes it once. It is not part of Tools/ci-local.sh or any test plan. Suites that need the
 # service gate each test on ChromiumServiceBundle.isPresent, and are skipped in the default lane.
+#
+# Disk hygiene (Tools/disk-hygiene.sh): aborts below 30 GB free, uses its own TMPDIR, removes the identity's code_sign_clone on
+# exit, and after a passing test run deletes its .xcresult (and DerivedData with WSURF_CLEAN_DERIVED_DATA=1). Failed bundles
+# older than 48 hours in build/oop-lane go. WSURF_SOURCE_PACKAGES_CACHE names a shared, pinned SourcePackages directory.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,6 +55,16 @@ case "$WSURF_SERVICE_DEBUG_OPS" in
     *) echo "error: WSURF_SERVICE_DEBUG_OPS must be YES or NO, not '$WSURF_SERVICE_DEBUG_OPS'" >&2; exit 2 ;;
 esac
 DD="${WSURF_OOP_DERIVED_DATA:-$PWD/build/DD-oop}"
+# shellcheck source=Tools/disk-hygiene.sh
+. Tools/disk-hygiene.sh
+wsurf_preflight_disk_guard || exit 2
+wsurf_setup_run_tmpdir
+trap 'wsurf_exit_cleanup "io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX"' EXIT
+SPM_ARGS=()
+if [[ -n "${WSURF_SOURCE_PACKAGES_CACHE:-}" ]]; then
+    mkdir -p "$WSURF_SOURCE_PACKAGES_CACHE"
+    SPM_ARGS=(-clonedSourcePackagesDirPath "$(cd "$WSURF_SOURCE_PACKAGES_CACHE" && pwd -P)")
+fi
 OUT="$PWD/build/oop-lane/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT"
 export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
@@ -58,12 +72,13 @@ export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
 echo "=== resolve packages ($DD)"
 # `netrc`: SwiftPM must never ask the Keychain for a credential (a prompt held the Pro lock for 83 minutes on 2026-11-17); 10 minutes at most.
 /usr/bin/perl -e 'alarm 600; exec @ARGV' xcodebuild -resolvePackageDependencies -project WSurf.xcodeproj -scheme WSurf \
-    -derivedDataPath "$DD" -onlyUsePackageVersionsFromResolvedFile -packageAuthorizationProvider netrc
+    -derivedDataPath "$DD" ${SPM_ARGS[@]+"${SPM_ARGS[@]}"} -onlyUsePackageVersionsFromResolvedFile -packageAuthorizationProvider netrc
 echo "=== build-for-testing (WSURF_CHROMIUM_OOP_BUILD=YES, $DD)"
 python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -quiet \
     -project WSurf.xcodeproj -scheme WSurf \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DD" \
+    ${SPM_ARGS[@]+"${SPM_ARGS[@]}"} \
     -skipMacroValidation \
     -disableAutomaticPackageResolution \
     CODE_SIGN_STYLE=Manual \
@@ -102,5 +117,13 @@ python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-buildin
 # The cases are exported also after a failed run: a caller that expects a failure reads them.
 xcrun xcresulttool get test-results tests --path "$OUT/oop.xcresult" --compact > "$OUT/oop-tests.json" \
     || echo "warning: could not export the test cases"
+if [[ "$code" -eq 0 ]]; then
+    if [[ "${WSURF_CLEAN_DERIVED_DATA:-0}" == 1 ]]; then
+        wsurf_cleanup_pass_artifacts "$OUT" "$DD" || echo "warning: kept $DD"
+    else
+        wsurf_cleanup_pass_artifacts "$OUT"
+    fi
+fi
+wsurf_prune_old_failed_xcresults "$PWD/build/oop-lane"
 echo "=== OOP lane done (exit $code): $OUT"
 exit "$code"
