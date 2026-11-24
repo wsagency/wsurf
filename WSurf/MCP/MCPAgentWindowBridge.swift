@@ -18,9 +18,11 @@ final class MCPAgentWindowBridge {
     @ObservationIgnored let registry: MCPAgentWindowRegistry
     @ObservationIgnored private let authTimeout: Duration
     @ObservationIgnored private var listener: LocalMCPListener?
-    @ObservationIgnored private var connections: [UUID: BridgeClientConnection] = [:]
+    @ObservationIgnored private var pendingConnections: [UUID: BridgeClientConnection] = [:]
+    @ObservationIgnored private var authenticatedConnections: [UUID: BridgeClientConnection] = [:]
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private static let maxConnections = 8
+    @ObservationIgnored static let maxPendingConnections = 8
+    @ObservationIgnored static let maxAuthenticatedConnections = 8
 
     init(
         endpoint: String = LocalMCPEndpoint.hostBridgePath,
@@ -72,8 +74,9 @@ final class MCPAgentWindowBridge {
         listener = nil
         // Tear down all active window tokens and sessions so disabling MCP leaves no usable windowToken behind.
         registry.teardownAll()
-        let active = Array(connections.values)
-        connections.removeAll()
+        let active = Array(pendingConnections.values) + Array(authenticatedConnections.values)
+        pendingConnections.removeAll()
+        authenticatedConnections.removeAll()
         for client in active {
             Task { await client.close() }
         }
@@ -85,9 +88,9 @@ final class MCPAgentWindowBridge {
     }
 
     private func disconnectConnections(clientID: UUID) {
-        let matching = connections.values.filter { $0.pairedClientId == clientID }
+        let matching = authenticatedConnections.values.filter { $0.pairedClientId == clientID }
         for client in matching {
-            connections.removeValue(forKey: client.id)
+            authenticatedConnections.removeValue(forKey: client.id)
             Task { await client.close() }
         }
     }
@@ -95,7 +98,7 @@ final class MCPAgentWindowBridge {
     // MARK: - Private
 
     private func accept(_ rawConnection: NWConnection) {
-        guard connections.count < Self.maxConnections else {
+        guard pendingConnections.count < Self.maxPendingConnections else {
             rawConnection.cancel()
             return
         }
@@ -115,7 +118,7 @@ final class MCPAgentWindowBridge {
                 self?.connectionDidClose(connectionId)
             }
         )
-        connections[connectionId] = client
+        pendingConnections[connectionId] = client
         Task { await client.start() }
     }
 
@@ -123,13 +126,19 @@ final class MCPAgentWindowBridge {
         guard let hello = MCPAgentBridgeProtocol.parseHello(line) else {
             return nil
         }
-        guard let paired = trustStore.authenticate(token: hello.token), !paired.paused else {
+        guard let paired = trustStore.authenticate(token: hello.token),
+              !paired.paused,
+              !registry.isClientStopped(paired.id),
+              authenticatedConnections.count < Self.maxAuthenticatedConnections,
+              let client = pendingConnections.removeValue(forKey: connectionId)
+        else {
             return nil
         }
         // Always display the verified paired client name from `MCPTrustStore`, not the self-asserted hello string.
         let verifiedName = MCPAgentBridgeProtocol.cleanText(paired.name, maxLength: 60)
         let resolvedName = verifiedName.isEmpty ? "Agent" : verifiedName
-        connections[connectionId]?.markAuthenticated(pairedClientId: paired.id, hostName: resolvedName)
+        client.markAuthenticated(pairedClientId: paired.id, hostName: resolvedName)
+        authenticatedConnections[connectionId] = client
         return (paired.id, resolvedName)
     }
 
@@ -149,15 +158,17 @@ final class MCPAgentWindowBridge {
             return MCPAgentBridgeProtocol.responseErrorLine(id: requestId, code: .invalidRequest, message: "Request op is required.")
         }
         let params = object["params"] as? [String: Any] ?? [:]
-        guard let client = connections[connectionId],
+        guard let client = authenticatedConnections[connectionId],
               let pairedClientId = client.pairedClientId,
               let hostName = client.hostName
         else {
             return MCPAgentBridgeProtocol.responseErrorLine(id: requestId, code: .unauthorized, message: "Not authenticated.")
         }
-        guard let live = trustStore.client(id: pairedClientId), !live.paused else {
+        guard !registry.isClientStopped(pairedClientId),
+              let live = trustStore.client(id: pairedClientId), !live.paused
+        else {
             disconnect(clientID: pairedClientId)
-            return MCPAgentBridgeProtocol.responseErrorLine(id: requestId, code: .unauthorized, message: "Client trust was revoked or paused.")
+            return MCPAgentBridgeProtocol.responseErrorLine(id: requestId, code: .unauthorized, message: "Client trust was revoked, paused, or stopped.")
         }
         trustStore.touch(pairedClientId)
         do {
@@ -223,7 +234,7 @@ final class MCPAgentWindowBridge {
     }
 
     private func broadcastEvent(to pairedClientId: UUID, event: String, payload: [String: Any]) {
-        let targets = connections.values.filter { $0.pairedClientId == pairedClientId }
+        let targets = authenticatedConnections.values.filter { $0.pairedClientId == pairedClientId }
         guard !targets.isEmpty else { return }
         let line = MCPAgentBridgeProtocol.eventLine(name: event, payload: payload)
         for client in targets {
@@ -232,19 +243,20 @@ final class MCPAgentWindowBridge {
     }
 
     private func connectionDidClose(_ connectionId: UUID) {
-        let closedClient = connections.removeValue(forKey: connectionId)
+        pendingConnections.removeValue(forKey: connectionId)
+        let closedClient = authenticatedConnections.removeValue(forKey: connectionId)
         guard let pairedClientId = closedClient?.pairedClientId else { return }
-        let stillConnected = connections.values.contains { $0.pairedClientId == pairedClientId }
+        let stillConnected = authenticatedConnections.values.contains { $0.pairedClientId == pairedClientId }
         if !stillConnected {
             registry.cancelInFlightOperations(for: pairedClientId)
         }
     }
 
     private func enforceTrustStoreState() {
-        for client in Array(connections.values) {
+        for client in Array(authenticatedConnections.values) {
             guard let pairedClientId = client.pairedClientId else { continue }
             let live = trustStore.isAvailable ? trustStore.client(id: pairedClientId) : nil
-            if live == nil || live?.paused == true {
+            if live == nil || live?.paused == true || registry.isClientStopped(pairedClientId) {
                 disconnect(clientID: pairedClientId)
             }
         }

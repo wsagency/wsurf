@@ -76,7 +76,7 @@ extension MCPAgentWindowRegistry {
         }
     }
 
-    /// Refuses mutating or scripting operations when the tab's current website is marked Read Only or Off (`deny`).
+    /// Refuses mutating or scripting operations when the tab's current website is marked Read Only, Ask, or Off (`deny`).
     func ensureSiteWritable(tab: BrowserTab, browser: BrowserModel) throws {
         guard let url = Self.activeWebURL(of: tab) else { return }
         tab.assistantAccess.pageChanged(url: url)
@@ -84,6 +84,9 @@ extension MCPAgentWindowRegistry {
         let policy = tab.assistantAccess.explicitPolicy ?? browser.sitePermissions.assistantRecord(for: origin)
         if policy == .deny {
             throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
+        }
+        if policy == .ask {
+            throw MCPAgentWindowError(.denied, "This website explicitly requires asking before assistant control.")
         }
         if policy == .readOnly {
             throw MCPAgentWindowError(.forbidden, "This website is set to Read Only for assistant access.")
@@ -115,8 +118,11 @@ extension MCPAgentWindowRegistry {
         }
         if let existing = record(pairedClientId: pairedClientId, threadId: threadId),
            let companion = existing.coordinator?.browser.agentCompanion {
-            if companion.owner == .human {
-                throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+            if companion.owner != .agent {
+                if companion.owner == .human {
+                    throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+                }
+                throw MCPAgentWindowError(.denied, "Window is unclaimed and not owned by the agent.")
             }
             if let expectedGeneration, companion.generation != expectedGeneration {
                 throw MCPAgentWindowError(.staleGeneration, "Window generation \(companion.generation) does not match expected \(expectedGeneration).")
@@ -160,8 +166,11 @@ extension MCPAgentWindowRegistry {
         guard let companion = resolved.1.browser.agentCompanion else {
             throw MCPAgentWindowError(.notFound, "Agent session is no longer active.")
         }
-        if operation != "status", companion.owner == .human {
-            throw MCPAgentWindowError(.humanControl, "Tab is under human control.")
+        if operation != "status", companion.owner != .agent {
+            if companion.owner == .human {
+                throw MCPAgentWindowError(.humanControl, "Tab is under human control.")
+            }
+            throw MCPAgentWindowError(.denied, "Tab is unclaimed and not owned by the agent.")
         }
         if let expectedGeneration, companion.generation != expectedGeneration {
             throw MCPAgentWindowError(.staleGeneration, "Tab generation \(companion.generation) does not match expected \(expectedGeneration).")
@@ -212,8 +221,11 @@ extension MCPAgentWindowRegistry {
             throw MCPAgentWindowError(.cancelled, "Operation was cancelled.")
         }
         if let companion = coordinator.browser.agentCompanion,
-           companion.owner == .human {
-            throw MCPAgentWindowError(.humanControl, "Operation interrupted by human Take Over.")
+           companion.owner != .agent {
+            if companion.owner == .human {
+                throw MCPAgentWindowError(.humanControl, "Operation interrupted by human Take Over.")
+            }
+            throw MCPAgentWindowError(.denied, "Window ownership changed to unclaimed while running.")
         }
         if let companion = coordinator.browser.agentCompanion,
            companion.generation != expectedGeneration {
@@ -319,9 +331,7 @@ extension MCPAgentWindowRegistry {
             throw MCPAgentWindowError(.invalidParams, "navigate requires a valid HTTP(S) url.")
         }
         let destinationOrigin = SitePermissions.origin(for: url)
-        guard coordinator.browser.sitePermissions.assistantRecord(for: destinationOrigin) != .deny else {
-            throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
-        }
+        try ensureDestinationAllowed(url, permissions: coordinator.browser.sitePermissions)
         session.keepInWindow(tab)
         session.observations[tab.id] = nil
         session.grants[tab.id] = MCPBrowserSession.Grant(
@@ -355,6 +365,16 @@ extension MCPAgentWindowRegistry {
         tab: BrowserTab,
         session: MCPBrowserSession
     ) async throws -> [String: Any] {
+        if let url = Self.activeWebURL(of: tab) {
+            tab.assistantAccess.pageChanged(url: url)
+            let policy = tab.assistantAccess.explicitPolicy ?? coordinator.browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url))
+            if policy == .deny {
+                throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
+            }
+            if policy == .ask {
+                throw MCPAgentWindowError(.denied, "This website explicitly requires asking before assistant access.")
+            }
+        }
         session.keepInWindow(tab)
         session.syncAgentWindowGrants()
         var readArgs: [String: Value] = ["tabID": .string(tab.id.uuidString)]

@@ -87,6 +87,9 @@ final class MCPAgentWindowRegistry {
     ) -> AppCoordinator
 
     @ObservationIgnored private var records: [UUID: Record] = [:]
+    /// Clients halted via MicroBar Stop during this app session: `true` if persisted paused in Keychain, `false` if the
+    /// Keychain write failed (in which case the in-memory block stays active for the rest of the session).
+    @ObservationIgnored private var stoppedClients: [UUID: Bool] = [:]
     @ObservationIgnored let trustStore: MCPTrustStore
     @ObservationIgnored private let opener: WindowOpener
     @ObservationIgnored private let profileCatalog: () -> ProfileStore
@@ -107,6 +110,26 @@ final class MCPAgentWindowRegistry {
         self.opener = opener
         self.disconnectMCP = disconnectMCP
         self.cancelMCPCalls = cancelMCPCalls
+        trustStore.onChange { [weak self] in
+            self?.reconcileStoppedClients()
+        }
+    }
+
+    func isClientStopped(_ clientId: UUID) -> Bool {
+        stoppedClients[clientId] != nil
+    }
+
+    private func reconcileStoppedClients() {
+        guard trustStore.isAvailable else { return }
+        for (clientId, persistedInStore) in Array(stoppedClients) {
+            guard let live = trustStore.client(id: clientId) else {
+                stoppedClients.removeValue(forKey: clientId)
+                continue
+            }
+            if persistedInStore, !live.paused {
+                stoppedClients.removeValue(forKey: clientId)
+            }
+        }
     }
 
     var hasActiveWindows: Bool {
@@ -129,7 +152,7 @@ final class MCPAgentWindowRegistry {
     /// Compares against every active record in constant time and verifies the paired client matches the window owner.
     func resolve(windowToken: String, pairedClientId: UUID) -> (coordinator: AppCoordinator, scope: MCPAgentWindowScope)? {
         pruneDeadRecords()
-        guard MCPPairing.isWellFormed(windowToken) else { return nil }
+        guard !isClientStopped(pairedClientId), MCPPairing.isWellFormed(windowToken) else { return nil }
         let presentedHash = MCPPairing.hash(windowToken)
         var matched: Record?
         for record in records.values where MCPPairing.constantTimeEquals(record.windowTokenHash, presentedHash) {
@@ -200,6 +223,7 @@ final class MCPAgentWindowRegistry {
         let requestedEngine = try parseEngine(params["engine"], defaultEngine: .chromium)
         let explicitEngine = params["engine"] != nil
         let access = try parseAccess(params["access"])
+        try validateRequestedAccess(access, for: pairedClientId)
         let floatOnTop = params["floatOnTop"] as? Bool
         let open = params["open"] as? Bool ?? false
         let reuseExisting = params["reuseExistingTab"] as? Bool ?? true
@@ -233,10 +257,7 @@ final class MCPAgentWindowRegistry {
         let profile = try resolveProfile(params["profileId"] as? String)
         if let requestedURL {
             let context = BrowserProfileContext.shared(for: profile, settingsOwner: profile)
-            let origin = SitePermissions.origin(for: requestedURL)
-            guard context.sitePermissions.assistantRecord(for: origin) != .deny else {
-                throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
-            }
+            try ensureDestinationAllowed(requestedURL, permissions: context.sitePermissions)
         }
         let windowToken: String
         do {
@@ -297,7 +318,7 @@ final class MCPAgentWindowRegistry {
             throw MCPAgentWindowError(.notFound, "No matching tab found.")
         }
         let currentOwner = coordinator.browser.agentCompanion?.owner ?? .agent
-        if owner == .agent, currentOwner == .human || record.lockedByHumanTakeOver {
+        if currentOwner == .human || record.lockedByHumanTakeOver {
             throw MCPAgentWindowError(.humanControl, "Window is under human control. Only the user can Hand Back control.")
         }
         let generation = transitionOwner(record: record, coordinator: coordinator, to: owner, tabId: tab.id)
@@ -362,8 +383,9 @@ final class MCPAgentWindowRegistry {
         _ = transitionOwner(record: record, coordinator: coordinator, to: .agent, tabId: browser.activeTab?.id)
     }
 
-    /// Kill switch from MicroBar Stop: revokes window access, pauses the paired client in `MCPTrustStore`, and closes
-    /// its host-bridge connections so the client cannot immediately reopen windows until resumed by the user.
+    /// Kill switch from MicroBar Stop: revokes window access, pauses the paired client in `MCPTrustStore` (plus an
+    /// in-memory fallback when Keychain writes fail), and closes its host-bridge connections so the client cannot
+    /// immediately reopen windows until resumed by the user.
     func stop(window browser: BrowserModel) {
         guard let record = records[browser.windowID] else {
             browser.agentCompanion = nil
@@ -372,7 +394,14 @@ final class MCPAgentWindowRegistry {
         }
         let clientId = record.pairedClientId
         teardown(record, clearCompanion: true, emitClosed: true)
-        try? trustStore.setPaused(true, for: clientId)
+        let persistedInStore: Bool
+        do {
+            try trustStore.setPaused(true, for: clientId)
+            persistedInStore = true
+        } catch {
+            persistedInStore = false
+        }
+        stoppedClients[clientId] = persistedInStore
         onStopClient?(clientId)
     }
 
@@ -601,26 +630,24 @@ final class MCPAgentWindowRegistry {
         options: ReuseOptions
     ) async throws -> [String: Any] {
         let owner = coordinator.browser.agentCompanion?.owner ?? .agent
-        if owner != .human {
-            if var companion = coordinator.browser.agentCompanion, let title = options.title {
-                companion.threadTitle = title
-                coordinator.browser.agentCompanion = companion
-            }
-            if let floatOnTop = options.floatOnTop {
-                coordinator.floatsOnTop = floatOnTop
-            }
-        }
-        if let url = options.url {
-            let origin = SitePermissions.origin(for: url)
-            guard coordinator.browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-                throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
-            }
-        }
-        let tab: BrowserTab
-        if !options.reuseExisting {
+        guard owner == .agent else {
             if owner == .human {
                 throw MCPAgentWindowError(.humanControl, "Window is under human control.")
             }
+            throw MCPAgentWindowError(.denied, "Window is unclaimed and not owned by the agent.")
+        }
+        if let url = options.url {
+            try ensureDestinationAllowed(url, permissions: coordinator.browser.sitePermissions)
+        }
+        if var companion = coordinator.browser.agentCompanion, let title = options.title {
+            companion.threadTitle = title
+            coordinator.browser.agentCompanion = companion
+        }
+        if let floatOnTop = options.floatOnTop {
+            coordinator.floatsOnTop = floatOnTop
+        }
+        let tab: BrowserTab
+        if !options.reuseExisting {
             tab = coordinator.browser.newTab(url: options.url, activate: true, transition: .agent)
             configureTabEngine(tab, requested: options.engine, url: options.url)
             notifyTabsChanged(for: coordinator.browser)
@@ -628,23 +655,21 @@ final class MCPAgentWindowRegistry {
             tab = coordinator.browser.activeTab
                 ?? coordinator.browser.tabs.first
                 ?? coordinator.browser.newTab(url: options.url, activate: true, transition: .agent)
-            if owner != .human {
-                if options.explicitEngine || options.url != nil {
-                    try ensureSiteWritable(tab: tab, browser: coordinator.browser)
+            if options.explicitEngine || options.url != nil {
+                try ensureSiteWritable(tab: tab, browser: coordinator.browser)
+            }
+            if options.explicitEngine, effectiveEngine(of: tab) != options.engine {
+                let currentOrigin = coordinator.browser.siteOrigin(for: tab)
+                if options.engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(currentOrigin) {
+                    throw MCPAgentWindowError(.unsupported, "This origin requires WebKit and cannot switch to Chromium.")
                 }
-                if options.explicitEngine, effectiveEngine(of: tab) != options.engine {
-                    let currentOrigin = coordinator.browser.siteOrigin(for: tab)
-                    if options.engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(currentOrigin) {
-                        throw MCPAgentWindowError(.unsupported, "This origin requires WebKit and cannot switch to Chromium.")
-                    }
-                    configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
-                    if tab.isMaterialised {
-                        _ = await tab.switchEngine(to: options.engine)
-                    }
+                configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
+                if tab.isMaterialised {
+                    _ = await tab.switchEngine(to: options.engine)
                 }
-                if let url = options.url {
-                    tab.load(url, transition: .agent)
-                }
+            }
+            if let url = options.url {
+                tab.load(url, transition: .agent)
             }
         }
         ensurePreviewSession(for: record)?.syncAgentWindowGrants()
@@ -652,6 +677,39 @@ final class MCPAgentWindowRegistry {
             showAgentWindow(coordinator)
         }
         return windowDescriptor(record: record, coordinator: coordinator, tab: tab)
+    }
+
+    func ensureDestinationAllowed(_ url: URL, permissions: SitePermissions) throws {
+        let origin = SitePermissions.origin(for: url)
+        let policy = permissions.assistantRecord(for: origin)
+        if policy == .deny {
+            throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
+        }
+        if policy == .ask {
+            throw MCPAgentWindowError(.denied, "This website explicitly requires asking before assistant control.")
+        }
+    }
+
+    private func validateRequestedAccess(_ access: AgentWindowAccess, for pairedClientId: UUID) throws {
+        guard !isClientStopped(pairedClientId),
+              trustStore.isAvailable,
+              let client = trustStore.client(id: pairedClientId),
+              !client.paused
+        else {
+            throw MCPAgentWindowError(.unauthorized, "Client trust was revoked, paused, or stopped.")
+        }
+        switch access {
+        case .control:
+            return
+        case .development:
+            guard client.standing == .development || client.standing == .developer else {
+                throw MCPAgentWindowError(.denied, "Development access requires Development or Developer standing in Connected apps.")
+            }
+        case .developer:
+            guard client.standing == .developer else {
+                throw MCPAgentWindowError(.denied, "Developer access requires Developer standing in Connected apps.")
+            }
+        }
     }
 
     private func transitionOwner(

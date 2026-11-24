@@ -98,7 +98,7 @@ struct MCPAgentWindowBridgeTests {
     }
 
     @MainActor
-    private final class BridgeClient {
+    final class BridgeClient {
         private let socket: BridgeSocketClient
 
         init(socketPath: String) {
@@ -155,7 +155,7 @@ struct MCPAgentWindowBridgeTests {
         }
     }
 
-    private struct Harness {
+    struct Harness {
         let directory: String
         let bridgeEndpoint: String
         let mcpEndpoint: String
@@ -166,12 +166,15 @@ struct MCPAgentWindowBridgeTests {
         let server: BrowserMCPServer
     }
 
-    private func startHarness(authTimeout: Duration = .seconds(2)) async throws -> Harness {
+    func startHarness(
+        authTimeout: Duration = .seconds(2),
+        storage: MemoryTrustStorage = MemoryTrustStorage()
+    ) async throws -> Harness {
         let directory = "/tmp/wsurf-bridge-\(UUID().uuidString)"
         let mcpEndpoint = directory + "/browser.sock"
         let bridgeEndpoint = directory + "/host-bridge.sock"
         let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
-        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        let trust = MCPTrustStore(storage: storage)
         let server = BrowserMCPServer(
             endpoint: mcpEndpoint,
             trustStore: trust,
@@ -220,7 +223,7 @@ struct MCPAgentWindowBridgeTests {
         )
     }
 
-    private func stopHarness(_ harness: Harness) {
+    func stopHarness(_ harness: Harness) {
         harness.server.stop()
         for window in harness.app.windows {
             window.closeWindow()
@@ -228,7 +231,7 @@ struct MCPAgentWindowBridgeTests {
         try? FileManager.default.removeItem(atPath: harness.directory)
     }
 
-    private func withProfile(name: String = "Host Bridge Tests", _ body: (Profile) async throws -> Void) async throws {
+    func withProfile(name: String = "Host Bridge Tests", _ body: (Profile) async throws -> Void) async throws {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: name)
@@ -245,7 +248,7 @@ struct MCPAgentWindowBridgeTests {
         }
     }
 
-    private func connectAuthenticated(_ harness: Harness, token: String = SyntheticToken.first, host: String = "t3-code") async throws -> BridgeClient {
+    func connectAuthenticated(_ harness: Harness, token: String = SyntheticToken.first, host: String = "t3-code") async throws -> BridgeClient {
         let client = BridgeClient(socketPath: harness.bridgeEndpoint)
         try await client.connect()
         try await client.sendJSON([
@@ -354,7 +357,8 @@ struct MCPAgentWindowBridgeTests {
                 stopHarness(harness)
                 withExtendedLifetime(fixture) {}
             }
-            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Verified Host", kind: nil)
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Verified Host", kind: nil)
+            try harness.trust.setStanding(.developer, for: paired.id)
             try harness.trust.setDeveloperProfile(profile.id, dedicated: true)
             let regular = harness.app.newWindow(profile: profile, show: false)
             let regularTab = regular.browser.newTab(url: nextURL, activate: true)
@@ -479,7 +483,8 @@ struct MCPAgentWindowBridgeTests {
                     stopHarness(harness)
                     withExtendedLifetime(fixture) {}
                 }
-                _ = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+                let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+                try harness.trust.setStanding(.developer, for: paired.id)
                 try harness.trust.setDeveloperProfile(devProfile.id, dedicated: true)
                 let client = try await connectAuthenticated(harness)
                 defer { Task { await client.close() } }
@@ -657,33 +662,26 @@ struct MCPAgentWindowBridgeTests {
             )
             #expect((blockedResp["error"] as? [String: Any])?["code"] as? String == "humanControl")
 
-            // Low #10: openAgentWindow reuse while owner == .human does NOT mutate title or floatOnTop!
-            _ = try await client.request(
+            // Low #10 & H2: openAgentWindow reuse while owner == .human is refused and does NOT mutate title or floatOnTop!
+            let (reuseBlocked, _) = try await client.request(
                 id: "guard-reuse", op: "openAgentWindow",
                 params: ["threadId": "thread-B", "title": "Hijacked Title", "floatOnTop": true]
             )
+            #expect(reuseBlocked["ok"] as? Bool == false)
+            #expect((reuseBlocked["error"] as? [String: Any])?["code"] as? String == "humanControl")
             #expect(agentWindow.browser.agentCompanion?.threadTitle == "Initial Title")
             #expect(agentWindow.floatsOnTop == false)
 
-            // H2: Host CANNOT reclaim control via setOwner("agent") OR by bouncing through "unclaimed" -> "agent"!
-            let (reclaimDirect, _) = try await client.request(
-                id: "guard-reclaim-1", op: "setOwner",
-                params: ["tabId": tabId, "owner": "agent"]
-            )
-            #expect(reclaimDirect["ok"] as? Bool == false)
-            #expect((reclaimDirect["error"] as? [String: Any])?["code"] as? String == "humanControl")
-
-            let (toUnclaimed, _) = try await client.request(
-                id: "guard-reclaim-2", op: "setOwner",
-                params: ["tabId": tabId, "owner": "unclaimed"]
-            )
-            #expect(toUnclaimed["ok"] as? Bool == true)
-            let (reclaimAfterUnclaimed, _) = try await client.request(
-                id: "guard-reclaim-3", op: "setOwner",
-                params: ["tabId": tabId, "owner": "agent"]
-            )
-            #expect(reclaimAfterUnclaimed["ok"] as? Bool == false)
-            #expect((reclaimAfterUnclaimed["error"] as? [String: Any])?["code"] as? String == "humanControl")
+            // H2: While owner == .human, ALL host setOwner calls (including to "unclaimed"!) are refused with humanControl!
+            for (reqId, requestedOwner) in [("guard-reclaim-1", "agent"), ("guard-reclaim-2", "unclaimed"), ("guard-reclaim-3", "human")] {
+                let (reclaimResp, _) = try await client.request(
+                    id: reqId, op: "setOwner",
+                    params: ["tabId": tabId, "owner": requestedOwner]
+                )
+                #expect(reclaimResp["ok"] as? Bool == false, "setOwner(\(requestedOwner)) must fail under human Take Over")
+                #expect((reclaimResp["error"] as? [String: Any])?["code"] as? String == "humanControl")
+            }
+            #expect(agentWindow.browser.agentCompanion?.owner == .human)
 
             // Status still succeeds under human control.
             let (statusResp, _) = try await client.request(

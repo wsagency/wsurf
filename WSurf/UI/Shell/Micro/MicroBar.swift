@@ -190,7 +190,7 @@ struct AgentMicroControlBar: View {
 
             Spacer(minLength: 4)
 
-            if companion.owner == .agent {
+            if companion.owner != .human {
                 Button {
                     coordinator.takeOverAgentMicroWindow()
                 } label: {
@@ -200,7 +200,7 @@ struct AgentMicroControlBar: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help(String(localized: "Take over control of this window from the external agent."))
-            } else if companion.owner == .human {
+            } else {
                 Button {
                     coordinator.handBackAgentMicroWindow()
                 } label: {

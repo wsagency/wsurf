@@ -14,11 +14,20 @@ extension MCPBrowserSession {
     private static let alreadyRequested =
         "Access has already been requested. The user can disconnect and reconnect to share different tabs."
 
-    /// Ensures every non-private HTTP(S) tab in a window-scoped Agent Micro Window carries its pre-approved grant.
+    /// Ensures every non-private HTTP(S) tab in a window-scoped Agent Micro Window carries its pre-approved grant,
+    /// skipping sites whose explicit Assistant Access policy is `.deny` or `.ask`.
     func syncAgentWindowGrants() {
         guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return }
         for tab in browser.tabs where !tab.isClosed && !tab.isPrivate && tab.microTabID == nil {
-            guard let url = webURL(of: tab), tab.assistantAccess.explicitPolicy != .deny else { continue }
+            guard let url = webURL(of: tab) else { continue }
+            tab.assistantAccess.pageChanged(url: url)
+            let policy = tab.assistantAccess.explicitPolicy
+            guard policy != .deny, policy != .ask else {
+                if grants[tab.id]?.source == .agentWindow {
+                    grants[tab.id] = nil
+                }
+                continue
+            }
             let origin = SitePermissions.origin(for: url)
             if grants[tab.id]?.origin != origin || grants[tab.id]?.source != .agentWindow || grants[tab.id]?.access != scope.access {
                 grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
@@ -107,8 +116,9 @@ extension MCPBrowserSession {
                 return failure("Use a valid HTTP(S) URL.")
             }
             let origin = SitePermissions.origin(for: url)
-            guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-                return failure("Assistant access is off for this website.")
+            let policy = browser.sitePermissions.assistantRecord(for: origin)
+            guard policy != .deny, policy != .ask else {
+                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.")
             }
             observations[tab.id] = nil
             grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
@@ -157,8 +167,9 @@ extension MCPBrowserSession {
                 return failure("Opening a tab requires an active Agent Micro Window and a valid HTTP(S) URL.")
             }
             let origin = SitePermissions.origin(for: url)
-            guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-                return failure("Assistant access is off for this website.")
+            let policy = browser.sitePermissions.assistantRecord(for: origin)
+            guard policy != .deny, policy != .ask else {
+                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.")
             }
             if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
                 return failure("This website requires WebKit and cannot open in Chromium.")
@@ -353,7 +364,13 @@ extension MCPBrowserSession {
             return nil
         }
         tab.assistantAccess.pageChanged(url: url)
-        return tab.assistantAccess.explicitPolicy == .deny ? nil : tab
+        if tab.assistantAccess.explicitPolicy == .deny {
+            return nil
+        }
+        if current.source == .agentWindow, tab.assistantAccess.explicitPolicy == .ask {
+            return nil
+        }
+        return tab
     }
 
     // MARK: Standing grants and the Developer tier
@@ -395,10 +412,16 @@ extension MCPBrowserSession {
             guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned(),
                   let client = livePairedClient, !client.paused
             else { return nil }
-            if grant.access == .developer {
+            switch grant.access {
+            case .developer:
+                guard client.standing == .developer else { return nil }
                 return developerTierHolds(at: url) ? .developer : .development
+            case .development:
+                guard client.standing == .development || client.standing == .developer else { return nil }
+                return .development
+            case .control, .readOnly:
+                return grant.access
             }
-            return grant.access
         }
     }
 

@@ -64,6 +64,7 @@ nonisolated enum MCPAgentWindowErrorCode: String, Sendable, Equatable {
     case invalidParams
     case unknownOperation
     case notFound
+    case denied
     case forbidden
     case unsupported
     case agentMismatch

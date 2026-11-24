@@ -306,18 +306,18 @@ final class BrowserTab: Identifiable {
     var onBackToOpener: (() -> Void)?
     func preferredEngine(for url: URL?, keepingSignIn: Bool = true) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
-        let origin = url.map(SitePermissions.origin(for:)) ?? ""
-        if keepingSignIn, let signInEngine {
-            return signInEngine
-        }
-        if !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
-            return .webKit
-        }
         if let engineOverride {
             return engineOverride
         }
         guard let url else { return defaultEngineOverride ?? .webKit }
+        let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return defaultEngineOverride ?? .webKit }
+        if keepingSignIn, let signInEngine {
+            return signInEngine
+        }
+        if SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return .webKit
+        }
         if let pinnedEngine, pinnedEngine.origin == origin {
             return pinnedEngine.engine
         }

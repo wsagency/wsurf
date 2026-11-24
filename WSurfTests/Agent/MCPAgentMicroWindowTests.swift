@@ -287,6 +287,13 @@ struct MCPAgentMicroWindowTests {
             #expect(tab.preferredEngine(for: googleSignIn) == .webKit)
             #expect(tab.preferredEngine(for: openAISignIn) == .webKit)
 
+            // Comparison tabs with explicit `engineOverride` keep `main` precedence ahead of webKitOnlyOrigins & signInEngine.
+            let comparisonTab = agentWindow.browser.makeTab(for: googleSignIn)
+            comparisonTab.engineOverride = .chromium
+            comparisonTab.signInEngine = .webKit
+            #expect(comparisonTab.preferredEngine(for: googleSignIn) == .chromium)
+            #expect(agentWindow.browser.engine(for: comparisonTab) == .chromium)
+
             // Active signInEngine hold keeps sign-in return redirects in WebKit even on a Chromium-default agent tab.
             tab.noteNavigation(to: googleSignIn, startedByUser: false)
             #expect(tab.signInEngine == .webKit)
