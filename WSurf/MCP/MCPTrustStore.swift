@@ -161,7 +161,8 @@ final class MCPTrustStore {
     private(set) var dedicatedProfileID: UUID?
     private(set) var appsFollowDefault = false
     private(set) var appsDefaultLevel = AssistantAccessPolicy.ask
-    private(set) var allowsPasswordEntry = true
+    /// Fails closed (`false`) until a healthy Keychain document is loaded; defaults to `true` once loaded.
+    private(set) var allowsPasswordEntry = false
     @ObservationIgnored private let storage: (any MCPTrustStorage)?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var document = Document()
@@ -242,8 +243,9 @@ final class MCPTrustStore {
         if appsDefaultLevel != stored.appsDefaultLevel {
             appsDefaultLevel = stored.appsDefaultLevel
         }
-        if allowsPasswordEntry != stored.allowsPasswordEntry {
-            allowsPasswordEntry = stored.allowsPasswordEntry
+        let passwordEntry = available ? stored.allowsPasswordEntry : false
+        if allowsPasswordEntry != passwordEntry {
+            allowsPasswordEntry = passwordEntry
         }
         return changed
     }

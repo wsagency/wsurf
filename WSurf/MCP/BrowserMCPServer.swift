@@ -264,7 +264,7 @@ final class BrowserMCPServer {
         consent: @escaping (String, [MCPAccessConsent.Page], Bool, NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
         openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open,
         sensitiveConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.useSensitivePage,
-        loginConsent: @escaping (String, URL, Bool, [String], String?, NSWindow?) async -> MCPAccessConsent.LoginChoice = MCPAccessConsent.requestLogin,
+        loginConsent: @escaping (String, URL, [MCPAccessConsent.LoginAccount], Bool, String?, NSWindow?) async -> MCPAccessConsent.LoginChoice = MCPAccessConsent.requestLogin,
         browser requested: BrowserModel? = nil,
         id: UUID = UUID()
     ) -> MCPBrowserSession? {
@@ -329,14 +329,14 @@ final class BrowserMCPServer {
                 else { return false }
                 return approved
             },
-            loginConsent: { [weak browser, weak context, weak adapter] client, url, hasSavedLogin, accountLabels, reason in
+            loginConsent: { [weak browser, weak context, weak adapter] client, url, accounts, allowsManualTakeOver, reason in
                 guard let browser, let context, let adapter, let nativeWindow,
                       browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
                       adapter.nativeWindow === nativeWindow,
                       available(browser)
                 else { return .decline }
-                let choice = await loginConsent(client, url, hasSavedLogin, accountLabels, reason, nativeWindow)
+                let choice = await loginConsent(client, url, accounts, allowsManualTakeOver, reason, nativeWindow)
                 guard browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
                       adapter.nativeWindow === nativeWindow,
@@ -375,10 +375,10 @@ final class BrowserMCPServer {
             consent: { _, _, _ in nil },
             openConsent: { _, _ in false },
             sensitiveConsent: { _, _ in false },
-            loginConsent: { [weak coordinator] client, url, hasSaved, labels, reason in
+            loginConsent: { [weak coordinator] client, url, accounts, allowsManualTakeOver, reason in
                 let window = coordinator.flatMap { $0.browser.context.extensions.adapter(for: $0.browser)?.nativeWindow }
                 return await MCPAccessConsent.requestLogin(
-                    client: client, url: url, hasSavedLogin: hasSaved, accountLabels: labels, reason: reason, in: window)
+                    client: client, url: url, accounts: accounts, allowsManualTakeOver: allowsManualTakeOver, reason: reason, in: window)
             }
         )
         session.pairedClient = pairedClient

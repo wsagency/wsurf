@@ -499,10 +499,10 @@ final class MCPAgentWindowRegistry {
             consent: { _, _, _ in nil },
             openConsent: { _, _ in false },
             sensitiveConsent: { _, _ in false },
-            loginConsent: { [weak coordinator] client, url, hasSaved, labels, reason in
+            loginConsent: { [weak coordinator] client, url, accounts, manual, reason in
                 let window = coordinator.flatMap { $0.browser.context.extensions.adapter(for: $0.browser)?.nativeWindow }
                 return await MCPAccessConsent.requestLogin(
-                    client: client, url: url, hasSavedLogin: hasSaved, accountLabels: labels, reason: reason, in: window)
+                    client: client, url: url, accounts: accounts, allowsManualTakeOver: manual, reason: reason, in: window)
             }
         )
         session.clientName = record.hostName

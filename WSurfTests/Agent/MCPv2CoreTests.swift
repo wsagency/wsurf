@@ -16,12 +16,12 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPv2CoreTests {
-    private static let vaultPassword = "VaultSecret-2026!Qx"
-    private static let controlPassword = "CtrlSecret-2026!Zp"
-    private static let otpCode = "739204"
-    private static let hidden = MCPSecretScrubber.replacement
+    static let vaultPassword = "VaultSecret-2026!Qx"
+    static let controlPassword = "CtrlSecret-2026!Zp"
+    static let otpCode = "739204"
+    static let hidden = MCPSecretScrubber.replacement
 
-    private static let loginHTML = """
+    static let loginHTML = """
         <!doctype html><title>Sign In</title>
         <style>
           body { margin: 0; font-family: -apple-system, sans-serif; }
@@ -84,7 +84,7 @@ struct MCPv2CoreTests {
         </script>
         """
 
-    private struct Rig {
+    struct Rig {
         let server: HTTPFixtureServer
         let browser: BrowserModel
         let trust: MCPTrustStore
@@ -93,7 +93,7 @@ struct MCPv2CoreTests {
         let owner: BrowserTab
     }
 
-    private func withRig(
+    func withRig(
         ownerPath: String = "/mine",
         ownerEngine: BrowserEngine = .webKit,
         _ body: (Rig) async throws -> Void
@@ -159,7 +159,7 @@ struct MCPv2CoreTests {
         rig.window.close()
     }
 
-    private func everything(_ result: CallTool.Result) -> String {
+    func everything(_ result: CallTool.Result) -> String {
         let blocks = result.content.compactMap { block -> String? in
             guard case .text(let text, _, _) = block else { return nil }
             return text
@@ -168,11 +168,11 @@ struct MCPv2CoreTests {
         return (blocks + [structured]).joined(separator: "\n")
     }
 
-    private func observation(_ result: CallTool.Result) throws -> String {
+    func observation(_ result: CallTool.Result) throws -> String {
         try #require(result.structuredContent?.objectValue?["observationID"]?.stringValue, "\(everything(result))")
     }
 
-    private func fieldRef(_ label: String, in result: CallTool.Result) throws -> Int {
+    func fieldRef(_ label: String, in result: CallTool.Result) throws -> Int {
         let content = try #require(result.structuredContent?.objectValue?["content"]?.stringValue, "\(everything(result))")
         let line = try #require(
             content.split(separator: "\n").first { $0.contains("field \"\(label)\"") },
@@ -180,7 +180,7 @@ struct MCPv2CoreTests {
         return try #require(Int(line.dropFirst().prefix { $0.isNumber }))
     }
 
-    private func buttonRef(_ label: String, in result: CallTool.Result) throws -> Int {
+    func buttonRef(_ label: String, in result: CallTool.Result) throws -> Int {
         let content = try #require(result.structuredContent?.objectValue?["content"]?.stringValue, "\(everything(result))")
         let line = try #require(
             content.split(separator: "\n").first { $0.contains("button \"\(label)\"") },
@@ -188,7 +188,7 @@ struct MCPv2CoreTests {
         return try #require(Int(line.dropFirst().prefix { $0.isNumber }))
     }
 
-    private func call(
+    func call(
         _ session: MCPBrowserSession, _ name: String, tab: BrowserTab? = nil, _ arguments: [String: Value] = [:]
     ) async throws -> CallTool.Result {
         var arguments = arguments
@@ -196,7 +196,7 @@ struct MCPv2CoreTests {
         return try await session.call(name: name, arguments: arguments)
     }
 
-    private func sampleColor(in result: CallTool.Result, at point: CGPoint, scale: CGFloat) throws -> (red: Double, green: Double, blue: Double) {
+    func sampleColor(in result: CallTool.Result, at point: CGPoint, scale: CGFloat) throws -> (red: Double, green: Double, blue: Double) {
         let data = try #require(result.content.compactMap { block -> Data? in
             guard case .image(let base64, _, _, _) = block else { return nil }
             return Data(base64Encoded: base64)
@@ -208,14 +208,14 @@ struct MCPv2CoreTests {
         return (Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent))
     }
 
-    private func elementCenter(_ id: String, in tab: BrowserTab) async throws -> CGPoint {
+    func elementCenter(_ id: String, in tab: BrowserTab) async throws -> CGPoint {
         let raw = try #require(try await tab.page.evaluateJavaScript(
             "(() => { const r = document.getElementById('\(id)').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
             as? [Double])
         return CGPoint(x: raw[0], y: raw[1])
     }
 
-    private func fakeVault(
+    func fakeVault(
         accountLabel: String = "vault-user@example.test",
         username: String = "vault-user@example.test",
         password: String = MCPv2CoreTests.vaultPassword
@@ -224,16 +224,20 @@ struct MCPv2CoreTests {
             id: UUID(), label: accountLabel, vaultID: UUID(), revision: 1, epoch: 1)
         return MCPVaultProvider(
             savedAccounts: { _, _, _ in [summary] },
-            blindFill: { _, view, _, _, submit, registerSecret in
-                if !password.isEmpty {
-                    registerSecret(password)
+            blindFill: { _, view, url, _, submit, registerSecret in
+                if !password.isEmpty, !registerSecret(password) {
+                    return PageDriver.VaultFillResult(
+                        ok: false, documentID: nil, fieldsFilled: [], submitted: false,
+                        error: "Could not register the saved password for output scrubbing. Nothing was filled.")
                 }
-                return await PageDriver.fillVaultLogin(username: username, password: password, submit: submit, in: view)
+                return await PageDriver.fillVaultLogin(
+                    username: username, password: password, submit: submit,
+                    expectedOrigin: SitePermissions.origin(for: url), in: view)
             }
         )
     }
 
-    private func emptyVault() -> MCPVaultProvider {
+    func emptyVault() -> MCPVaultProvider {
         MCPVaultProvider(savedAccounts: { _, _, _ in [] }, blindFill: { _, _, _, _, _, _ in nil })
     }
 
@@ -631,14 +635,26 @@ struct MCPv2CoreTests {
 
     @Test func requestUserLoginHandlesManualNoSavedDeclineTakeOverFillAndFillAndSignIn() async throws {
         try await withRig(ownerPath: "/login") { rig in
-            var nextChoice: MCPAccessConsent.LoginChoice = .decline
+            enum Action { case decline, takeOver, fill, fillAndSignIn }
+            var nextAction: Action = .decline
             var consentCalls = 0
+            var manualFlags: [Bool] = []
             let session = MCPBrowserSession(
                 browser: rig.browser, trust: rig.trust, available: { true },
                 consent: { _, _, _ in .control },
-                loginConsent: { _, _, _, _, _ in
+                loginConsent: { _, _, accounts, allowsManual, _ in
                     consentCalls += 1
-                    return nextChoice
+                    manualFlags.append(allowsManual)
+                    switch nextAction {
+                    case .decline:
+                        return .decline
+                    case .takeOver:
+                        return .takeOver
+                    case .fill:
+                        return .fill(accountID: accounts.first?.id)
+                    case .fillAndSignIn:
+                        return .fillAndSignIn(accountID: accounts.first?.id)
+                    }
                 },
                 vaultProvider: fakeVault())
             defer { session.revoke() }
@@ -646,10 +662,11 @@ struct MCPv2CoreTests {
             _ = try await call(session, "requestAccess")
 
             // 1. Decline: touches nothing, keeps grant.
-            nextChoice = .decline
+            nextAction = .decline
             let declined = try await call(session, "requestUserLogin", tab: rig.owner, ["reason": "Sign in to view invoices"])
             #expect(declined.isError == false)
             #expect(declined.structuredContent?.objectValue?["status"]?.stringValue == "declined")
+            #expect(manualFlags.last == true)
             #expect(try await rig.owner.page.evaluateJavaScript("document.getElementById('pw').value") as? String == "")
             #expect(session.grants[rig.owner.id] != nil)
 
@@ -663,7 +680,7 @@ struct MCPv2CoreTests {
             session.vaultProvider = fakeVault()
 
             // 3. Vault Fill (without submitting): fills DOM, hides values, marks document credentialTainted.
-            nextChoice = .fill
+            nextAction = .fill
             let filled = try await call(session, "requestUserLogin", tab: rig.owner, ["mode": "vaultOrManual"])
             #expect(filled.isError == false, "\(everything(filled))")
             let fillObj = try #require(filled.structuredContent?.objectValue)
@@ -682,16 +699,17 @@ struct MCPv2CoreTests {
             #expect(try await rig.owner.page.evaluateJavaScript("document.body.dataset.submitted || ''") as? String == "")
             #expect(session.credentialTaintedDocuments[rig.owner.id] != nil)
 
-            // 4. Vault Fill & Sign In: fills DOM AND submits the form.
-            nextChoice = .fillAndSignIn
+            // 4. Vault Fill & Sign In (`mode: vaultFill` hides Sign In Myself): fills DOM AND submits the form.
+            nextAction = .fillAndSignIn
             let filledAndSubmitted = try await call(session, "requestUserLogin", tab: rig.owner, ["mode": "vaultFill"])
             #expect(filledAndSubmitted.isError == false, "\(everything(filledAndSubmitted))")
+            #expect(manualFlags.last == false, "mode: vaultFill hides Sign In Myself")
             #expect(filledAndSubmitted.structuredContent?.objectValue?["status"]?.stringValue == "filledByVault")
             #expect(filledAndSubmitted.structuredContent?.objectValue?["submitted"]?.boolValue == true)
             #expect(try await rig.owner.page.evaluateJavaScript("document.body.dataset.submitted") as? String == "yes")
 
             // 5. Take Over: hands tab back to user.
-            nextChoice = .takeOver
+            nextAction = .takeOver
             let tookOver = try await call(session, "requestUserLogin", tab: rig.owner, ["mode": "vaultOrManual"])
             #expect(tookOver.isError == false)
             #expect(tookOver.structuredContent?.objectValue?["status"]?.stringValue == "waitingForUser")
@@ -765,7 +783,7 @@ struct MCPv2CoreTests {
             let session = MCPBrowserSession(
                 browser: rig.browser, trust: rig.trust, available: { true },
                 consent: { _, _, _ in .developer },
-                loginConsent: { _, _, _, _, _ in .fill },
+                loginConsent: { _, _, accounts, _, _ in .fill(accountID: accounts.first?.id) },
                 vaultProvider: fakeVault())
             session.pairedClient = rig.trust.client(id: client.id)
             defer { session.revoke() }

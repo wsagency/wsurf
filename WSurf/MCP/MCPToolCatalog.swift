@@ -443,11 +443,18 @@ nonisolated enum MCPToolCatalog {
     static let v2Entries: [Entry] = [
         Entry(
             name: "setTabEngine",
-            description:
-                "Switch a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable. Respects WebKit-only origins.",
+            description: """
+                Switch a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable. \
+                Respects WebKit-only origins. Switching reloads the tab and clears Back/Forward history, so user-owned shared tabs \
+                require inPlace: true (agent-opened tabs and Agent Micro Window tabs switch directly).
+                """,
             parameters: [
                 tab,
                 Parameter(name: "engine", type: "string", description: "webkit or chromium.", choices: ["webkit", "chromium"]),
+                Parameter(
+                    name: "inPlace", type: "boolean",
+                    description: "Required (true) to reload a user-owned shared tab in place when switching engines (default false).",
+                    required: false),
             ], scope: .control, title: "Switch Tab Engine"),
         Entry(
             name: "requestUserLogin",
@@ -460,7 +467,9 @@ nonisolated enum MCPToolCatalog {
                 tab,
                 Parameter(
                     name: "mode", type: "string",
-                    description: "vaultOrManual (default): offer saved Vault fill or manual take over; vaultFill: offer saved Vault fill only; manualLogin: hand control to the user to sign in.",
+                    description:
+                        "vaultOrManual (default): offer saved Vault fill (with account picker when multiple exist) or Sign In Myself; "
+                        + "vaultFill: offer saved Vault fill only (no Sign In Myself); manualLogin: hand control to the user to sign in.",
                     required: false, choices: ["vaultOrManual", "vaultFill", "manualLogin"]),
                 Parameter(
                     name: "reason", type: "string",

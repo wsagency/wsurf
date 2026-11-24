@@ -82,7 +82,7 @@ final class MCPBrowserSession: Identifiable {
     /// Asks before a page that shows a password or payment field is used under a default grant.
     @ObservationIgnored let sensitiveConsent: (String, URL) async -> Bool
     /// Asks before filling a saved WSurf Vault login or handing control to the user for manual sign-in.
-    @ObservationIgnored let loginConsent: (String, URL, Bool, [String], String?) async -> MCPAccessConsent.LoginChoice
+    @ObservationIgnored let loginConsent: (String, URL, [MCPAccessConsent.LoginAccount], Bool, String?) async -> MCPAccessConsent.LoginChoice
     /// Injectable Vault lookup/fill bridge for `vaultHint` and `requestUserLogin`.
     @ObservationIgnored var vaultProvider: MCPVaultProvider
     /// Whether the page shows a password or payment field. A page that does not answer counts as yes.
@@ -150,9 +150,9 @@ final class MCPBrowserSession: Identifiable {
         sensitiveConsent: @escaping (String, URL) async -> Bool = { client, url in
             await MCPAccessConsent.useSensitivePage(client: client, url: url, in: nil)
         },
-        loginConsent: @escaping (String, URL, Bool, [String], String?) async -> MCPAccessConsent.LoginChoice = { client, url, hasSaved, labels, reason in
+        loginConsent: @escaping (String, URL, [MCPAccessConsent.LoginAccount], Bool, String?) async -> MCPAccessConsent.LoginChoice = { client, url, accounts, manual, reason in
             await MCPAccessConsent.requestLogin(
-                client: client, url: url, hasSavedLogin: hasSaved, accountLabels: labels, reason: reason, in: nil)
+                client: client, url: url, accounts: accounts, allowsManualTakeOver: manual, reason: reason, in: nil)
         },
         vaultProvider: MCPVaultProvider? = nil
     ) {
@@ -176,6 +176,7 @@ final class MCPBrowserSession: Identifiable {
         pairedClient = nil
         for tab in browser.tabs {
             tab.dialogs.handBack(connection: id)
+            tab.removeDocumentCommitObserver(id: id)
         }
         for (tab, owner) in Array(developmentTabs.values) {
             tab.releaseDevelopment(owner, reason: .disconnect)
@@ -265,11 +266,6 @@ final class MCPBrowserSession: Identifiable {
             return switchTab(tab)
         case "closeTab":
             return await closeTab(tab)
-        case "setTabEngine":
-            guard let engine = arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)) else {
-                return failure("engine must be webkit or chromium.")
-            }
-            return await setTabEngine(engine, tab: tab)
         default:
             return nil
         }
@@ -298,6 +294,13 @@ final class MCPBrowserSession: Identifiable {
         if name == "handleDialog" { return await handleDialog(arguments, tab: tab) }
         if let open = dialogRefusal(for: tab) {
             return open
+        }
+        if name == "setTabEngine" {
+            guard let engine = arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)) else {
+                return failure("engine must be webkit or chromium.")
+            }
+            let inPlace = arguments["inPlace"]?.boolValue ?? false
+            return await setTabEngine(engine, tab: tab, inPlace: inPlace)
         }
         if name == "requestUserLogin" {
             return await requestUserLogin(arguments, tab: tab)

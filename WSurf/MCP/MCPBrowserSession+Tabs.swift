@@ -33,6 +33,7 @@ extension MCPBrowserSession {
     /// and the tab is no longer one it opened, so it never closes it without asking.
     func handBack(_ tab: BrowserTab) {
         tab.dialogs.handBack(connection: id)
+        tab.removeDocumentCommitObserver(id: id)
         if let held = developmentTabs.removeValue(forKey: tab.id) {
             held.tab.releaseDevelopment(held.owner, reason: .grantDowngrade)
         }
@@ -81,6 +82,7 @@ extension MCPBrowserSession {
                 return failure("Page access changed before the tab was closed.")
             }
         }
+        tab.removeDocumentCommitObserver(id: id)
         browser.close(tab)
         grants[tab.id] = nil
         observations[tab.id] = nil
@@ -92,13 +94,29 @@ extension MCPBrowserSession {
     }
 
     /// Switches a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable.
-    func setTabEngine(_ engine: BrowserEngine, tab: BrowserTab) async -> CallTool.Result {
+    /// Runs all access, reachability, open-dialog, origin, and user-tab protection checks BEFORE mutating tab state.
+    func setTabEngine(_ engine: BrowserEngine, tab: BrowserTab, inPlace: Bool = false) async -> CallTool.Result {
+        guard mayProceed(tab, capability: .control) else {
+            return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
+        }
+        guard isReachable(tab) else {
+            return failure(Self.unreachableRefusal)
+        }
+        if let open = dialogRefusal(for: tab) {
+            return open
+        }
         guard let url = webURL(of: tab) else {
             return failure("The webpage is unavailable.")
         }
         let origin = SitePermissions.origin(for: url)
         if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
             return failure("This website requires WebKit and cannot switch to Chromium.")
+        }
+        let isAgentOwned = openedTabs.contains(tab.id) || grants[tab.id]?.source == .agentWindow
+        if !inPlace, !isAgentOwned {
+            return failure(
+                "Switching engines reloads the page and clears Back/Forward history on this user-owned tab. "
+                    + "Pass inPlace: true to reload it in place, or open a new tab with newTab(url, engine: \"\(engine.rawValue)\").")
         }
         if tab.engine == engine, tab.isMaterialised, tab.liveView?.engine == engine {
             keepInWindow(tab)
@@ -128,6 +146,7 @@ extension MCPBrowserSession {
         guard mayProceed(tab, capability: .control) else {
             return failure("Could not switch the tab engine or access changed.")
         }
+        tab.removeDocumentCommitObserver(id: id)
         observations[tab.id] = nil
         secretFields[tab.id] = nil
         credentialTaintedDocuments[tab.id] = nil

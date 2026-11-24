@@ -145,48 +145,73 @@ enum MCPAccessConsent {
         return await present(alert, in: window) == .alertFirstButtonReturn
     }
 
-    /// The user's answer to a `requestUserLogin` sheet.
+    /// One saved Vault login presented in the `requestUserLogin` native approval sheet (never returned to MCP clients).
+    struct LoginAccount: Equatable, Sendable {
+        let id: UUID
+        let label: String
+    }
+
+    /// The user's answer to a `requestUserLogin` sheet, carrying the exact account ID the user approved for fill.
     enum LoginChoice: Equatable, Sendable {
-        case fill
-        case fillAndSignIn
+        case fill(accountID: UUID?)
+        case fillAndSignIn(accountID: UUID?)
         case takeOver
         case decline
     }
 
     /// The login approval sheet as data, testable without presenting a window.
     struct LoginSheet: Equatable {
+        enum Action: Equatable {
+            case fill, fillAndSignIn, takeOver, decline
+        }
+
         struct Button: Equatable {
             let title: String
-            let choice: LoginChoice
+            let action: Action
             let isEscape: Bool
         }
 
         let title: String
         let message: String
+        let accounts: [LoginAccount]
+        let showsAccountPicker: Bool
         let buttons: [Button]
 
-        func choice(forButton index: Int) -> LoginChoice {
-            buttons.indices.contains(index) ? buttons[index].choice : .decline
+        func choice(forButton index: Int, selectedAccountIndex: Int = 0) -> LoginChoice {
+            guard buttons.indices.contains(index) else { return .decline }
+            let selectedID = accounts.indices.contains(selectedAccountIndex) ? accounts[selectedAccountIndex].id : nil
+            switch buttons[index].action {
+            case .fill:
+                return .fill(accountID: selectedID)
+            case .fillAndSignIn:
+                return .fillAndSignIn(accountID: selectedID)
+            case .takeOver:
+                return .takeOver
+            case .decline:
+                return .decline
+            }
         }
     }
 
     static func loginSheet(
-        client: String, url: URL, hasSavedLogin: Bool, accountLabels: [String], reason: String?
+        client: String, url: URL, accounts: [LoginAccount], allowsManualTakeOver: Bool = true, reason: String?
     ) -> LoginSheet {
         let name = displayName(for: client)
         let host = url.host() ?? url.absoluteString
-        let cleanedReason = reason.map { raw in
+        let hasSavedLogin = !accounts.isEmpty
+        let cleanedReason: String? = reason.flatMap { raw in
             let stripped = String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
-            return String(stripped.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
-        }.flatMap { $0.isEmpty ? nil : $0 }
+            let trimmed = String(stripped.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+            return trimmed.isEmpty ? nil : trimmed
+        }
 
         var parts: [String] = []
         if hasSavedLogin {
             parts.append(String(localized: "\(name) asked to sign in to \(host) using your saved WSurf Vault login. Passwords are never shown to \(name)."))
-            let labels = accountLabels.prefix(3).filter { !$0.isEmpty }
-            if !labels.isEmpty {
-                let list = labels.joined(separator: ", ")
-                parts.append(String(localized: "Saved account: \(list)"))
+            if accounts.count == 1, !accounts[0].label.isEmpty {
+                parts.append(String(localized: "Saved account: \(accounts[0].label)"))
+            } else if accounts.count > 1 {
+                parts.append(String(localized: "Choose a saved account to fill:"))
             }
         } else {
             parts.append(String(localized: "\(name) asked you to sign in to \(host). No saved WSurf Vault login is available for this website."))
@@ -197,29 +222,44 @@ enum MCPAccessConsent {
 
         var buttons: [LoginSheet.Button] = []
         if hasSavedLogin {
-            buttons.append(.init(title: String(localized: "Fill"), choice: .fill, isEscape: false))
-            buttons.append(.init(title: String(localized: "Fill & Sign In"), choice: .fillAndSignIn, isEscape: false))
+            buttons.append(.init(title: String(localized: "Fill"), action: .fill, isEscape: false))
+            buttons.append(.init(title: String(localized: "Fill & Sign In"), action: .fillAndSignIn, isEscape: false))
         }
-        buttons.append(.init(title: String(localized: "Sign In Myself"), choice: .takeOver, isEscape: false))
-        buttons.append(.init(title: String(localized: "Cancel"), choice: .decline, isEscape: true))
+        if allowsManualTakeOver {
+            buttons.append(.init(title: String(localized: "Sign In Myself"), action: .takeOver, isEscape: false))
+        }
+        buttons.append(.init(title: String(localized: "Cancel"), action: .decline, isEscape: true))
 
         return LoginSheet(
             title: hasSavedLogin
                 ? String(localized: "Sign In to \(host)?")
                 : String(localized: "Sign In Yourself on \(host)?"),
             message: parts.joined(separator: "\n\n"),
+            accounts: accounts,
+            showsAccountPicker: accounts.count > 1,
             buttons: buttons
         )
     }
 
     static func requestLogin(
-        client: String, url: URL, hasSavedLogin: Bool, accountLabels: [String], reason: String?, in window: NSWindow?
+        client: String, url: URL, accounts: [LoginAccount], allowsManualTakeOver: Bool = true, reason: String?, in window: NSWindow?
     ) async -> LoginChoice {
         guard !AppDatabase.isRunningTests, window != nil else { return .decline }
-        let sheet = loginSheet(client: client, url: url, hasSavedLogin: hasSavedLogin, accountLabels: accountLabels, reason: reason)
+        let sheet = loginSheet(
+            client: client, url: url, accounts: accounts, allowsManualTakeOver: allowsManualTakeOver, reason: reason)
         let alert = NSAlert()
         alert.messageText = sheet.title
         alert.informativeText = sheet.message
+        var picker: NSPopUpButton?
+        if sheet.showsAccountPicker {
+            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+            for account in sheet.accounts {
+                popup.addItem(withTitle: account.label)
+            }
+            popup.selectItem(at: 0)
+            alert.accessoryView = popup
+            picker = popup
+        }
         for button in sheet.buttons {
             alert.addButton(withTitle: button.title)
             if button.isEscape {
@@ -227,7 +267,10 @@ enum MCPAccessConsent {
             }
         }
         let response = await present(alert, in: window)
-        return sheet.choice(forButton: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+        let selectedIndex = max(0, picker?.indexOfSelectedItem ?? 0)
+        return sheet.choice(
+            forButton: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue,
+            selectedAccountIndex: selectedIndex)
     }
 
     private static func displayName(for client: String) -> String {

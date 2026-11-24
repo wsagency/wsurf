@@ -14124,6 +14124,9 @@
     "Connected apps with Control access can type passwords and one-time codes you give them. Typed values are scrubbed from results and covered in screenshots; saved Vault passwords still ask first." : {
       "comment" : "Caption under the Allow password entry toggle in Settings › Connected apps."
     },
+    "Choose a saved account to fill:" : {
+      "comment" : "Prompt line above the account picker pop-up button in the WSurf Vault sign-in confirmation dialog when multiple saved logins match the website."
+    },
     "Fill & Sign In" : {
       "comment" : "Button in the WSurf Vault login approval sheet: fills the saved login into the page and submits the sign-in form."
     },

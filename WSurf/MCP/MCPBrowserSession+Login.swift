@@ -16,9 +16,10 @@ struct MCPVaultProvider {
     /// Returns matching saved-login labels for `(tab, url)` ordered with any `accountHint` matches first.
     var savedAccounts: @MainActor (BrowserTab, URL, String?) async -> [AccountSummary]
     /// Blind-fills the user-approved login directly into `view`, registering the password with the session's output
-    /// scrubber before touching the DOM. Returns nil if the Vault entry could not be read.
+    /// scrubber before touching the DOM. Returns nil if the Vault entry could not be read; returns `ok: false` if
+    /// scrubber registration fails or origin changed before injection.
     var blindFill: @MainActor (
-        BrowserTab, BrowserPage, URL, AccountSummary, Bool, @MainActor (String) -> Void
+        BrowserTab, BrowserPage, URL, AccountSummary, Bool, @MainActor (String) -> Bool
     ) async -> PageDriver.VaultFillResult?
 
     static func live(browser: BrowserModel) -> MCPVaultProvider {
@@ -40,20 +41,30 @@ struct MCPVaultProvider {
 /// Document-scoped credential protection (`credentialTainted`), anonymized `vaultHint`, and `requestUserLogin`.
 @MainActor
 extension MCPBrowserSession {
-    /// Identifies a document that WSurf Vault filled credentials into. Cleared automatically once navigation commits to
-    /// another document.
+    /// Identifies a document that WSurf Vault filled credentials into. Cleared ONLY on real main-frame document commits
+    /// (`BrowserTab.notifyDocumentCommitted`), never by `history.pushState`/hash changes or pure read queries.
     struct CredentialTaint: Equatable, Sendable {
+        let commitEpoch: UInt64
         let runtimeDocumentID: String
         let mainDocumentID: String?
     }
 
     // MARK: Credential protection
 
-    /// Marks `tab`'s current document as credential-tainted and strips any already-buffered diagnostics bodies/previews on it.
+    /// Marks `tab`'s current document as credential-tainted, registers a commit observer so real main-frame navigation
+    /// clears taint cleanly, and strips any already-buffered diagnostics bodies/previews on this document.
     func markCredentialTainted(tab: BrowserTab, runtimeDocumentID: String, mainDocumentID: String?) {
-        credentialTaintedDocuments[tab.id] = CredentialTaint(runtimeDocumentID: runtimeDocumentID, mainDocumentID: mainDocumentID)
-        if let mainDocumentID {
-            ownLease(tab)?.diagnostics?.taintDocument(mainDocumentID)
+        let epoch = tab.documentCommitEpoch
+        credentialTaintedDocuments[tab.id] = CredentialTaint(
+            commitEpoch: epoch, runtimeDocumentID: runtimeDocumentID, mainDocumentID: mainDocumentID)
+        let tabID = tab.id
+        tab.observeDocumentCommit(id: id) { [weak self] in
+            guard let self else { return }
+            self.credentialTaintedDocuments[tabID] = nil
+            self.inspectionApprovedDocuments[tabID] = nil
+        }
+        if let diagnostics = ownLease(tab)?.diagnostics {
+            diagnostics.taintDocument(mainDocumentID ?? diagnostics.buffer.documentID)
         }
     }
 
@@ -62,39 +73,30 @@ extension MCPBrowserSession {
         inspectionApprovedDocuments[tab.id] = documentID
     }
 
-    /// Whether `mainDocumentID` on `tab` is currently marked `credentialTainted` from a Vault fill. Prunes stale taint
-    /// automatically once navigation commits to a new main document.
+    /// Pure read: whether `mainDocumentID` on `tab` is currently marked `credentialTainted` from a Vault fill.
+    /// Never mutates taint state; when `mainDocumentID` was nil at fill time, conservatively treats the entire commit
+    /// epoch as tainted until a real new document commits.
     func isMainDocumentCredentialTainted(tab: BrowserTab, mainDocumentID: String) -> Bool {
-        guard let taint = credentialTaintedDocuments[tab.id] else { return false }
-        if let taintedMain = taint.mainDocumentID {
-            if taintedMain == mainDocumentID {
-                return true
-            }
-            credentialTaintedDocuments[tab.id] = nil
+        guard let taint = credentialTaintedDocuments[tab.id], taint.commitEpoch == tab.documentCommitEpoch else {
             return false
         }
-        return false
+        if let taintedMain = taint.mainDocumentID {
+            return taintedMain == mainDocumentID
+        }
+        return true
     }
 
-    /// Whether `tab`'s current document must block `evaluateScript`: true whenever (a) WSurf Vault filled credentials into
-    /// this document (`credentialTainted`) OR (b) the DOM currently holds a non-empty sensitive secret field that the user has
-    /// not explicitly approved for inspection. Fails closed if the page cannot be probed.
+    /// Pure read: whether `tab`'s current document must block script evaluation (`evaluateScript` / `preview_evaluate`):
+    /// true whenever (a) WSurf Vault filled credentials into this document (`credentialTainted` in the current commit epoch)
+    /// OR (b) the DOM currently holds any non-empty sensitive field (password, OTP, card, sticky `data-wsurf-password`,
+    /// autofilled username, or contact field) not explicitly approved for inspection. Fails closed if the page does not answer.
     func isDocumentCredentialProtected(tab: BrowserTab, view: BrowserPage) async -> Bool {
         guard let state = await PageDriver.protectedSecretState(in: view) else { return true }
-        if let taint = credentialTaintedDocuments[tab.id] {
-            let sameRuntime = taint.runtimeDocumentID == state.documentID
-            let sameMain = taint.mainDocumentID != nil && taint.mainDocumentID == view.mainDocumentID
-            if sameRuntime || sameMain {
-                return true
-            }
-            // Navigation committed to a new document: clear stale taint automatically.
-            credentialTaintedDocuments[tab.id] = nil
+        if let taint = credentialTaintedDocuments[tab.id], taint.commitEpoch == tab.documentCommitEpoch {
+            return true
         }
-        if state.hasFilledSecret {
+        if state.hasFilledSensitive {
             return inspectionApprovedDocuments[tab.id] != state.documentID
-        }
-        if let approved = inspectionApprovedDocuments[tab.id], approved != state.documentID {
-            inspectionApprovedDocuments[tab.id] = nil
         }
         return false
     }
@@ -144,9 +146,14 @@ extension MCPBrowserSession {
         guard tab.isLive(view, generation: generation), let url = webURL(of: tab) else {
             return failure("The webpage is unavailable.")
         }
+        let initialOrigin = SitePermissions.origin(for: url)
+        let initialCommitEpoch = tab.documentCommitEpoch
 
         let accounts = await vaultProvider.savedAccounts(tab, url, accountHint)
-        guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation), webURL(of: tab) == url else {
+        guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
+            let liveAfterLookup = webURL(of: tab), SitePermissions.origin(for: liveAfterLookup) == initialOrigin,
+            tab.documentCommitEpoch == initialCommitEpoch
+        else {
             return failure("Page access changed before login approval.")
         }
 
@@ -156,12 +163,16 @@ extension MCPBrowserSession {
                 message: "No saved WSurf Vault login is available for this website. Call requestUserLogin with mode \"manualLogin\" or \"vaultOrManual\" to let the user sign in.")
         }
 
-        let choice = await loginConsent(clientName, url, !accounts.isEmpty, accounts.map(\.label), reason)
+        let sheetAccounts = accounts.map { MCPAccessConsent.LoginAccount(id: $0.id, label: $0.label) }
+        let choice = await loginConsent(clientName, url, sheetAccounts, mode != "vaultFill", reason)
         guard isConnected, available(), !Task.isCancelled else {
             return failure("Connection is unavailable. Reconnect and request access again.")
         }
-        guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation), webURL(of: tab) == url else {
-            return failure("Page access changed while waiting for login approval.")
+        guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
+            let liveAfterConsent = webURL(of: tab), SitePermissions.origin(for: liveAfterConsent) == initialOrigin,
+            tab.documentCommitEpoch == initialCommitEpoch
+        else {
+            return failure("Page access or origin changed while waiting for login approval.")
         }
 
         switch choice {
@@ -172,29 +183,38 @@ extension MCPBrowserSession {
             return loginResult(
                 status: "waitingForUser", tabID: tab.id,
                 message: "The user chose to sign in themselves. Ask the user to sign in in WSurf and share control again.")
-        case .fill, .fillAndSignIn:
-            guard let account = accounts.first else {
+        case .fill(let chosenID), .fillAndSignIn(let chosenID):
+            let shouldSubmit: Bool
+            if case .fillAndSignIn = choice {
+                shouldSubmit = true
+            } else {
+                shouldSubmit = false
+            }
+            guard let chosenID, let account = accounts.first(where: { $0.id == chosenID }) else {
                 return loginResult(
                     status: "noSavedLogin", tabID: tab.id,
-                    message: "No saved WSurf Vault login is available for this website.")
+                    message: "The selected WSurf Vault login is no longer available for this website.")
             }
             guard mayProceed(tab, capability: .control), isReachable(tab),
-                tab.isLive(view, generation: generation), webURL(of: tab) == url
+                tab.isLive(view, generation: generation),
+                let liveBeforeFill = webURL(of: tab), SitePermissions.origin(for: liveBeforeFill) == initialOrigin,
+                tab.documentCommitEpoch == initialCommitEpoch
             else {
-                return failure("Page access changed before credentials could be filled.")
+                return failure("Page access or origin changed before credentials could be filled.")
             }
             let preSubmitMainDocumentID = view.mainDocumentID
             let guardScope = PageAutomationGuard(
-                documentURL: url.absoluteString, snapshot: nil,
+                documentURL: liveBeforeFill.absoluteString, snapshot: nil,
                 validate: { [weak self, weak tab, weak view] in
-                    guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                    guard let self, let tab, let view, tab.isLive(view, generation: generation),
+                        let currentURL = self.webURL(of: tab), SitePermissions.origin(for: currentURL) == initialOrigin
+                    else { return false }
                     return self.mayProceed(tab, capability: .control) && self.isReachable(tab)
                 })
             let (preSubmitRuntimeDocumentID, fillResult) = await PageAutomationGuard.$current.withValue(guardScope) {
                 let preState = await PageDriver.protectedSecretState(in: view)
-                let filled = await vaultProvider.blindFill(tab, view, url, account, choice == .fillAndSignIn) { [secrets] secret in
-                    secrets.register(secret)
-                    secrets.confirm(secret)
+                let filled = await vaultProvider.blindFill(tab, view, liveBeforeFill, account, shouldSubmit) { [secrets] secret in
+                    secrets.registerVaultSecret(secret) == .registered
                 }
                 return (preState?.documentID, filled)
             }

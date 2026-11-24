@@ -79,25 +79,38 @@ struct MCPAccessConsentTests {
         #expect(sheet.message.contains("example.com"))
     }
 
-    @Test func loginSheetOffersAllFourVaultChoicesAndMapsEscapeToDecline() {
+    @Test func loginSheetOffersAllFourVaultChoicesPickerAndModeFiltering() {
         let url = URL(string: "https://app.example.com/login")!
-        let withVault = MCPAccessConsent.loginSheet(
-            client: "Claude Code", url: url, hasSavedLogin: true, accountLabels: ["ada@example.com"], reason: "Sign in to check invoices")
-        #expect(withVault.title.contains("app.example.com"))
-        #expect(withVault.message.contains("ada@example.com"))
-        #expect(withVault.message.contains("Sign in to check invoices"))
-        #expect(withVault.buttons.map(\.choice) == [.fill, .fillAndSignIn, .takeOver, .decline])
-        #expect(withVault.choice(forButton: 0) == .fill)
-        #expect(withVault.choice(forButton: 1) == .fillAndSignIn)
-        #expect(withVault.choice(forButton: 2) == .takeOver)
-        #expect(withVault.choice(forButton: 3) == .decline)
-        #expect(withVault.choice(forButton: 99) == .decline)
-        #expect(withVault.buttons.last?.isEscape == true)
+        let first = MCPAccessConsent.LoginAccount(id: UUID(), label: "ada@example.com")
+        let second = MCPAccessConsent.LoginAccount(id: UUID(), label: "work@example.com")
+
+        let single = MCPAccessConsent.loginSheet(
+            client: "Claude Code", url: url, accounts: [first], allowsManualTakeOver: true, reason: "Sign in to check invoices")
+        #expect(single.title.contains("app.example.com"))
+        #expect(single.message.contains("ada@example.com"))
+        #expect(single.message.contains("Sign in to check invoices"))
+        #expect(!single.showsAccountPicker)
+        #expect(single.buttons.map(\.action) == [.fill, .fillAndSignIn, .takeOver, .decline])
+        #expect(single.choice(forButton: 0) == .fill(accountID: first.id))
+        #expect(single.choice(forButton: 1) == .fillAndSignIn(accountID: first.id))
+        #expect(single.choice(forButton: 2) == .takeOver)
+        #expect(single.choice(forButton: 3) == .decline)
+        #expect(single.choice(forButton: 99) == .decline)
+        #expect(single.buttons.last?.isEscape == true)
+
+        // Multiple accounts show the picker and return the user-selected account ID.
+        let multi = MCPAccessConsent.loginSheet(
+            client: "Claude Code", url: url, accounts: [first, second], allowsManualTakeOver: false, reason: nil)
+        #expect(multi.showsAccountPicker)
+        #expect(multi.buttons.map(\.action) == [.fill, .fillAndSignIn, .decline])
+        #expect(multi.choice(forButton: 0, selectedAccountIndex: 1) == .fill(accountID: second.id))
+        #expect(multi.choice(forButton: 1, selectedAccountIndex: 1) == .fillAndSignIn(accountID: second.id))
+        #expect(multi.choice(forButton: 2, selectedAccountIndex: 1) == .decline)
 
         let withoutVault = MCPAccessConsent.loginSheet(
-            client: "codex-mcp-client", url: url, hasSavedLogin: false, accountLabels: [], reason: nil)
+            client: "codex-mcp-client", url: url, accounts: [], allowsManualTakeOver: true, reason: nil)
         #expect(withoutVault.message.contains("Codex"))
-        #expect(withoutVault.buttons.map(\.choice) == [.takeOver, .decline])
+        #expect(withoutVault.buttons.map(\.action) == [.takeOver, .decline])
         #expect(withoutVault.buttons.last?.isEscape == true)
     }
 }

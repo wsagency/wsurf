@@ -41,8 +41,11 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     static let auditReplacement = "‹hidden secret›"
     /// A shorter value cannot be hidden without destroying ordinary output (`[12]`, ports, counts), so it is never typed.
     static let minimumBytes = 4
-    /// Distinct secrets one connection may hold.
+    /// Distinct agent-typed secrets one connection may hold.
     static let maximumSecrets = 32
+    /// Distinct WSurf Vault blind-filled secrets one connection may hold, isolated from the agent-typed cap so dummy
+    /// `secret: true` calls can never exhaust or evict Vault password scrubbing.
+    static let maximumVaultSecrets = 32
     /// The longest a page-side value is kept before it is cut: control rows show the first 30 UTF-16 units of a field value.
     private static let truncatedLength = 30
 
@@ -53,13 +56,16 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     /// One form of a secret as an output can show it, folded to lower case, and the secret it belongs to.
     private struct Needle {
         var bytes: [UInt8]
+        /// Non-negative indices belong to `secrets`; negative indices (`-1 - i`) belong to `vaultSecrets`.
         let owner: Int
     }
 
     private struct State {
-        /// The values as typed, folded to lower case, so a repeated registration is recognised.
+        /// The agent-typed values, folded to lower case, so a repeated registration is recognised.
         var secrets: [[UInt8]] = []
-        /// The secrets (by index) that were written into a password, code or card field.
+        /// Dedicated bucket for WSurf Vault blind-filled secrets so agent-typed secrets cannot starve Vault scrubbing.
+        var vaultSecrets: [[UInt8]] = []
+        /// The secrets (by owner index) that were written into a password, code or card field.
         var confirmed: Set<Int> = []
         /// Every form of every secret, longest first.
         var needles: [Needle] = []
@@ -78,7 +84,11 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     // MARK: Registry
 
     var count: Int {
-        state.withLock { $0.secrets.count }
+        state.withLock { $0.secrets.count + $0.vaultSecrets.count }
+    }
+
+    var vaultSecretCount: Int {
+        state.withLock { $0.vaultSecrets.count }
     }
 
     var isEmpty: Bool {
@@ -110,6 +120,32 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         }
     }
 
+    /// Registers a WSurf Vault blind-filled password in its dedicated exempt bucket (unaffected by `maximumSecrets`).
+    /// Always confirmed for audit scrubbing when at least `minimumAuditBytes` long.
+    @discardableResult
+    func registerVaultSecret(_ secret: String) -> Registration {
+        let bytes = Self.fold(Array(secret.utf8))
+        guard bytes.count >= Self.minimumBytes else { return .tooShort }
+        return state.withLock { state in
+            if let existing = state.vaultSecrets.firstIndex(of: bytes) {
+                if bytes.count >= Self.minimumAuditBytes {
+                    state.confirmed.insert(-1 - existing)
+                }
+                return .registered
+            }
+            guard state.vaultSecrets.count < Self.maximumVaultSecrets else { return .tooMany }
+            state.vaultSecrets.append(bytes)
+            state.used = true
+            let owner = -state.vaultSecrets.count
+            if bytes.count >= Self.minimumAuditBytes {
+                state.confirmed.insert(owner)
+            }
+            let added = Self.forms(of: secret).map { Needle(bytes: $0, owner: owner) }
+            state.needles = (state.needles + added).sorted { $0.bytes.count > $1.bytes.count }
+            return .registered
+        }
+    }
+
     /// Marks an already registered secret as written into a password, code or card field. Call it after the write, and only for
     /// a field the page driver treats as sensitive: nothing else may be hidden in a record the user reads. A value that was
     /// never registered, or is shorter than `minimumAuditBytes`, is not confirmed.
@@ -119,6 +155,9 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         state.withLock { state in
             if let index = state.secrets.firstIndex(of: bytes) {
                 state.confirmed.insert(index)
+            }
+            if let index = state.vaultSecrets.firstIndex(of: bytes) {
+                state.confirmed.insert(-1 - index)
             }
         }
     }
@@ -131,6 +170,9 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     private static func overwrite(_ state: inout State) {
         for index in state.secrets.indices {
             state.secrets[index].zero()
+        }
+        for index in state.vaultSecrets.indices {
+            state.vaultSecrets[index].zero()
         }
         for index in state.needles.indices {
             state.needles[index].bytes.zero()

@@ -91,18 +91,33 @@ final class PageActivityMonitor {
         post('editedForm', active);
       };
 
+      const markPassword = (control) => {
+        if (control instanceof HTMLInputElement
+            && ((control.type || '').toLowerCase() === 'password')
+            && control.value.length > 0
+            && !control.hasAttribute('data-wsurf-password')) {
+          control.setAttribute('data-wsurf-password', '');
+        }
+      };
+
+      const targetOf = (event) => {
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : null;
+        return controlFor((path && path[0]) || event.target);
+      };
+
       const update = (control) => {
         if (!control) return;
+        markPassword(control);
         remember(control);
         if (signature(control) === baselines.get(control)) dirtyControls.delete(control);
         else dirtyControls.add(control);
         reportDirty();
       };
 
-      addEventListener('focusin', event => remember(controlFor(event.target)), true);
-      addEventListener('beforeinput', event => remember(controlFor(event.target)), true);
-      addEventListener('input', event => update(controlFor(event.target)), true);
-      addEventListener('change', event => update(controlFor(event.target)), true);
+      addEventListener('focusin', event => { const c = targetOf(event); markPassword(c); remember(c); }, true);
+      addEventListener('beforeinput', event => { const c = targetOf(event); markPassword(c); remember(c); }, true);
+      addEventListener('input', event => update(targetOf(event)), true);
+      addEventListener('change', event => update(targetOf(event)), true);
 
       addEventListener('reset', event => {
         const form = event.target;

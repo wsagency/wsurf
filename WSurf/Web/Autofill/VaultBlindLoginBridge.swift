@@ -67,8 +67,8 @@ enum VaultBlindLoginBridge {
     }
 
     /// Reads the single user-approved login from its unlocked vault and writes it directly into `view` without returning
-    /// credentials to the caller. Calls `registerSecret` with the password before DOM fill so the caller's memory-only
-    /// output scrubber can redact any page echoes.
+    /// credentials to the caller. Calls `registerSecret` with the password before DOM fill; if registration fails (e.g.
+    /// the password cannot be scrubbed safely), refuses the fill BEFORE injecting anything into the page.
     static func blindFill(
         account: Summary,
         submit: Bool,
@@ -76,7 +76,7 @@ enum VaultBlindLoginBridge {
         tab: BrowserTab,
         view: BrowserPage,
         url: URL,
-        registerSecret: @MainActor (String) -> Void
+        registerSecret: @MainActor (String) -> Bool
     ) async -> PageDriver.VaultFillResult? {
         guard !tab.isPrivate, let origin = CredentialAccountSelection.origin(for: url) else { return nil }
         let scope = browser.vaultScope(for: tab)
@@ -88,13 +88,21 @@ enum VaultBlindLoginBridge {
             login.candidate.origins.contains(origin),
             let password = login.password
         else { return nil }
-        if !password.isEmpty {
-            registerSecret(password)
+        guard let liveURL = view.url, CredentialAccountSelection.origin(for: liveURL) == origin else {
+            return PageDriver.VaultFillResult(
+                ok: false, documentID: nil, fieldsFilled: [], submitted: false,
+                error: "The page navigated to another origin before credentials could be filled.")
+        }
+        if !password.isEmpty, !registerSecret(password) {
+            return PageDriver.VaultFillResult(
+                ok: false, documentID: nil, fieldsFilled: [], submitted: false,
+                error: "Could not register the saved password for output scrubbing. Nothing was filled.")
         }
         return await PageDriver.fillVaultLogin(
             username: login.candidate.username,
             password: password,
             submit: submit,
+            expectedOrigin: SitePermissions.origin(for: url),
             in: view)
     }
 }

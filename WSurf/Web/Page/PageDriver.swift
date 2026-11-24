@@ -479,131 +479,6 @@ enum PageDriver {
         const sensitive = R.isSensitiveSecret(el);
         """
 
-    /// Which of `refs` currently point to a connected sensitive secret field (password, OTP, card, etc.) in `webView`.
-    static func sensitiveSecretRefs(_ refs: [Int], in webView: BrowserPage) async -> Set<Int> {
-        let positive = Array(Set(refs.filter { $0 > 0 })).sorted()
-        guard !positive.isEmpty else { return [] }
-        let list = positive.map(String.init).joined(separator: ",")
-        let script = scripted("""
-            const refs = [];
-            for (const ref of [\(list)]) {
-              const el = window.__wsurfRefs[ref - 1];
-              if (el?.isConnected && R.matchesRef(ref) && R.isSensitiveSecret(el)) refs.push(ref);
-            }
-            return JSON.stringify({ refs });
-            """)
-        guard let object = await evaluateJSON(script, in: webView),
-            let matched = object["refs"] as? [Int]
-        else { return [] }
-        return Set(matched)
-    }
-
-    /// Whether `webView`'s current document shows a visible login/password form.
-    static func hasLoginForm(in webView: BrowserPage) async -> Bool {
-        let script = scripted("return JSON.stringify({ hasLoginForm: R.hasLoginForm() });")
-        guard let object = await evaluateJSON(script, in: webView) else { return false }
-        return object["hasLoginForm"] as? Bool == true
-    }
-
-    /// The current document's runtime ID and whether it holds any live filled sensitive secret field.
-    /// Returns nil when the page did not respond (callers fail closed).
-    static func protectedSecretState(in webView: BrowserPage) async -> (documentID: String, hasFilledSecret: Bool)? {
-        let script = scripted(
-            "return JSON.stringify({ document: R.documentID, hasFilledSecret: R.hasFilledSensitiveSecret() });")
-        guard let object = await evaluateJSON(script, in: webView),
-            let documentID = object["document"] as? String
-        else { return nil }
-        return (documentID, object["hasFilledSecret"] as? Bool == true)
-    }
-
-    /// Outcome of a blind WSurf Vault fill triggered by `requestUserLogin` after user approval.
-    struct VaultFillResult: Sendable {
-        let ok: Bool
-        let documentID: String?
-        let fieldsFilled: [String]
-        let submitted: Bool
-        let error: String?
-    }
-
-    /// Writes approved Vault credentials directly into the main document's login form without ever returning credential text.
-    static func fillVaultLogin(username: String, password: String, submit: Bool, in webView: BrowserPage) async -> VaultFillResult {
-        guard selectedFrame == nil,
-            let encodedUser = jsonString(username),
-            let encodedPassword = jsonString(password)
-        else {
-            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "Could not encode credentials for fill.")
-        }
-        let script = scripted("""
-            if (!document.body) return JSON.stringify({ error: 'The page has no body to fill.' });
-            const isPassword = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
-              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
-              && (((el.type || '') + '').toLowerCase() === 'password'
-                || /(?:^| )(?:current-password|new-password)(?: |$)/.test(R.norm(el.autocomplete).toLowerCase()));
-            const isUsername = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
-              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
-              && ['text', 'email', 'tel', 'search', 'url', ''].includes(((el.type || 'text') + '').toLowerCase())
-              && !R.isSensitiveSecret(el);
-            const all = Array.from(R.walk(document.body)).filter(el => el.ownerDocument === document);
-            const pw = all.find(isPassword) || null;
-            let user = null;
-            if (pw && pw.form) {
-              const formInputs = Array.from(pw.form.elements || []).filter(isUsername);
-              const pwIdx = Array.from(pw.form.elements || []).indexOf(pw);
-              const before = formInputs.filter(el => Array.from(pw.form.elements || []).indexOf(el) < pwIdx);
-              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
-                || before[before.length - 1] || formInputs[0] || null;
-            } else if (pw) {
-              const pwIdx = all.indexOf(pw);
-              const before = all.slice(0, pwIdx).filter(isUsername);
-              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
-                || before[before.length - 1] || null;
-            } else {
-              user = all.find(el => isUsername(el) && /(?:username|email|login)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || ''))) || null;
-            }
-            if (!pw && !user) return JSON.stringify({ error: 'No visible login fields were found on this page.' });
-            const filled = [];
-            const uVal = \(encodedUser), pVal = \(encodedPassword);
-            if (user && uVal) {
-              user.setAttribute('data-wsurf-autofilled', '');
-              R.setValue(user, uVal);
-              filled.push('username');
-            }
-            if (pw && pVal) {
-              pw.setAttribute('data-wsurf-password', '');
-              R.setValue(pw, pVal);
-              filled.push('password');
-            }
-            if (!filled.length) return JSON.stringify({ error: 'No matching login fields could be filled.' });
-            let submitted = false;
-            if (\(submit ? "true" : "false")) {
-              const anchor = pw || user;
-              R.pressEnter(anchor);
-              submitted = true;
-            }
-            return JSON.stringify({ ok: true, document: R.documentID, filled, submitted });
-            """)
-        guard let object = await evaluateAction(
-            script,
-            fallback: ["ok": true, "filled": [username.isEmpty ? nil : "username", password.isEmpty ? nil : "password"].compactMap { $0 }, "submitted": submit],
-            in: webView
-        ) else {
-            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "The page did not respond to login fill.")
-        }
-        if let error = object["error"] as? String {
-            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: error)
-        }
-        guard object["ok"] as? Bool == true else {
-            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: Self.staleMessage)
-        }
-        return VaultFillResult(
-            ok: true,
-            documentID: object["document"] as? String ?? observation(in: webView)?.documentID,
-            fieldsFilled: object["filled"] as? [String] ?? [],
-            submitted: object["submitted"] as? Bool == true,
-            error: nil
-        )
-    }
-
     static func selectOption(
         _ option: String,
         ref: Int,
@@ -873,5 +748,156 @@ enum PageDriver {
     static func jsonString(_ value: String) -> String? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+}
+
+extension PageDriver {
+    /// The subset of `refs` that currently resolve to sensitive secret fields (`R.isSensitiveSecret(el)`), used to
+    /// automatically enable secret entry scrubbing and masking on password/OTP writes without requiring `secret: true`.
+    static func sensitiveSecretRefs(_ refs: [Int], in webView: BrowserPage) async -> Set<Int> {
+        let unique = Array(Set(refs.filter { $0 > 0 })).sorted()
+        guard !unique.isEmpty else { return [] }
+        let list = unique.map(String.init).joined(separator: ",")
+        let script = scripted("""
+            const matched = [];
+            for (const ref of [\(list)]) {
+              const el = window.__wsurfRefs[ref - 1];
+              if (el && el.isConnected && R.matchesRef(ref) && R.isSensitiveSecret(el)) matched.push(ref);
+            }
+            return JSON.stringify({ refs: matched });
+            """)
+        guard let object = await evaluateJSON(script, in: webView),
+            let matched = object["refs"] as? [Int]
+        else { return [] }
+        return Set(matched)
+    }
+
+    /// Whether `webView`'s current document shows a visible login/password form.
+    static func hasLoginForm(in webView: BrowserPage) async -> Bool {
+        let script = scripted("return JSON.stringify({ hasLoginForm: R.hasLoginForm() });")
+        guard let object = await evaluateJSON(script, in: webView) else { return false }
+        return object["hasLoginForm"] as? Bool == true
+    }
+
+    /// The current document's runtime ID and whether it holds any live filled sensitive field (password, OTP, card,
+    /// sticky `data-wsurf-password`, autofilled username, or contact field). Returns nil when the page did not respond
+    /// (callers fail closed).
+    static func protectedSecretState(in webView: BrowserPage) async -> (documentID: String, hasFilledSensitive: Bool)? {
+        let script = scripted(
+            "return JSON.stringify({ document: R.documentID, hasFilledSensitive: R.hasFilledSensitiveField() });")
+        guard let object = await evaluateJSON(script, in: webView),
+            let documentID = object["document"] as? String
+        else { return nil }
+        return (documentID, object["hasFilledSensitive"] as? Bool == true)
+    }
+
+    /// Outcome of a blind WSurf Vault fill triggered by `requestUserLogin` after user approval.
+    struct VaultFillResult: Sendable {
+        let ok: Bool
+        let documentID: String?
+        let fieldsFilled: [String]
+        let submitted: Bool
+        let error: String?
+    }
+
+    /// Writes approved Vault credentials directly into the main document's login form using `callAsyncJavaScript`
+    /// arguments (never interpolating plaintext credentials into JavaScript source) and never targeting iframes.
+    /// Re-verifies `expectedOrigin` natively against `webView.url` immediately before running.
+    static func fillVaultLogin(
+        username: String, password: String, submit: Bool, expectedOrigin: String, in webView: BrowserPage
+    ) async -> VaultFillResult {
+        guard selectedFrame == nil, PageAutomationGuard.allowsExecution else {
+            return VaultFillResult(
+                ok: false, documentID: nil, fieldsFilled: [], submitted: false,
+                error: "Page access changed before credentials could be filled.")
+        }
+        guard let currentURL = webView.url, SitePermissions.origin(for: currentURL) == expectedOrigin else {
+            return VaultFillResult(
+                ok: false, documentID: nil, fieldsFilled: [], submitted: false,
+                error: "The page navigated to another origin before credentials could be filled.")
+        }
+        let body = scriptedAsync("""
+            if (!document.body) return JSON.stringify({ error: 'The page has no body to fill.' });
+            const isPassword = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
+              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
+              && (((el.type || '') + '').toLowerCase() === 'password'
+                || /(?:^| )(?:current-password|new-password)(?: |$)/.test(R.norm(el.autocomplete).toLowerCase()));
+            const isUsername = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
+              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
+              && ['text', 'email', 'tel', 'search', 'url', ''].includes(((el.type || 'text') + '').toLowerCase())
+              && !R.isSensitiveSecret(el);
+            const all = Array.from(R.walk(document.body)).filter(el => el.ownerDocument === document);
+            const pw = all.find(isPassword) || null;
+            let user = null;
+            if (pw && pw.form) {
+              const formInputs = Array.from(pw.form.elements || []).filter(isUsername);
+              const pwIdx = Array.from(pw.form.elements || []).indexOf(pw);
+              const before = formInputs.filter(el => Array.from(pw.form.elements || []).indexOf(el) < pwIdx);
+              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
+                || before[before.length - 1] || formInputs[0] || null;
+            } else if (pw) {
+              const pwIdx = all.indexOf(pw);
+              const before = all.slice(0, pwIdx).filter(isUsername);
+              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
+                || before[before.length - 1] || null;
+            } else {
+              user = all.find(el => isUsername(el) && /(?:username|email|login)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || ''))) || null;
+            }
+            if (!pw && !user) return JSON.stringify({ error: 'No visible login fields were found on this page.' });
+            const filled = [];
+            if (user && typeof uVal === 'string' && uVal.length > 0) {
+              user.setAttribute('data-wsurf-autofilled', '');
+              R.setValue(user, uVal);
+              filled.push('username');
+            }
+            if (pw && typeof pVal === 'string' && pVal.length > 0) {
+              pw.setAttribute('data-wsurf-password', '');
+              R.setValue(pw, pVal);
+              filled.push('password');
+            }
+            if (!filled.length) return JSON.stringify({ error: 'No matching login fields could be filled.' });
+            let submitted = false;
+            if (shouldSubmit === true) {
+              const anchor = pw || user;
+              R.pressEnter(anchor);
+              submitted = true;
+            }
+            return JSON.stringify({ ok: true, document: R.documentID, filled, submitted });
+            """)
+        let raw: Any?
+        do {
+            raw = try await webView.callAsyncJavaScript(
+                body,
+                arguments: ["uVal": username, "pVal": password, "shouldSubmit": submit],
+                in: nil,
+                contentWorld: PageAutomationGuard.world
+            )
+        } catch {
+            // A synchronous form submit triggered by `shouldSubmit` can interrupt the JS reply as navigation starts.
+            if submit, webView.isLoading {
+                let fallbackFilled = [username.isEmpty ? nil : "username", password.isEmpty ? nil : "password"].compactMap { $0 }
+                return VaultFillResult(ok: true, documentID: observation(in: webView)?.documentID, fieldsFilled: fallbackFilled, submitted: true, error: nil)
+            }
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "The page did not respond to login fill.")
+        }
+        guard let text = raw as? String,
+            let data = text.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "The page did not respond to login fill.")
+        }
+        if let error = object["error"] as? String {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: error)
+        }
+        guard object["ok"] as? Bool == true else {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: Self.staleMessage)
+        }
+        return VaultFillResult(
+            ok: true,
+            documentID: object["document"] as? String ?? observation(in: webView)?.documentID,
+            fieldsFilled: object["filled"] as? [String] ?? [],
+            submitted: object["submitted"] as? Bool == true,
+            error: nil
+        )
     }
 }

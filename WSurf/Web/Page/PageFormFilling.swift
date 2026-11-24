@@ -179,9 +179,10 @@ extension PageDriver {
               const omitAutofillMarkers = field => {
                 field.removeAttribute('data-wsurf-contact');
                 field.removeAttribute('data-wsurf-autofilled');
+                field.removeAttribute('data-wsurf-password');
               };
               omitAutofillMarkers(copy);
-              copy.querySelectorAll('[data-wsurf-contact],[data-wsurf-autofilled]').forEach(omitAutofillMarkers);
+              copy.querySelectorAll('[data-wsurf-contact],[data-wsurf-autofilled],[data-wsurf-password]').forEach(omitAutofillMarkers);
               return copy.outerHTML.replace(/value="[^"]*"/g, '');
             };
             let text = textOutsideFields(document);

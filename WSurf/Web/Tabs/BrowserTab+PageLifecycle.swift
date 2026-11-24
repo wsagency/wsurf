@@ -73,6 +73,7 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         noteDocumentChanged()
+        notifyDocumentCommitted()
         // WebKit applies Developer mode's page appearance in its own didCommit; the committed document decides it here too, so
         // leaving a website in Developer mode puts the page's own color scheme back.
         if page.chromium != nil {
