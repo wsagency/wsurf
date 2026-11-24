@@ -222,6 +222,8 @@ extension BrowserTab {
         if canReissue, signInEngine == nil, engine == .webKit, engineOverride == nil,
            let source = committedURL.map(SitePermissions.webOrigin(for:)),
            !source.isEmpty, !destination.isEmpty, source != destination,
+           pinnedEngine?.origin != source,
+           pinnedEngine?.origin != destination,
            SitePermissions.webKitOnlySites.contains(SitePermissions.site(for: source)),
            SitePermissions.site(for: source) == SitePermissions.site(for: destination),
            preferredEngine(for: url) != .webKit {
@@ -610,7 +612,7 @@ extension BrowserTab {
         // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
         let origin = SitePermissions.origin(for: url)
         let staysInChromium = origin.isEmpty
-            || sitePermissions.engine(for: origin) == .chromium
+            || newTabDefaultEngine(for: origin) == .chromium
             || inheritedSignInEngine(for: url) == .chromium
         guard let onNewChromiumPopup, staysInChromium else {
             openTabForChromiumWindow(url, userGesture: userGesture, click: click)

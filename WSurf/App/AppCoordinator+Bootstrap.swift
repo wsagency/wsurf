@@ -15,7 +15,12 @@ extension AppCoordinator {
         prepareBrowser(restoring: true)
     }
 
-    func prepareBrowser(restoring: Bool, show: Bool = true, urls: [URL] = []) {
+    func prepareBrowser(
+        restoring: Bool,
+        show: Bool = true,
+        urls: [URL] = [],
+        openerSignIn: BrowserTab.OpenerSignIn? = nil
+    ) {
         guard !isBootstrapped, !isClosed else { return }
         isBootstrapped = true
         var timing = BootstrapTiming()
@@ -42,9 +47,7 @@ extension AppCoordinator {
             browser.attachProfilePins()
             browser.sharedSpaceService?.applyCatalog(to: browser)
         }
-        for url in urls.reversed() {
-            browser.newTab(url: url, transition: isAgentMicro ? .agent : .link)
-        }
+        openInitialURLs(urls, openerSignIn: openerSignIn)
         // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
         if browser.activeTabID == nil {
             browser.newTab()
@@ -52,32 +55,7 @@ extension AppCoordinator {
         retainAgentMemory()
         timing.mark("session")
         wireMedia()
-        browser.onAnchorChanged = { [weak self] from, to in
-            if self?.conversationAnchorID == from {
-                self?.conversationVoice?.stop()
-            }
-            self?.agentTurns.reassignAnchor(from: from, to: to)
-        }
-        browser.onLinkHovered = { [weak self] tab, url, modifiers, anchor in
-            guard let self else { return }
-            noteLinkModifiers(modifiers)
-            linkPeek.hovered(url, flags: modifiers, tabID: tab.id, anchor: anchor, context: context)
-        }
-        browser.onOpenInPeek = { [weak self] tab, url, origin in
-            self?.openPeek(url: url, from: tab, at: origin)
-        }
-        browser.onOpenInNewWindow = { [weak self] tab, url, isPrivate in
-            guard let self else { return }
-            if isAgentMicro {
-                browser.newTab(url: url, transition: .agent)
-                return
-            }
-            openLinkInNewWindow(url, isPrivate: isPrivate, from: tab)
-        }
-        browser.onSummarizeLink = { [weak self] tab, url, anchor in
-            guard let self, let tab else { return }
-            linkPeek.show(url, tabID: tab.id, anchor: anchor, context: context)
-        }
+        bindBrowserLinkCallbacks()
         linkPeek.begin()
         // A micro window has no onboarding to show and no release notes to open: those belong to the window to browse in.
         if !isMicro, application?.isOpeningFirstWindow ?? true {
@@ -130,6 +108,51 @@ extension AppCoordinator {
         installKeyMonitors()
         timing.mark("services")
         timing.log()
+    }
+
+    private func openInitialURLs(_ urls: [URL], openerSignIn: BrowserTab.OpenerSignIn?) {
+        let transition: HistoryStore.Transition = isAgentMicro ? .agent : .link
+        for url in urls.reversed() {
+            if let openerSignIn {
+                browser.openTab(url, openerSignIn: openerSignIn, transition: transition, byPerson: true)
+            } else {
+                browser.newTab(url: url, transition: transition)
+            }
+        }
+    }
+
+    private func bindBrowserLinkCallbacks() {
+        browser.onAnchorChanged = { [weak self] from, to in
+            if self?.conversationAnchorID == from {
+                self?.conversationVoice?.stop()
+            }
+            self?.agentTurns.reassignAnchor(from: from, to: to)
+        }
+        browser.onLinkHovered = { [weak self] tab, url, modifiers, anchor in
+            guard let self else { return }
+            noteLinkModifiers(modifiers)
+            linkPeek.hovered(url, flags: modifiers, tabID: tab.id, anchor: anchor, context: context)
+        }
+        browser.onOpenInPeek = { [weak self] tab, url, origin in
+            self?.openPeek(url: url, from: tab, at: origin)
+        }
+        browser.onOpenInNewWindow = { [weak self] tab, url, isPrivate in
+            guard let self else { return }
+            if isAgentMicro {
+                browser.openTab(
+                    url,
+                    openerSignIn: isPrivate ? nil : tab.openerSignInContext,
+                    transition: .agent,
+                    byPerson: false
+                )
+                return
+            }
+            openLinkInNewWindow(url, isPrivate: isPrivate, from: tab)
+        }
+        browser.onSummarizeLink = { [weak self] tab, url, anchor in
+            guard let self, let tab else { return }
+            linkPeek.show(url, tabID: tab.id, anchor: anchor, context: context)
+        }
     }
 
     func prepareWindowWebServices() {

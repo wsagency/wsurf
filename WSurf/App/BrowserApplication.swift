@@ -555,6 +555,37 @@ final class BrowserApplication {
         kind: WindowKind = .standard,
         joining shared: BrowserProfileContext? = nil
     ) -> AppCoordinator {
+        let coordinator = makeCoordinator(
+            profile: profile, settingsOwner: settingsOwner, windowID: windowID, kind: kind, joining: shared
+        )
+        coordinator.prepareBrowser(restoring: restoring, show: show, urls: urls)
+        finishNewWindow(coordinator, show: show)
+        return coordinator
+    }
+
+    @discardableResult
+    func newWindow(
+        opening url: URL,
+        openerSignIn: BrowserTab.OpenerSignIn?,
+        profile: Profile,
+        settingsOwner: Profile,
+        show: Bool = true
+    ) -> AppCoordinator {
+        let coordinator = makeCoordinator(
+            profile: profile, settingsOwner: settingsOwner, windowID: UUID(), kind: .standard, joining: nil
+        )
+        coordinator.prepareBrowser(restoring: false, show: show, urls: [url], openerSignIn: openerSignIn)
+        finishNewWindow(coordinator, show: show)
+        return coordinator
+    }
+
+    private func makeCoordinator(
+        profile: Profile?,
+        settingsOwner: Profile?,
+        windowID: UUID,
+        kind: WindowKind,
+        joining shared: BrowserProfileContext?
+    ) -> AppCoordinator {
         let profile = shared?.profile ?? profile ?? activeCoordinator?.profiles.current ?? ProfileStore.shared.current
         let owner = settingsOwner ?? activeCoordinator.map {
             $0.profiles.isPrivate ? $0.profiles.profileToReturnTo : $0.profiles.current
@@ -572,12 +603,14 @@ final class BrowserApplication {
         }
         let coordinator = AppCoordinator(browser: browser, profiles: selection)
         register(coordinator)
-        coordinator.prepareBrowser(restoring: restoring, show: show, urls: urls)
+        return coordinator
+    }
+
+    private func finishNewWindow(_ coordinator: AppCoordinator, show: Bool) {
         if show {
             focus(coordinator)
             LaunchSignpost.windowShown()
         }
-        return coordinator
     }
 
     func register(_ coordinator: AppCoordinator) {

@@ -153,16 +153,12 @@ extension AppCoordinator {
         let opensPrivately = isPrivate || profiles.isPrivate
         let app = application ?? BrowserApplication.shared
         let settingsOwner = profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
-        let inherited = opensPrivately ? nil : opener?.inheritedSignInEngine(for: url)
-        let coordinator = app.newWindow(
+        return app.newWindow(
+            opening: url,
+            openerSignIn: opensPrivately ? nil : opener?.openerSignInContext,
             profile: opensPrivately ? .privateBrowsing() : profiles.current,
-            settingsOwner: settingsOwner, urls: inherited == nil ? [url] : []
+            settingsOwner: settingsOwner
         )
-        if let inherited, let tab = coordinator.browser.activeTab {
-            tab.signInEngine = inherited
-            tab.load(url, transition: .link, startedByUser: false, byPerson: true)
-        }
-        return coordinator
     }
 
     func closeWindow() {
