@@ -281,6 +281,8 @@ private struct SiteDetailPage: View {
     let onBack: () -> Void
 
     @State private var confirmingReset = false
+    @State private var cookies: SiteCookiesModel?
+    @State private var managingCookies = false
 
     private var blocker: ContentBlocker {
         browser.context.contentBlocker
@@ -356,6 +358,24 @@ private struct SiteDetailPage: View {
     }
 
     var body: some View {
+        Group {
+            if managingCookies, let cookies {
+                SiteCookiesDetailPage(model: cookies) { managingCookies = false }
+            } else {
+                settingsPage
+            }
+        }
+        .task(id: origin) {
+            // The origin's own host: `host` drops a leading "www.", whose host-only cookies would then be missed.
+            guard let cookieHost = URL(string: origin).flatMap(SiteCookies.host(of:)) else { return }
+            let model = SiteCookiesModel(host: cookieHost, context: browser.context)
+            cookies = model
+            await model.reload()
+        }
+    }
+
+    @ViewBuilder
+    private var settingsPage: some View {
         SubPageHeader(backTitle: "Websites", onBack: onBack) {
             SettingsButton(title: "Reset this website…", isDestructive: true) {
                 confirmingReset = true
@@ -512,6 +532,10 @@ private struct SiteDetailPage: View {
         }
 
         ExternalAppsSection(origin: origin, permissions: permissions)
+
+        if let cookies {
+            SiteCookiesSettingsSection(model: cookies) { managingCookies = true }
+        }
 
         SettingsSection(title: "Permissions", symbol: "hand.raised") {
             ForEach(Array(WebPermission.allCases.enumerated()), id: \.element) { index, permission in

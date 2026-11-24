@@ -151,18 +151,21 @@ final class FaviconLoader {
         guessed.contains(key(host))
     }
 
+    /// Forgets the icon of `host` in both appearances, in memory and, for a loader that writes the disk, in its files.
     func forget(host: String) {
-        let key = key(host)
-        cache[key] = nil
-        sessionOnly[key] = nil
-        guessed.remove(key)
-        missing[key] = nil
-        notOnDisk.remove(key)
-        inFlight[key]?.cancel()
-        inFlight[key] = nil
-        guard persistsToDisk else { return }
-        try? FileManager.default.removeItem(at: cacheFile(for: key))
-        try? FileManager.default.removeItem(at: cacheFile(for: key, isGuess: true))
+        let host = host.lowercased()
+        for key in [host, host + "#dark"] {
+            cache[key] = nil
+            sessionOnly[key] = nil
+            guessed.remove(key)
+            missing[key] = nil
+            notOnDisk.remove(key)
+            inFlight[key]?.cancel()
+            inFlight[key] = nil
+            guard persistsToDisk else { continue }
+            try? FileManager.default.removeItem(at: cacheFile(for: key))
+            try? FileManager.default.removeItem(at: cacheFile(for: key, isGuess: true))
+        }
     }
 
     func load(forHost host: String) async -> NSImage? {

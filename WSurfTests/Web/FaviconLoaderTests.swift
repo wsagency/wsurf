@@ -102,6 +102,59 @@ struct FaviconLoaderTests {
         #expect(reopened.cached(for: "example.com") == nil)
     }
 
+    /// Clearing a website's icon (Website Settings → Cookies) reaches both appearances' icons, declared and guessed, in memory and
+    /// on disk, whichever appearance the app is in, and leaves other hosts alone.
+    @Test func forgettingAHostClearsBothAppearancesAndLeavesOtherHosts() throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let loader = FaviconLoader(cacheDirectory: directory)
+        for scheme in [FaviconLoader.IconScheme.light, .dark] {
+            loader.schemeOverride = scheme
+            #expect(loader.store(try iconData(), forHost: "example.com") != nil)
+            #expect(loader.store(try iconData(), forHost: "other.com") != nil)
+        }
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == 4)
+
+        loader.schemeOverride = .light
+        loader.forget(host: "Example.com")
+
+        for scheme in [FaviconLoader.IconScheme.light, .dark] {
+            loader.schemeOverride = scheme
+            #expect(loader.memoryCached(for: "example.com") == nil)
+            #expect(loader.cached(for: "example.com") == nil)
+            #expect(loader.cached(for: "other.com") != nil)
+            let reopened = FaviconLoader(cacheDirectory: directory)
+            reopened.schemeOverride = scheme
+            #expect(reopened.cached(for: "example.com") == nil)
+            #expect(reopened.cached(for: "other.com") != nil)
+        }
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == 2)
+    }
+
+    @Test func forgettingAHostRemovesItsGuessedIconsToo() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = StubIconProtocol.fixture(payload: try iconData())
+        defer { fixture.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: fixture.session)
+        for scheme in [FaviconLoader.IconScheme.light, .dark] {
+            loader.schemeOverride = scheme
+            #expect(await loader.load(forHost: "example.com") != nil)
+            #expect(loader.isGuessedIcon(for: "example.com"))
+        }
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        #expect(files.count == 2 && files.allSatisfy { $0.pathExtension == "guess" })
+
+        loader.forget(host: "example.com")
+
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty)
+        for scheme in [FaviconLoader.IconScheme.light, .dark] {
+            loader.schemeOverride = scheme
+            #expect(!loader.isGuessedIcon(for: "example.com"))
+            #expect(loader.memoryCached(for: "example.com") == nil)
+        }
+    }
+
     @Test(arguments: [false, true])
     func privateCacheClearingCannotDeleteRegularProfileIcons(clearAll: Bool) throws {
         let directory = makeDirectory()

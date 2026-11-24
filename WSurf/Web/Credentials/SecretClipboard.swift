@@ -39,6 +39,8 @@ final class SecretClipboard {
         case inputHistory(profile: UUID)
         /// The MCP pairing configuration: cleared by time and at quit, not by any vault's lock.
         case mcp
+        /// A cookie's value from Website Settings: cleared by time and at quit.
+        case cookie
     }
 
     let pasteboard: any SecretPasteboard

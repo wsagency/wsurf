@@ -192,6 +192,14 @@ extension ChromiumRuntime {
         return !originCatalog(for: context).origins.isEmpty
     }
 
+    /// Whether Chromium may hold cookies for this profile: a site it recorded, a live context, or a regular profile's disk profile.
+    /// False means Chromium need not start to answer.
+    func mayHoldCookies(for context: BrowserProfileContext) -> Bool {
+        hasStoredData(for: context) || hasContext(contextID: context.contextID)
+            || !context.profile.isPrivate
+                && FileManager.default.fileExists(atPath: cacheDirectory(profileID: context.profile.id).path)
+    }
+
     func preflightClearData(
         context: BrowserProfileContext,
         kinds: Set<BrowsingData.Kind>,
