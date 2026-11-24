@@ -20,9 +20,9 @@ OLD = time.time() - 3 * 24 * 3600
 
 
 def environment(tmp: Path, **extra: str) -> dict[str, str]:
+    # No inherited WSURF_* setting reaches a case: under Tools/ci-local.sh, WSURF_RUN_TMP names the caller's own run directory.
     env = {k: v for k, v in os.environ.items()
-           if k not in {"GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "WSURF_KEEP_XCRESULT", "WSURF_SOURCE_PACKAGES_CACHE", "N"}
-           and not k.startswith("WSURF_MIN_FREE")}
+           if k not in {"GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "N"} and not k.startswith("WSURF_")}
     env.update(WSURF_CODE_SIGN_CLONE_ROOT=str(tmp / "X"), WSURF_TMP_ROOT=str(tmp / "ptmp"), TMPDIR=str(tmp / "T") + "/")
     env.update(extra)
     return env
