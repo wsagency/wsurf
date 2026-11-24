@@ -12,12 +12,18 @@ worktree and a unique `feature/<short-name>` branch based on the latest
 or commit another task's uncommitted changes.
 
 Store task worktrees under `.wt/` in the project folder; this directory
-is gitignored. OMP creates the isolated worktree automatically. Reuse its
-`feature/<short-name>` branch and worktree rather than creating a second one.
+is gitignored. An agent harness (such as OMP or T3 Code) may create the isolated
+worktree automatically. Reuse its `feature/<short-name>` branch and worktree
+rather than creating a second one. [AGENTS.md](AGENTS.md) holds the rules every
+agent harness follows.
 
 Keep build output and DerivedData inside your worktree; do not reuse another
 worktree's build directory. Local development builds, tests, and PR validation
-builds are allowed before merge.
+builds are allowed before merge. Builds on the Pro follow the
+[Pro Disk Hygiene Rules](AGENTS.md#pro-disk-hygiene-rules-mandatory--pro-runs-out-of-disk-otherwise):
+the native scripts source `Tools/disk-hygiene.sh`, and `Tools/clean-pro-disk.sh`
+reports leftovers (dry run by default) and removes them with `--apply`. Remove
+a merged task's worktree with `git worktree remove` and `git worktree prune`.
 
 Submit changes through a pull request targeting `main`. Resolve review
 feedback and pass the required CI checks before merging. Do not commit or push
@@ -41,7 +47,8 @@ build and shows no candidate line.
 
 ## Set up the project
 
-You need macOS 26 or later, Apple silicon, and Xcode 27.0 or later.
+You need macOS 26 or later, Apple silicon, and Xcode 27.0 or later. CI uses the
+Xcode version pinned in `.github/workflows/ci.yml`.
 
 ```bash
 git clone https://github.com/wsagency/wsurf.git
@@ -65,7 +72,7 @@ xcodebuild test \
   CODE_SIGN_ENTITLEMENTS=
 ```
 
-The worktree creation commands above are for manual setup without OMP. When OMP
+The worktree creation commands above are for manual setup. When an agent harness
 has already supplied a worktree, skip them. Replace `my-change` with a unique
 name for your task and run development commands from that worktree, not from
 the original `main` checkout.
@@ -170,7 +177,10 @@ tests with the suites for changed source and test files. Add a connected suite
 with `--suite SuiteName` or an individual test with `--suite 'SuiteName/case()'`.
 If a source path has no rule, add one in `Tools/validation-tests.json` so GitHub
 can select it too. The log directory `build/ci-local/<stamp>/` includes the
-source commit, comparison base, selected tests and result bundles.
+source commit, comparison base, selected tests and result bundles. After a
+local PASS it keeps the plan, case lists and checksums but deletes the result
+bundles; set `WSURF_KEEP_XCRESULT=1` to keep them. Failed bundles stay for
+triage and are pruned after 48 hours.
 
 For a timing fix, run the deterministic regression and any repetitions needed
 to prove it. Changes to data, migration, privacy and engine code call for their
