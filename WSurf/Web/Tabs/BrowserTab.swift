@@ -285,11 +285,18 @@ final class BrowserTab: Identifiable {
     /// Holds a sign-in's redirects in the engine that accepted its first request.
     var signInEngine: BrowserEngine? {
         didSet {
+            if signInEngine == nil {
+                inheritedSignInOrigin = nil
+            }
             if signInEngine != oldValue {
                 invalidateSessionState()
             }
         }
     }
+    /// The HTTP(S) origin that an inherited or same-site-promoted `signInEngine` belongs to.
+    /// Keeps automatic redirect and script hops from carrying that session onto unrelated websites,
+    /// while staying nil for genuine sign-in provider flows (`webKitOnlyOrigins`) so OAuth callbacks stay in-session.
+    @ObservationIgnored var inheritedSignInOrigin: String?
     struct SignInDeparture {
         let source: PageNavigation?
         let address: URL

@@ -12,7 +12,7 @@ import WebKit
 /// there instead of bouncing between engines.
 @MainActor
 struct EngineRoutingTests {
-    private func temporaryPermissions() -> SitePermissions {
+    func temporaryPermissions() -> SitePermissions {
         SitePermissions(storageURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("EngineRouting-\(UUID().uuidString).json"))
     }
@@ -369,7 +369,7 @@ extension EngineRoutingTests {
         }
     }
 
-    private func openPopup(from tab: BrowserTab, to url: URL) throws -> BrowserTab {
+    func openPopup(from tab: BrowserTab, to url: URL) throws -> BrowserTab {
         let webView = try #require(tab.page.webKit)
         let delegate = try #require(tab.navigationDelegate)
         let action = StubNewWindowAction()
@@ -798,50 +798,5 @@ extension EngineRoutingTests {
         #expect(meetTab.signInEngine == .webKit, "the sign-in stays active until the external document commits")
         meetTab.navigationCommitted(departure)
         #expect(meetTab.signInEngine == nil)
-    }
-
-    @Test(.boundedWebViews) func agentMicroDefaultChromiumEngineComposesWithSignedInSameSiteTabs() async throws {
-        let permissions = temporaryPermissions()
-        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
-        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
-        let meet = try #require(URL(string: "https://meet.google.com/uag-ohsc-hbw?authuser=1"))
-        let external = try #require(URL(string: "https://example.com/article"))
-        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
-        browser.windowKind = .micro
-        browser.isEphemeralAgentWindow = true
-        defer { browser.closeAllTabs(saving: false) }
-
-        let calendarTab = browser.newTab()
-        try #require(calendarTab.defaultEngineOverride == .chromium)
-        calendarTab.urlString = calendar.absoluteString
-        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
-        try #require(calendarTab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
-        try #require(calendarTab.signInEngine == .webKit)
-
-        calendarTab.onOpenInNewTab?(meet, true)
-        let meetTab = try #require(browser.tabs.first { $0.urlString == meet.absoluteString })
-        #expect(meetTab.defaultEngineOverride == .chromium)
-        #expect(meetTab.signInEngine == .webKit)
-        #expect(meetTab.loadedEngine == .webKit)
-
-        calendarTab.onOpenInNewTab?(external, false)
-        let externalTab = try #require(browser.tabs.first { $0.urlString == external.absoluteString })
-        _ = await externalTab.waitForPendingNavigation()
-        #expect(externalTab.defaultEngineOverride == .chromium)
-        #expect(externalTab.signInEngine == nil)
-        #expect(externalTab.loadedEngine == .chromium)
-
-        let meetPeek = browser.makePeekTab(meet, from: calendarTab)
-        defer { browser.dismissPeekTab(meetPeek) }
-        #expect(meetPeek.defaultEngineOverride == .chromium)
-        #expect(meetPeek.signInEngine == .webKit)
-        #expect(meetPeek.loadedEngine == .webKit)
-
-        let externalPeek = browser.makePeekTab(external, from: calendarTab)
-        defer { browser.dismissPeekTab(externalPeek) }
-        _ = await externalPeek.waitForPendingNavigation()
-        #expect(externalPeek.defaultEngineOverride == .chromium)
-        #expect(externalPeek.signInEngine == nil)
-        #expect(externalPeek.loadedEngine == .chromium)
     }
 }

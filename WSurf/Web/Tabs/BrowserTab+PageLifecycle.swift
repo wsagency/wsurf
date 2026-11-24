@@ -64,6 +64,7 @@ extension BrowserTab {
         if let navigation, let departure = leavingSignIn, departure.navigation === navigation,
            provisionalNavigation === navigation, departure.source === committedNavigation {
             signInEngine = nil
+            inheritedSignInOrigin = nil
             leavingSignIn = nil
         }
         pendingPDFOpening = nil
@@ -195,11 +196,13 @@ extension BrowserTab {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
             leavingSignIn = nil
             pendingOpenerSignIn = nil
+            inheritedSignInOrigin = nil
             let ongoing = startedByUser ? nil : signInEngine
             signInEngine = engine ?? ongoing ?? .webKit
         } else if startedByUser {
             leavingSignIn = nil
             pendingOpenerSignIn = nil
+            inheritedSignInOrigin = nil
             signInEngine = nil
         }
     }
@@ -219,19 +222,12 @@ extension BrowserTab {
         let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
             && request.httpBody == nil && request.httpBodyStream == nil
         let destination = SitePermissions.webOrigin(for: url)
-        if canReissue, signInEngine == nil, engine == .webKit, engineOverride == nil,
-           let source = committedURL.map(SitePermissions.webOrigin(for:)),
-           !source.isEmpty, !destination.isEmpty, source != destination,
-           pinnedEngine?.origin != source,
-           pinnedEngine?.origin != destination,
-           SitePermissions.webKitOnlySites.contains(SitePermissions.site(for: source)),
-           SitePermissions.site(for: source) == SitePermissions.site(for: destination),
-           preferredEngine(for: url) != .webKit {
-            signInEngine = .webKit
+        if canReissue {
+            promoteSameSiteWebKitSignInIfNeeded(for: url, destination: destination)
         }
-        let leavesSignIn = canReissue && sourceOrigin.map { origin in
-            !origin.isEmpty && !destination.isEmpty && !Self.continuesSignIn(from: origin, to: destination)
-        } == true
+        let userLeavesSignIn = canReissue && leavesSignIn(from: sourceOrigin, to: destination)
+        let inheritedLeavesSignIn = canReissue && leavesSignIn(from: inheritedSignInOrigin, to: destination)
+        let leavesSignIn = userLeavesSignIn || inheritedLeavesSignIn
         if !isRedirect {
             leavingSignIn = nil
         }
@@ -241,12 +237,21 @@ extension BrowserTab {
         guard canReissue else { return true }
         if preferredEngine(for: url, keepingSignIn: !outside) == engine {
             if leavesSignIn {
-                leavingSignIn = SignInDeparture(source: committedNavigation, address: url)
+                leavingSignIn = SignInDeparture(
+                    source: committedNavigation,
+                    address: url,
+                    navigation: isRedirect ? (navigation ?? provisionalNavigation) : nil
+                )
             }
             return true
         }
-        load(url, transition: pendingTransition, startedByUser: outside, byPerson: leavesSignIn)
+        load(url, transition: pendingTransition, startedByUser: outside, byPerson: userLeavesSignIn)
         return false
+    }
+
+    private func leavesSignIn(from origin: String?, to destination: String) -> Bool {
+        guard let origin, !origin.isEmpty, !destination.isEmpty else { return false }
+        return !Self.continuesSignIn(from: origin, to: destination)
     }
 
     func permitsChromiumNavigation(
@@ -273,7 +278,7 @@ extension BrowserTab {
             )
             return false
         }
-        guard permitsEngineNavigation(request, isMainFrame: isMainFrame) else { return false }
+        guard permitsEngineNavigation(request, isMainFrame: isMainFrame, isRedirect: isRedirect) else { return false }
         if isMainFrame {
             rememberScrollOffset()
         }

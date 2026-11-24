@@ -102,15 +102,34 @@ extension BrowserTab {
         if preferredEngine(for: url, keepingSignIn: false) != pending.engine {
             pendingOpenerSignIn = nil
             signInEngine = pending.engine
+            let isProviderFlow = SitePermissions.webKitOnlyOrigins.contains(pending.origin)
+                || SitePermissions.webKitOnlyOrigins.contains(destination)
+            inheritedSignInOrigin = isProviderFlow ? nil : destination
         } else {
             pendingOpenerSignIn = OpenerSignIn(engine: pending.engine, origin: destination)
         }
+    }
+
+    /// Promotes a committed WebKit document on a WebKit-only sign-in site into an active same-site
+    /// sign-in hold when navigating to a sibling origin whose default engine is not WebKit.
+    func promoteSameSiteWebKitSignInIfNeeded(for url: URL, destination: String) {
+        guard signInEngine == nil, engine == .webKit, engineOverride == nil,
+              let source = committedURL.map(SitePermissions.webOrigin(for:)),
+              !source.isEmpty, !destination.isEmpty, source != destination,
+              pinnedEngine?.origin != source,
+              pinnedEngine?.origin != destination,
+              SitePermissions.webKitOnlySites.contains(SitePermissions.site(for: source)),
+              SitePermissions.site(for: source) == SitePermissions.site(for: destination),
+              preferredEngine(for: url) != .webKit else { return }
+        signInEngine = .webKit
+        inheritedSignInOrigin = SitePermissions.webKitOnlyOrigins.contains(destination) ? nil : destination
     }
 
     @discardableResult
     func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
         leavingSignIn = nil
         pendingOpenerSignIn = nil
+        inheritedSignInOrigin = nil
         coverHold?.cancel()
         coverHold = nil
         releaseCurrentDevelopment(reason: .engineReplaced)
