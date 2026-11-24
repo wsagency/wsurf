@@ -14111,6 +14111,42 @@
           }
         }
       }
+    },
+    "%@ asked to sign in to %@ using your saved WSurf Vault login. Passwords are never shown to %@." : {
+      "comment" : "Body of the WSurf Vault sign-in confirmation dialog shown when a connected app calls requestUserLogin and saved logins exist. First and third %@ are the connected app’s name; second %@ is the website host."
+    },
+    "%@ asked you to sign in to %@. No saved WSurf Vault login is available for this website." : {
+      "comment" : "Body of the sign-in confirmation dialog shown when a connected app calls requestUserLogin and no saved WSurf Vault login exists for the website. First %@ is the connected app’s name; second %@ is the website host."
+    },
+    "Allow password entry" : {
+      "comment" : "Toggle title in Settings › Connected apps under Website access. Controls whether connected apps with Control access may type user-supplied passwords and one-time codes into password and OTP fields."
+    },
+    "Connected apps with Control access can type passwords and one-time codes you give them. Typed values are scrubbed from results and covered in screenshots; saved Vault passwords still ask first." : {
+      "comment" : "Caption under the Allow password entry toggle in Settings › Connected apps."
+    },
+    "Fill & Sign In" : {
+      "comment" : "Button in the WSurf Vault login approval sheet: fills the saved login into the page and submits the sign-in form."
+    },
+    "Reason from %@: %@" : {
+      "comment" : "Optional line in the sign-in confirmation dialog showing the connected app’s stated reason. First %@ is the app name; second %@ is the short reason text."
+    },
+    "Request User Login" : {
+      "comment" : "Display title of the MCP requestUserLogin tool."
+    },
+    "Saved account: %@" : {
+      "comment" : "Line in the WSurf Vault sign-in confirmation dialog listing up to three saved account labels for the website. %@ is a comma-separated list of account labels."
+    },
+    "Sign In Myself" : {
+      "comment" : "Button in the sign-in confirmation dialog: hands control of the tab back so the user can sign in directly."
+    },
+    "Sign In Yourself on %@?" : {
+      "comment" : "Title of the sign-in confirmation dialog when no saved WSurf Vault login is available for the website. %@ is the website host."
+    },
+    "Sign In to %@?" : {
+      "comment" : "Title of the WSurf Vault sign-in confirmation dialog when a saved login is available. %@ is the website host."
+    },
+    "Switch Tab Engine" : {
+      "comment" : "Display title of the MCP setTabEngine tool."
     }
   },
   "version" : "1.0"

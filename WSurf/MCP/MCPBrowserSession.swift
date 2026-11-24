@@ -81,6 +81,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let openConsent: (String, URL) async -> Bool
     /// Asks before a page that shows a password or payment field is used under a default grant.
     @ObservationIgnored let sensitiveConsent: (String, URL) async -> Bool
+    /// Asks before filling a saved WSurf Vault login or handing control to the user for manual sign-in.
+    @ObservationIgnored let loginConsent: (String, URL, Bool, [String], String?) async -> MCPAccessConsent.LoginChoice
+    /// Injectable Vault lookup/fill bridge for `vaultHint` and `requestUserLogin`.
+    @ObservationIgnored var vaultProvider: MCPVaultProvider
     /// Whether the page shows a password or payment field. A page that does not answer counts as yes.
     @ObservationIgnored var sensitivePageProbe: @MainActor (BrowserPage) async -> Bool = { await PageSensitiveProbe.hasSensitiveField(in: $0) }
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
@@ -115,6 +119,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
     /// When non-nil, this session is bound exclusively to an Agent Micro Window via a host-bridge `windowToken`.
     @ObservationIgnored var agentWindowScope: MCPAgentWindowScope?
+    /// Documents that WSurf Vault filled credentials into via `requestUserLogin` (cleared automatically on new document commit).
+    @ObservationIgnored var credentialTaintedDocuments: [UUID: CredentialTaint] = [:]
+    /// Documents where the user explicitly approved sensitive script inspection (`tabID -> runtimeDocumentID`). Never set automatically.
+    @ObservationIgnored var inspectionApprovedDocuments: [UUID: String] = [:]
 
     var lastActionTitle: String? {
         lastTool.isEmpty ? nil : Self.actionTitle(forTool: lastTool)
@@ -141,7 +149,12 @@ final class MCPBrowserSession: Identifiable {
         },
         sensitiveConsent: @escaping (String, URL) async -> Bool = { client, url in
             await MCPAccessConsent.useSensitivePage(client: client, url: url, in: nil)
-        }
+        },
+        loginConsent: @escaping (String, URL, Bool, [String], String?) async -> MCPAccessConsent.LoginChoice = { client, url, hasSaved, labels, reason in
+            await MCPAccessConsent.requestLogin(
+                client: client, url: url, hasSavedLogin: hasSaved, accountLabels: labels, reason: reason, in: nil)
+        },
+        vaultProvider: MCPVaultProvider? = nil
     ) {
         self.browser = browser
         self.id = id
@@ -150,6 +163,8 @@ final class MCPBrowserSession: Identifiable {
         self.consent = consent
         self.openConsent = openConsent
         self.sensitiveConsent = sensitiveConsent
+        self.loginConsent = loginConsent
+        self.vaultProvider = vaultProvider ?? .live(browser: browser)
         consentWindow = browser.context.extensions.adapter(for: browser)
     }
     func isBound(to browser: BrowserModel) -> Bool {
@@ -173,6 +188,8 @@ final class MCPBrowserSession: Identifiable {
         actionPolicy.revokeAll()
         secrets.wipe()
         secretFields = [:]
+        credentialTaintedDocuments = [:]
+        inspectionApprovedDocuments = [:]
     }
 
     func call(name: String, arguments: [String: Value]) async throws -> CallTool.Result {
@@ -221,23 +238,48 @@ final class MCPBrowserSession: Identifiable {
         return scrubbed
     }
 
+    private func executeTabFree(_ name: String, arguments: [String: Value]) async -> CallTool.Result? {
+        switch name {
+        case "requestAccess":
+            await requestAccess(
+                development: arguments["development"]?.boolValue ?? false,
+                developer: arguments["developer"]?.boolValue ?? false)
+        case "listTabs":
+            tabList()
+        case "newTab":
+            await openNewTab(
+                arguments["url"]?.stringValue ?? "",
+                engine: arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)))
+        case "openComparison":
+            await openComparison(arguments["url"]?.stringValue ?? "")
+        case "compareTabs":
+            await compareTabs(arguments)
+        default:
+            nil
+        }
+    }
+
+    private func executeTabManagement(_ name: String, arguments: [String: Value], tab: BrowserTab) async -> CallTool.Result? {
+        switch name {
+        case "switchTab":
+            return switchTab(tab)
+        case "closeTab":
+            return await closeTab(tab)
+        case "setTabEngine":
+            guard let engine = arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)) else {
+                return failure("engine must be webkit or chromium.")
+            }
+            return await setTabEngine(engine, tab: tab)
+        default:
+            return nil
+        }
+    }
+
     private func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {
         releaseUnauthorizedDevelopment()
         let name = entry.name
-        switch name {
-        case "requestAccess":
-            return await requestAccess(
-                development: arguments["development"]?.boolValue ?? false, developer: arguments["developer"]?.boolValue ?? false)
-        case "listTabs":
-            return tabList()
-        case "newTab":
-            return await openNewTab(arguments["url"]?.stringValue ?? "", engine: arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)))
-        case "openComparison":
-            return await openComparison(arguments["url"]?.stringValue ?? "")
-        case "compareTabs":
-            return await compareTabs(arguments)
-        default:
-            break
+        if let direct = await executeTabFree(name, arguments: arguments) {
+            return direct
         }
         guard let id = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)),
             let tab = sharedTab(id), let grant = grants[id]
@@ -246,8 +288,9 @@ final class MCPBrowserSession: Identifiable {
         guard mayProceed(tab, capability: capability) else {
             return failure(capability == .developer ? Self.developerRefusal : "This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
-        if name == "switchTab" { return switchTab(tab) }
-        if name == "closeTab" { return await closeTab(tab) }
+        if let managed = await executeTabManagement(name, arguments: arguments, tab: tab) {
+            return managed
+        }
         keepInWindow(tab)
         if capability == .control, !isReachable(tab) {
             return failure(Self.unreachableRefusal)
@@ -255,6 +298,9 @@ final class MCPBrowserSession: Identifiable {
         if name == "handleDialog" { return await handleDialog(arguments, tab: tab) }
         if let open = dialogRefusal(for: tab) {
             return open
+        }
+        if name == "requestUserLogin" {
+            return await requestUserLogin(arguments, tab: tab)
         }
         // Dialogs the page opens while this call runs come to this connection, and a dialog ends the wait for the call.
         let dialogClaim = controlDialogs(of: tab, capability: capability)
@@ -266,9 +312,9 @@ final class MCPBrowserSession: Identifiable {
             }
         }
         if name == "navigate" {
-            rotateDiagnosticsKey(on: tab)
             let url = arguments["url"]?.stringValue ?? ""
-            return await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant) } ?? interruptedResult(tab)
+            let inPlace = arguments["inPlace"]?.boolValue ?? false
+            return await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant, inPlace: inPlace) } ?? interruptedResult(tab)
         }
         if name == "goBack", let refusal = goBackRefusal(tab, grant: grant) { return refusal }
         if name == "goBack" { rotateDiagnosticsKey(on: tab) }
@@ -311,7 +357,9 @@ final class MCPBrowserSession: Identifiable {
 
     func webURL(of tab: BrowserTab) -> URL? {
         guard !tab.isShowingSystemPage else { return nil }
-        let url = tab.isMaterialised ? tab.page.url : URL(string: tab.urlString)
+        // A freshly created or engine-switched tab (especially Chromium before its first commit) can hold its destination
+        // in `urlString` while `page.url` is still nil. Once `page.url` is populated, it is authoritative.
+        let url = (tab.isMaterialised ? tab.page.url : nil) ?? URL(string: tab.urlString)
         guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
     }

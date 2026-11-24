@@ -19,7 +19,7 @@ enum PageSensitiveProbe {
             if (R.visible(el) && payment.test([el.title, el.name, el.src].map(text).join(' '))) {
               return JSON.stringify({ sensitive: true });
             }
-          } else if (el.matches(fields) && R.visible(el) && R.isSensitiveField(el)) {
+          } else if (el.matches(fields) && R.visible(el) && R.isSensitiveSecret(el)) {
             return JSON.stringify({ sensitive: true });
           }
         }

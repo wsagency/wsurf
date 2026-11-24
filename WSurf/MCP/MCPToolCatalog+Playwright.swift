@@ -15,8 +15,9 @@ nonisolated extension MCPToolCatalog {
         Entry(
             name: "browser_navigate",
             description:
-                "Playwright MCP name for navigate: load a URL in the current shared tab. A new website needs the user's approval; "
-                + "after reading a page, use a URL it links to.",
+                "Playwright MCP name for navigate/newTab: load a URL in the current agent tab, or open a new background Chromium tab "
+                + "automatically when no agent-opened or shared tab exists yet. A new website needs the user's approval unless covered by "
+                + "a standing grant or Website access default; after reading a page, use a URL it links to.",
             parameters: [url], scope: nil),
         Entry(
             name: "browser_navigate_back", description: "Playwright MCP name for goBack: go back in the current shared tab, within its website.",
@@ -36,7 +37,8 @@ nonisolated extension MCPToolCatalog {
             name: "browser_type",
             description:
                 "Playwright MCP name for typeOnPage: type into the field with this ref; submit presses Enter. slowly is accepted and "
-                + "ignored. Password, code and card fields are refused.",
+                + "ignored. Under Control (when password entry is allowed) or Developer access, password and code fields are typed directly "
+                + "with automatic scrubbing and screenshot masking.",
             parameters: [
                 element, playwrightRef, Parameter(name: "text", type: "string", description: "Text to enter."),
                 Parameter(name: "submit", type: "boolean", description: "Press Enter after typing.", required: false),

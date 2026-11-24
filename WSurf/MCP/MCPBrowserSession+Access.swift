@@ -18,7 +18,7 @@ extension MCPBrowserSession {
     /// skipping sites whose explicit Assistant Access policy is `.deny` or `.ask`.
     func syncAgentWindowGrants() {
         guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return }
-        for tab in browser.tabs where !tab.isClosed && !tab.isPrivate && tab.microTabID == nil {
+        for tab in browser.tabs where !tab.isClosed && !tab.isPrivate && tab.microTabID == nil && !takenBack.contains(tab.id) {
             guard let url = webURL(of: tab) else { continue }
             tab.assistantAccess.pageChanged(url: url)
             let policy = tab.assistantAccess.explicitPolicy
@@ -110,7 +110,7 @@ extension MCPBrowserSession {
             content: [.text(text: encoded(content), annotations: nil, _meta: nil)], structuredContent: Optional.some(content), isError: false)
     }
 
-    func navigate(_ raw: String, tab: BrowserTab, grant: Grant) async -> CallTool.Result {
+    func navigate(_ raw: String, tab: BrowserTab, grant: Grant, inPlace: Bool = false) async -> CallTool.Result {
         if grant.source == .agentWindow, let scope = agentWindowScope {
             guard scope.isActive(), scope.isAgentOwned(), let url = webDestination(raw) else {
                 return failure("Use a valid HTTP(S) URL.")
@@ -120,6 +120,7 @@ extension MCPBrowserSession {
             guard policy != .deny, policy != .ask else {
                 return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.")
             }
+            rotateDiagnosticsKey(on: tab)
             observations[tab.id] = nil
             grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
             let immediate = tab.load(url, transition: .agent)
@@ -141,14 +142,42 @@ extension MCPBrowserSession {
             return failure("Page access changed before navigation.")
         }
         guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
-        observations[tab.id] = nil
+
+        let nextGrant: Grant
         if followsDeveloperSites(grant, to: url) {
-            grants[tab.id] = Grant(origin: origin, access: grant.access, source: grant.source)
+            nextGrant = Grant(origin: origin, access: grant.access, source: grant.source)
         } else if viaDefault {
-            grants[tab.id] = Grant(origin: origin, access: .control, source: .appDefault)
+            nextGrant = Grant(origin: origin, access: .control, source: .appDefault)
         } else {
-            grants[tab.id] = moved(grant, to: origin)
+            nextGrant = moved(grant, to: origin)
         }
+
+        // Protect user-owned tabs shared via requestAccess: default to opening the destination in a new background tab
+        // unless the caller explicitly passed inPlace: true. Tabs this connection opened itself navigate in place.
+        if !inPlace, !openedTabs.contains(tab.id) {
+            let engine: BrowserEngine = SitePermissions.webKitOnlyOrigins.contains(origin) ? .webKit : .chromium
+            let opened = openInBackground(url, engine: engine)
+            grants[opened.id] = nextGrant
+            keepInWindow(opened)
+            let message =
+                "Opened \(url.absoluteString) in new background tab \(opened.id.uuidString) (engine: \(engine.rawValue)) to keep the user's tab untouched. "
+                + "Use this tabID for subsequent calls, or pass inPlace: true to navigate the user's tab directly."
+            let value: Value = .object([
+                "tabID": .string(opened.id.uuidString),
+                "openedNewTab": .bool(true),
+                "url": .string(url.absoluteString),
+                "engine": .string(engine.rawValue),
+                "message": .string(message),
+            ])
+            return CallTool.Result(
+                content: [.text(text: encoded(value), annotations: nil, _meta: nil)],
+                structuredContent: Optional.some(value),
+                isError: false)
+        }
+
+        rotateDiagnosticsKey(on: tab)
+        observations[tab.id] = nil
+        grants[tab.id] = nextGrant
         let immediate = tab.load(url, transition: .agent)
         let navigation = await tab.waitForPendingNavigation() ?? immediate
         guard navigation != nil else {
@@ -157,8 +186,10 @@ extension MCPBrowserSession {
         return success("Navigation started. Use readPage after the page loads. Redirects to a different website require new sharing.")
     }
 
-    /// `engine` opens the tab in that engine, whatever the website's setting says; it is a development tool, so it needs
-    /// development access to a shared page, or a standing grant for the address.
+    /// Opens `raw` in a new background tab behind the user's tab. Works even with no prior tab grants: a standing grant
+    /// or the Website access default opens immediately without a sheet; otherwise one consent sheet asks to open and share
+    /// the URL at Control without touching or sharing the user's active tab. Defaults to Chromium unless the origin requires
+    /// WebKit or the caller passes `engine: .webKit`.
     func openNewTab(_ raw: String, engine: BrowserEngine? = nil) async -> CallTool.Result {
         if let scope = agentWindowScope {
             guard scope.isActive(), scope.isAgentOwned(), isConnected, available(), !Task.isCancelled,
@@ -180,35 +211,65 @@ extension MCPBrowserSession {
             let effectiveEngine = tab.preferredEngine(for: url)
             return success("Opened tab \(tab.id.uuidString) in the Agent Micro Window. It runs in \(String(localized: effectiveEngine.label)). Use readPage after it loads.")
         }
-        if engine != nil, !mayChooseEngine(for: webDestination(raw)) {
-            return failure(Self.engineNeedsDevelopment)
+        guard let destination = webDestination(raw) else {
+            return failure("Opening a tab requires a full HTTP(S) URL.")
         }
-        let opened = engine.map { " It runs in \(String(localized: $0.label))." } ?? ""
-        if let url = webDestination(raw), let access = standingAccess(at: url) {
+        let origin = SitePermissions.origin(for: destination)
+        let resolvedEngine: BrowserEngine
+        if SitePermissions.webKitOnlyOrigins.contains(origin) {
+            if engine == .chromium {
+                return failure("This website requires WebKit and cannot be opened in Chromium.")
+            }
+            resolvedEngine = .webKit
+        } else {
+            resolvedEngine = engine ?? .chromium
+        }
+
+        if let access = standingAccess(at: destination) {
             guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.") }
-            guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
+            guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
                 return failure("Assistant access is off for this website.")
             }
-            let tab = openInBackground(url, engine: engine)
-            grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
+            let tab = openInBackground(destination, engine: resolvedEngine)
+            grants[tab.id] = Grant(origin: origin, access: access, source: .standing)
             keepInWindow(tab)
-            return success("Opened tab \(tab.id.uuidString) in the background.\(opened) Use readPage after it loads.")
+            return openedTabResult(tab, url: destination, engine: resolvedEngine)
         }
-        guard grants.keys.contains(where: { sharedTab($0).map { permits($0, capability: .control) } ?? false }),
-            let url = permittedDestination(raw)
-        else { return failure("Opening a tab requires control access and an allowed HTTP(S) URL.") }
+
+        guard let url = permittedDestination(raw) else {
+            return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.")
+        }
+        guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
+            return failure("Assistant access is off for this website.")
+        }
         let viaDefault = followsWebsiteDefault(at: url)
         let approved = viaDefault ? true : await openConsent(clientName, url)
         guard approved, isConnected, available(), !Task.isCancelled else {
             return failure("Opening the page was not approved.")
         }
-        guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
+        guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
             return failure("Assistant access is off for this website.")
         }
-        let tab = openInBackground(url, engine: engine)
-        grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control, source: viaDefault ? .appDefault : .sheet)
+        let tab = openInBackground(url, engine: resolvedEngine)
+        grants[tab.id] = Grant(origin: origin, access: .control, source: viaDefault ? .appDefault : .sheet)
         keepInWindow(tab)
-        return success("Opened tab \(tab.id.uuidString) in the background.\(opened) Use readPage after it loads.")
+        return openedTabResult(tab, url: url, engine: resolvedEngine)
+    }
+
+    private func openedTabResult(_ tab: BrowserTab, url: URL, engine: BrowserEngine) -> CallTool.Result {
+        let message =
+            "Opened tab \(tab.id.uuidString) in the background. It runs in \(String(localized: engine.label)). Use readPage after it loads."
+        let value: Value = .object([
+            "tabID": .string(tab.id.uuidString),
+            "url": .string(url.absoluteString),
+            "engine": .string(engine.rawValue),
+            "background": .bool(true),
+            "message": .string(message),
+        ])
+        return CallTool.Result(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            structuredContent: Optional.some(value),
+            isError: false)
     }
 
     /// A tab this connection opens: it never takes the place of the person's tab. In a window with no tab there is nothing to
@@ -220,17 +281,6 @@ extension MCPBrowserSession {
     }
 
     // MARK: Comparing engines
-
-    private static let engineNeedsDevelopment =
-        "Choosing an engine needs development access to a shared page. Call requestAccess with development set, or use a developer site."
-
-    /// Whether this connection holds development access on a shared page, or a standing grant covers `url`.
-    private func mayChooseEngine(for url: URL?) -> Bool {
-        if let url, standingAccess(at: url) != nil {
-            return true
-        }
-        return grants.keys.contains { sharedTab($0).map { permits($0, capability: .development) } ?? false }
-    }
 
     /// What a pair of comparison tabs at `url` get: a paired client's standing grant on a developer site, or, anywhere else, the
     /// development access this connection already holds on a page of the same website. Nil when neither applies, because a

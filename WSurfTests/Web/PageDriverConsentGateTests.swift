@@ -153,7 +153,7 @@ struct AgentConsentGateTests {
         #expect(!observation.contains("hunter2-SECRET"))
         // Still visible as a field, and still known to be filled: the model
         // has to be able to tell a completed form from an empty one.
-        #expect(observation.contains("field \"password\" (password) = (filled, hidden)"))
+        #expect(observation.contains("field \"password\" (password, sensitive) = (filled, hidden)"))
         #expect(observation.contains("ada@example.com"))
     }
 
@@ -170,7 +170,7 @@ struct AgentConsentGateTests {
 
         #expect(!observation.contains("4111111111111111"))
         #expect(!observation.contains("908321"))
-        #expect(observation.contains("field \"Card number\" = (filled, hidden)"))
+        #expect(observation.contains("field \"Card number\" (sensitive) = (filled, hidden)"))
         // An ordinary field is untouched - the denylist errs toward hiding,
         // but it is still a denylist, not a blanket.
         #expect(observation.contains("leave at the door"))

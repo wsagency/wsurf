@@ -137,7 +137,7 @@ nonisolated enum PasswordAutofillScript {
       // a native sheet such as the picker has the window; a focus or blur the engine did not send is then sent here, so the page
       // sees the same sequence in both engines.
       const put = (el,value,authorize) => {
-        el.setAttribute('data-wsurf-password','');
+        el.setAttribute(secret(el) || pickKind(el) === 'code' ? 'data-wsurf-password' : 'data-wsurf-autofilled','');
         const seen = new Set(), note = event => { if (event.target === el) seen.add(event.type); };
         const focus = (type,bubbles) => el.dispatchEvent(new FocusEvent(type,{bubbles,composed:true}));
         const key = type => el.dispatchEvent(new KeyboardEvent(type,{bubbles:true,cancelable:true,composed:true,key:'Unidentified'}));

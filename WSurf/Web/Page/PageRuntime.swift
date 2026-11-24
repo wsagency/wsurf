@@ -95,8 +95,8 @@ nonisolated enum PageRuntime {
       };
       const labelOf = (el, kind) => ['button', 'link', 'combobox', 'scrollarea'].includes(kind) ? controlLabel(el) : fieldLabel(el);
 
-      const isSensitiveField = el => {
-        if (el.hasAttribute('data-wsurf-payment-card') || el.hasAttribute('data-wsurf-contact') || el.hasAttribute('data-wsurf-password')) return true;
+      const isSensitiveSecret = el => {
+        if (el.hasAttribute('data-wsurf-payment-card') || el.hasAttribute('data-wsurf-password')) return true;
         const kind = ((el.type || '') + '').toLowerCase();
         if (kind === 'password') return true;
         const auto = norm(el.autocomplete).toLowerCase();
@@ -104,6 +104,35 @@ nonisolated enum PageRuntime {
         if (/(?:^| )(?:current-password|new-password|one-time-code|cc-number|cc-exp|cc-exp-month|cc-exp-year|cc-csc|cc-name)(?: |$)/.test(auto)) return true;
         return /password|passcode|\bpin\b|cvv|cvc|cvn|card ?number|cardnumber|card verification|security code|iban|sort ?code|routing/.test(hint)
           || /account ?number|ssn|social security|national insurance|passport|tax ?id|one[- ]?time|\botp\b|2fa|verification code|seed phrase|recovery phrase|private key/.test(hint);
+      };
+      const isSensitiveForRead = el => isSensitiveSecret(el)
+        || el.hasAttribute('data-wsurf-contact') || el.hasAttribute('data-wsurf-autofilled');
+      const isSensitiveField = isSensitiveForRead;
+
+      const hasLoginForm = () => {
+        if (!document.body) return false;
+        for (const el of walk(document.body)) {
+          if (el.tagName !== 'INPUT' || !visible(el)) continue;
+          const kind = ((el.type || '') + '').toLowerCase();
+          if (kind === 'password') return true;
+          const auto = norm(el.autocomplete).toLowerCase();
+          if (/(?:^| )(?:current-password|new-password)(?: |$)/.test(auto)) return true;
+        }
+        return false;
+      };
+
+      const hasFilledSensitiveSecret = () => {
+        const root = document.body || document.documentElement;
+        if (!root) return false;
+        for (const el of walk(root)) {
+          const holder = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+          const editable = el.isContentEditable === true && !holder;
+          if (!holder && !editable) continue;
+          if (!isSensitiveSecret(el)) continue;
+          const val = holder ? el.value : el.textContent;
+          if (typeof val === 'string' && val.length > 0) return true;
+        }
+        return false;
       };
 
       const signature = el => JSON.stringify([kindOf(el), labelOf(el, kindOf(el)), el.id, el.name,
@@ -117,7 +146,7 @@ nonisolated enum PageRuntime {
       const valueState = ref => {
         const el = window.__wsurfRefs[ref - 1];
         const expected = el && expectedValues.get(el);
-        if (!el?.isConnected || !expected || signature(el) !== expected.signature || isSensitiveField(el)) return 'unverified';
+        if (!el?.isConnected || !expected || signature(el) !== expected.signature || isSensitiveSecret(el)) return 'unverified';
         const actual = typeof expected.value === 'boolean'
           ? (el.checked ?? (el.getAttribute('aria-checked') === 'true'))
           : (el.isContentEditable ? el.textContent : el.value);
@@ -413,7 +442,7 @@ nonisolated enum PageRuntime {
         }
         return { text: text.slice(start, end), textTotal: text.length, textStart: start,
           controls: listed, controlTotal: candidates.length, controlStart: offset,
-          controlReset,
+          controlReset, hasLoginForm: hasLoginForm(),
           snapshot: window.__wsurfSnapshot, document: documentID, url: location.href };
       };
 
@@ -736,7 +765,8 @@ nonisolated enum PageRuntime {
 
       return { resolveTarget, dragPlan, dragHolds, matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
         pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, acknowledge, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
+        labelOf, kindOf, visible, highlight, isSensitiveField, isSensitiveForRead, isSensitiveSecret, hasLoginForm, hasFilledSensitiveSecret,
+        disabled, actionable, observe, acknowledge, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
         digest, waitFor };
     })());
     """#

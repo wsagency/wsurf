@@ -145,6 +145,91 @@ enum MCPAccessConsent {
         return await present(alert, in: window) == .alertFirstButtonReturn
     }
 
+    /// The user's answer to a `requestUserLogin` sheet.
+    enum LoginChoice: Equatable, Sendable {
+        case fill
+        case fillAndSignIn
+        case takeOver
+        case decline
+    }
+
+    /// The login approval sheet as data, testable without presenting a window.
+    struct LoginSheet: Equatable {
+        struct Button: Equatable {
+            let title: String
+            let choice: LoginChoice
+            let isEscape: Bool
+        }
+
+        let title: String
+        let message: String
+        let buttons: [Button]
+
+        func choice(forButton index: Int) -> LoginChoice {
+            buttons.indices.contains(index) ? buttons[index].choice : .decline
+        }
+    }
+
+    static func loginSheet(
+        client: String, url: URL, hasSavedLogin: Bool, accountLabels: [String], reason: String?
+    ) -> LoginSheet {
+        let name = displayName(for: client)
+        let host = url.host() ?? url.absoluteString
+        let cleanedReason = reason.map { raw in
+            let stripped = String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
+            return String(stripped.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        }.flatMap { $0.isEmpty ? nil : $0 }
+
+        var parts: [String] = []
+        if hasSavedLogin {
+            parts.append(String(localized: "\(name) asked to sign in to \(host) using your saved WSurf Vault login. Passwords are never shown to \(name)."))
+            let labels = accountLabels.prefix(3).filter { !$0.isEmpty }
+            if !labels.isEmpty {
+                let list = labels.joined(separator: ", ")
+                parts.append(String(localized: "Saved account: \(list)"))
+            }
+        } else {
+            parts.append(String(localized: "\(name) asked you to sign in to \(host). No saved WSurf Vault login is available for this website."))
+        }
+        if let cleanedReason {
+            parts.append(String(localized: "Reason from \(name): \(cleanedReason)"))
+        }
+
+        var buttons: [LoginSheet.Button] = []
+        if hasSavedLogin {
+            buttons.append(.init(title: String(localized: "Fill"), choice: .fill, isEscape: false))
+            buttons.append(.init(title: String(localized: "Fill & Sign In"), choice: .fillAndSignIn, isEscape: false))
+        }
+        buttons.append(.init(title: String(localized: "Sign In Myself"), choice: .takeOver, isEscape: false))
+        buttons.append(.init(title: String(localized: "Cancel"), choice: .decline, isEscape: true))
+
+        return LoginSheet(
+            title: hasSavedLogin
+                ? String(localized: "Sign In to \(host)?")
+                : String(localized: "Sign In Yourself on \(host)?"),
+            message: parts.joined(separator: "\n\n"),
+            buttons: buttons
+        )
+    }
+
+    static func requestLogin(
+        client: String, url: URL, hasSavedLogin: Bool, accountLabels: [String], reason: String?, in window: NSWindow?
+    ) async -> LoginChoice {
+        guard !AppDatabase.isRunningTests, window != nil else { return .decline }
+        let sheet = loginSheet(client: client, url: url, hasSavedLogin: hasSavedLogin, accountLabels: accountLabels, reason: reason)
+        let alert = NSAlert()
+        alert.messageText = sheet.title
+        alert.informativeText = sheet.message
+        for button in sheet.buttons {
+            alert.addButton(withTitle: button.title)
+            if button.isEscape {
+                alert.buttons.last?.keyEquivalent = "\u{1b}"
+            }
+        }
+        let response = await present(alert, in: window)
+        return sheet.choice(forButton: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+    }
+
     private static func displayName(for client: String) -> String {
         client == "codex-mcp-client" ? "Codex" : client
     }

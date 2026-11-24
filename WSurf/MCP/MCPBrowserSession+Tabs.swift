@@ -39,6 +39,8 @@ extension MCPBrowserSession {
         grants[tab.id] = nil
         observations[tab.id] = nil
         secretFields[tab.id] = nil
+        credentialTaintedDocuments[tab.id] = nil
+        inspectionApprovedDocuments[tab.id] = nil
         openedTabs.remove(tab.id)
         if let pair = comparison, [pair.webKit, pair.chromium].contains(tab.id) {
             comparison = nil
@@ -82,8 +84,65 @@ extension MCPBrowserSession {
         browser.close(tab)
         grants[tab.id] = nil
         observations[tab.id] = nil
+        secretFields[tab.id] = nil
+        credentialTaintedDocuments[tab.id] = nil
+        inspectionApprovedDocuments[tab.id] = nil
         openedTabs.remove(tab.id)
         return success("Tab closed.")
+    }
+
+    /// Switches a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable.
+    func setTabEngine(_ engine: BrowserEngine, tab: BrowserTab) async -> CallTool.Result {
+        guard let url = webURL(of: tab) else {
+            return failure("The webpage is unavailable.")
+        }
+        let origin = SitePermissions.origin(for: url)
+        if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return failure("This website requires WebKit and cannot switch to Chromium.")
+        }
+        if tab.engine == engine, tab.isMaterialised, tab.liveView?.engine == engine {
+            keepInWindow(tab)
+            let value: Value = .object([
+                "status": "ok",
+                "tabID": .string(tab.id.uuidString),
+                "engine": .string(engine.rawValue),
+                "switched": .bool(false),
+                "message": .string("Tab is already running in \(String(localized: engine.label))."),
+            ])
+            return CallTool.Result(
+                content: [.text(text: encoded(value), annotations: nil, _meta: nil)],
+                structuredContent: Optional.some(value),
+                isError: false)
+        }
+        let persistsAnswers = tab.assistantAccess.persistsAnswers
+        tab.engineOverride = engine
+        let switched = await tab.switchEngine(to: engine)
+        guard switched else {
+            return failure("Could not switch the tab engine.")
+        }
+        // `installEngine` clears per-page state and builds a fresh page not yet attached to a window. Re-park it
+        // immediately so Chromium begins loading `url`, and re-sync assistantAccess for `url` before checking access.
+        tab.assistantAccess.persistsAnswers = persistsAnswers
+        tab.assistantAccess.pageChanged(url: url)
+        keepInWindow(tab)
+        guard mayProceed(tab, capability: .control) else {
+            return failure("Could not switch the tab engine or access changed.")
+        }
+        observations[tab.id] = nil
+        secretFields[tab.id] = nil
+        credentialTaintedDocuments[tab.id] = nil
+        inspectionApprovedDocuments[tab.id] = nil
+        let value: Value = .object([
+            "status": "ok",
+            "tabID": .string(tab.id.uuidString),
+            "engine": .string(engine.rawValue),
+            "switched": .bool(true),
+            "message": .string("Switched tab to \(String(localized: engine.label)). Use readPage after it loads."),
+        ])
+        return CallTool.Result(
+            content: [.text(text: encoded(value), annotations: nil, _meta: nil)],
+            structuredContent: Optional.some(value),
+            isError: false)
     }
 
     /// Whether this connection may close `tab` without the person being asked. Never from the profile's own Assistant

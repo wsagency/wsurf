@@ -112,6 +112,9 @@ final class MCPTrustStore {
         /// The Website access default the owner approved for apps, as Settings last wrote it. The profile's own file can only
         /// lower what apps get from it.
         var appsDefaultLevel = AssistantAccessPolicy.ask
+        /// Whether connected apps with Control access may type into password and one-time-code fields (automatically scrubbed
+        /// and screenshot-masked). Defaults to true; stored in the keychain so a shell process cannot re-enable it when turned off.
+        var allowsPasswordEntry = true
 
         init() {}
 
@@ -126,6 +129,7 @@ final class MCPTrustStore {
             appsFollowDefault = try values.decodeIfPresent(Bool.self, forKey: .appsFollowDefault) ?? false
             // A level this build does not know reads as Ask rather than making the whole document unreadable.
             appsDefaultLevel = Self.defaultLevel(try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .appsDefaultLevel))
+            allowsPasswordEntry = try values.decodeIfPresent(Bool.self, forKey: .allowsPasswordEntry) ?? true
         }
 
         /// No Access is a choice for one website, never for the default, so it is stored as Ask.
@@ -157,6 +161,7 @@ final class MCPTrustStore {
     private(set) var dedicatedProfileID: UUID?
     private(set) var appsFollowDefault = false
     private(set) var appsDefaultLevel = AssistantAccessPolicy.ask
+    private(set) var allowsPasswordEntry = true
     @ObservationIgnored private let storage: (any MCPTrustStorage)?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var document = Document()
@@ -236,6 +241,9 @@ final class MCPTrustStore {
         }
         if appsDefaultLevel != stored.appsDefaultLevel {
             appsDefaultLevel = stored.appsDefaultLevel
+        }
+        if allowsPasswordEntry != stored.allowsPasswordEntry {
+            allowsPasswordEntry = stored.allowsPasswordEntry
         }
         return changed
     }
@@ -385,6 +393,11 @@ final class MCPTrustStore {
         loadIfNeeded()
         guard appsFollowDefault else { return }
         try edit { $0.appsDefaultLevel = Document.defaultLevel(level) }
+    }
+
+    /// Allows or blocks connected apps with Control access from typing into password and one-time-code fields.
+    func setAllowsPasswordEntry(_ allowed: Bool) throws {
+        try edit { $0.allowsPasswordEntry = allowed }
     }
 
     /// Applies `change` to a copy and stores it, or stores nothing.

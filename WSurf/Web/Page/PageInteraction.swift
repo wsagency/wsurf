@@ -12,7 +12,7 @@ extension PageDriver {
         guard await validateObservation(in: view, ref: ref), let encoded = jsonString(value ?? "") else { return false }
         let result = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
-            if (!R.matchesRef(\(ref)) || !R.visible(el) || R.isSensitiveField(el)) return JSON.stringify({ matched: false });
+            if (!R.matchesRef(\(ref)) || !R.visible(el) || R.isSensitiveSecret(el)) return JSON.stringify({ matched: false });
             const valueMatches = \(value == nil) || ('value' in el && el.value === \(encoded));
             const checkedMatches = \(checked == nil) || (['checkbox','radio'].includes(el.type) && el.checked === \(checked ?? false));
             return JSON.stringify({ matched: valueMatches && checkedMatches });
@@ -32,8 +32,13 @@ extension PageDriver {
               role: el.getAttribute('role'), expanded: el.getAttribute('aria-expanded'),
               checked: el.checked ?? el.getAttribute('aria-checked'),
               bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
-            if (R.isSensitiveField(el)) result.value = '(hidden)';
-            else if (el.tagName === 'INPUT') {
+            if (R.isSensitiveField(el)) {
+              const rawValue = R.norm(el.value || (el.isContentEditable ? el.textContent : '') || '');
+              result.sensitive = true;
+              result.type = ((el.type || (el.isContentEditable ? 'editable' : 'text')) + '').toLowerCase();
+              result.filled = rawValue.length > 0;
+              result.value = '(hidden)';
+            } else if (el.tagName === 'INPUT') {
               result.type = el.type;
               if (['range','color','date','datetime-local','time','month','week','number'].includes(el.type)) result.value = el.value;
               result.min = el.min.slice(0, 100); result.max = el.max.slice(0, 100);
@@ -62,7 +67,7 @@ extension PageDriver {
         guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let state = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
-            if (R.isSensitiveField(el)) return JSON.stringify({ refused: true });
+            if (R.isSensitiveSecret(el)) return JSON.stringify({ refused: true });
             R.expectValue(el, \(checked));
             return JSON.stringify({ kind: R.kindOf(el), checked: el.checked ?? (el.getAttribute('aria-checked') === 'true') });
             """), in: view)

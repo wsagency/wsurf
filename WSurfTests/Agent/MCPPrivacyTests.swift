@@ -42,8 +42,19 @@ struct MCPPrivacyTests {
         return (server, browser, tab)
     }
 
-    private func session(_ browser: BrowserModel, access: MCPAccessConsent.Access = .control) -> MCPBrowserSession {
-        MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in access })
+    private func session(
+        _ browser: BrowserModel, access: MCPAccessConsent.Access = .control, allowsPasswordEntry: Bool = true
+    ) -> MCPBrowserSession {
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        trust.loadIfNeeded()
+        if !allowsPasswordEntry {
+            do {
+                try trust.setAllowsPasswordEntry(false)
+            } catch {
+                Issue.record("Failed to disable password entry in test trust store: \(error)")
+            }
+        }
+        return MCPBrowserSession(browser: browser, trust: trust, available: { true }, consent: { _, _, _ in access })
     }
 
     private func text(_ result: CallTool.Result) -> String {
@@ -110,7 +121,8 @@ struct MCPPrivacyTests {
     @Test func batchingUsesTheSameSensitiveFieldRulesAndReturnsPartialState() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
-        let subject = session(browser)
+        // With password entry turned off in Settings › Connected apps, fillFields skips sensitive fields as before.
+        let subject = session(browser, allowsPasswordEntry: false)
         _ = try await call(subject, "requestAccess")
         let first = try await observation(subject, tab: tab)
         let action = try await call(subject, "fillFields", tab: tab, arguments: [
@@ -283,23 +295,35 @@ struct MCPPrivacyTests {
         #expect(try await tab.page.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
     }
 
-    @Test func typingWorksButPasswordFieldsStayBlocked() async throws {
+    @Test func typingWorksAndPasswordFieldsRespectTheSetting() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
-        let subject = session(browser)
-        _ = try await call(subject, "requestAccess")
-        let normal = try await observation(subject, tab: tab)
-        let typed = try await call(subject, "typeOnPage", tab: tab, arguments: [
+        let blocked = session(browser, allowsPasswordEntry: false)
+        _ = try await call(blocked, "requestAccess")
+        let normal = try await observation(blocked, tab: tab)
+        let typed = try await call(blocked, "typeOnPage", tab: tab, arguments: [
             "observationID": .string(normal), "ref": 1, "text": "hello",
         ])
         #expect(typed.isError == false, "\(text(typed))")
         #expect(try await tab.page.evaluateJavaScript("document.querySelector('input').value") as? String == "hello")
-        let password = try await observation(subject, tab: tab)
-        let refused = try await call(subject, "typeOnPage", tab: tab, arguments: [
+        let password = try await observation(blocked, tab: tab)
+        let refused = try await call(blocked, "typeOnPage", tab: tab, arguments: [
             "observationID": .string(password), "ref": 2, "text": "replacement",
         ])
         #expect(refused.isError == true)
         #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
+
+        // With the default setting (allowsPasswordEntry == true), Control can type passwords and WSurf scrubs/hides them.
+        let allowed = session(browser, allowsPasswordEntry: true)
+        _ = try await call(allowed, "requestAccess")
+        let fresh = try await observation(allowed, tab: tab)
+        let filled = try await call(allowed, "typeOnPage", tab: tab, arguments: [
+            "observationID": .string(fresh), "ref": 2, "text": "replacement-secret",
+        ])
+        #expect(filled.isError == false, "\(text(filled))")
+        #expect(!text(filled).contains("replacement-secret"))
+        #expect(text(filled).contains("(sensitive field, value hidden)"))
+        #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "replacement-secret")
     }
 
     @Test func revokingDuringTheActionPausePreventsTheClick() async throws {
@@ -383,7 +407,7 @@ struct MCPPrivacyTests {
         _ = try await call(subject, "requestAccess")
         _ = try await observation(subject, tab: tab)
         let destination = try server.url("/next")
-        let result = try await call(subject, "navigate", tab: tab, arguments: ["url": .string(destination.absoluteString)])
+        let result = try await call(subject, "navigate", tab: tab, arguments: ["url": .string(destination.absoluteString), "inPlace": true])
         #expect(result.isError == false)
         #expect(await settled(tab, at: destination))
         let read = try await call(subject, "readPage", tab: tab)
@@ -404,7 +428,7 @@ struct MCPPrivacyTests {
         _ = try await call(subject, "requestAccess")
         _ = try await call(other, "requestAccess")
         let destination = try server.url("/next")
-        let opened = try await call(subject, "newTab", arguments: ["url": .string(destination.absoluteString)])
+        let opened = try await call(subject, "newTab", arguments: ["url": .string(destination.absoluteString), "engine": "webkit"])
         #expect(opened.isError == false)
         #expect(opens == 1)
         let newTab = try #require(browser.tabs.first { $0 !== tab })

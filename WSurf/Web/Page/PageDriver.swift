@@ -185,13 +185,20 @@ enum PageDriver {
                 line += linkArrow + href
             }
         case "field":
-            if let type = control["t"] as? String, type != "text" {
-                line += " (\(type))"
-            }
             if control["s"] as? Int == 1 {
+                if let type = control["t"] as? String, type != "text" {
+                    line += " (\(type), sensitive)"
+                } else {
+                    line += " (sensitive)"
+                }
                 line += (control["f"] as? Int == 1) ? " = (filled, hidden)" : " = (empty)"
-            } else if let value = control["v"] as? String {
-                line += " = \"\(value)\""
+            } else {
+                if let type = control["t"] as? String, type != "text" {
+                    line += " (\(type))"
+                }
+                if let value = control["v"] as? String {
+                    line += " = \"\(value)\""
+                }
             }
         case "select":
             if control["s"] as? Int == 1 {
@@ -313,7 +320,7 @@ enum PageDriver {
                   if (error) return JSON.stringify({ error });
                   const kind = R.kindOf(el);
                   if (kind === 'checkbox' || kind === 'radio') {
-                    if (R.isSensitiveField(el)) return JSON.stringify({ error: 'The user must fill this sensitive field. Do not retry with another tool.' });
+                    if (R.isSensitiveSecret(el)) return JSON.stringify({ error: 'The user must fill this sensitive field. Do not retry with another tool.' });
                     if (el.readOnly || el.getAttribute('aria-readonly') === 'true') return JSON.stringify({ error: 'This control is read-only.' });
                   }
                   el.click();
@@ -372,7 +379,7 @@ enum PageDriver {
                 """
                   const el = window.__wsurfRefs[\(found.ref) - 1];
                   if (!el || !el.isConnected) { return JSON.stringify({ stale: true }); }
-                  \(allowSensitive ? Self.secretFieldGuard : "if (R.isSensitiveField(el)) { return JSON.stringify({ refused: true }); }")
+                  \(allowSensitive ? Self.secretFieldGuard : "if (R.isSensitiveSecret(el)) { return JSON.stringify({ refused: true }); }")
                   if (R.disabled(el) || el.readOnly || el.getAttribute('aria-readonly') === 'true') { return JSON.stringify({ unavailable: true }); }
                   if (!['INPUT','TEXTAREA'].includes(el.tagName) && !el.isContentEditable) return JSON.stringify({ error: 'This control is not directly editable. Use click or keyboard controls.' });
                   if (el.tagName === 'INPUT' && ['file','hidden','checkbox','radio','button','submit'].includes(el.type)) {
@@ -406,6 +413,7 @@ enum PageDriver {
                   if (\(refreshControls && !allowSensitive)) el.focus();
                   \(allowSensitive ? "" : "R.expectValue(el, value);")
                   R.setValue(el, value);
+                  \(allowSensitive ? "" : "el.removeAttribute('data-wsurf-contact'); el.removeAttribute('data-wsurf-autofilled');")
                   \(allowSensitive ? "const stored = el.isContentEditable ? el.textContent : el.value;" : "")
                   const retained = \(allowSensitive ? "stored === value" : "R.valueState(\(found.ref)) === 'matched'");
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
@@ -427,7 +435,7 @@ enum PageDriver {
             let submitted = object["submitted"] as? Bool == true
             let status = submit && !submitted
                 ? "The field did not retain the requested value; submission was not attempted. Inspect the current page before retrying."
-                : "Typed \(allowSensitive ? "a secret " : "")into “\(found.label)”\(submitted ? " and requested submission" : "")."
+                : "Typed into “\(found.label)”\(allowSensitive ? " (sensitive field, value hidden)" : "")\(submitted ? " and requested submission" : "")."
             // A sensitive field cannot be read back through the runtime, so a secret was checked by the script that typed it.
             if allowSensitive, let stored = object["stored"] as? String {
                 secretWritten?(
@@ -468,8 +476,133 @@ enum PageDriver {
         if (el.ownerDocument !== document) {
           return JSON.stringify({ error: '\(secretInFrameMessage)' });
         }
-        const sensitive = R.isSensitiveField(el);
+        const sensitive = R.isSensitiveSecret(el);
         """
+
+    /// Which of `refs` currently point to a connected sensitive secret field (password, OTP, card, etc.) in `webView`.
+    static func sensitiveSecretRefs(_ refs: [Int], in webView: BrowserPage) async -> Set<Int> {
+        let positive = Array(Set(refs.filter { $0 > 0 })).sorted()
+        guard !positive.isEmpty else { return [] }
+        let list = positive.map(String.init).joined(separator: ",")
+        let script = scripted("""
+            const refs = [];
+            for (const ref of [\(list)]) {
+              const el = window.__wsurfRefs[ref - 1];
+              if (el?.isConnected && R.matchesRef(ref) && R.isSensitiveSecret(el)) refs.push(ref);
+            }
+            return JSON.stringify({ refs });
+            """)
+        guard let object = await evaluateJSON(script, in: webView),
+            let matched = object["refs"] as? [Int]
+        else { return [] }
+        return Set(matched)
+    }
+
+    /// Whether `webView`'s current document shows a visible login/password form.
+    static func hasLoginForm(in webView: BrowserPage) async -> Bool {
+        let script = scripted("return JSON.stringify({ hasLoginForm: R.hasLoginForm() });")
+        guard let object = await evaluateJSON(script, in: webView) else { return false }
+        return object["hasLoginForm"] as? Bool == true
+    }
+
+    /// The current document's runtime ID and whether it holds any live filled sensitive secret field.
+    /// Returns nil when the page did not respond (callers fail closed).
+    static func protectedSecretState(in webView: BrowserPage) async -> (documentID: String, hasFilledSecret: Bool)? {
+        let script = scripted(
+            "return JSON.stringify({ document: R.documentID, hasFilledSecret: R.hasFilledSensitiveSecret() });")
+        guard let object = await evaluateJSON(script, in: webView),
+            let documentID = object["document"] as? String
+        else { return nil }
+        return (documentID, object["hasFilledSecret"] as? Bool == true)
+    }
+
+    /// Outcome of a blind WSurf Vault fill triggered by `requestUserLogin` after user approval.
+    struct VaultFillResult: Sendable {
+        let ok: Bool
+        let documentID: String?
+        let fieldsFilled: [String]
+        let submitted: Bool
+        let error: String?
+    }
+
+    /// Writes approved Vault credentials directly into the main document's login form without ever returning credential text.
+    static func fillVaultLogin(username: String, password: String, submit: Bool, in webView: BrowserPage) async -> VaultFillResult {
+        guard selectedFrame == nil,
+            let encodedUser = jsonString(username),
+            let encodedPassword = jsonString(password)
+        else {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "Could not encode credentials for fill.")
+        }
+        let script = scripted("""
+            if (!document.body) return JSON.stringify({ error: 'The page has no body to fill.' });
+            const isPassword = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
+              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
+              && (((el.type || '') + '').toLowerCase() === 'password'
+                || /(?:^| )(?:current-password|new-password)(?: |$)/.test(R.norm(el.autocomplete).toLowerCase()));
+            const isUsername = el => el.tagName === 'INPUT' && el.ownerDocument === document && R.visible(el)
+              && !R.disabled(el) && !el.readOnly && el.getAttribute('aria-readonly') !== 'true'
+              && ['text', 'email', 'tel', 'search', 'url', ''].includes(((el.type || 'text') + '').toLowerCase())
+              && !R.isSensitiveSecret(el);
+            const all = Array.from(R.walk(document.body)).filter(el => el.ownerDocument === document);
+            const pw = all.find(isPassword) || null;
+            let user = null;
+            if (pw && pw.form) {
+              const formInputs = Array.from(pw.form.elements || []).filter(isUsername);
+              const pwIdx = Array.from(pw.form.elements || []).indexOf(pw);
+              const before = formInputs.filter(el => Array.from(pw.form.elements || []).indexOf(el) < pwIdx);
+              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
+                || before[before.length - 1] || formInputs[0] || null;
+            } else if (pw) {
+              const pwIdx = all.indexOf(pw);
+              const before = all.slice(0, pwIdx).filter(isUsername);
+              user = before.find(el => /(?:username|email)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || '')))
+                || before[before.length - 1] || null;
+            } else {
+              user = all.find(el => isUsername(el) && /(?:username|email|login)/i.test((el.autocomplete || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.type || ''))) || null;
+            }
+            if (!pw && !user) return JSON.stringify({ error: 'No visible login fields were found on this page.' });
+            const filled = [];
+            const uVal = \(encodedUser), pVal = \(encodedPassword);
+            if (user && uVal) {
+              user.setAttribute('data-wsurf-autofilled', '');
+              R.setValue(user, uVal);
+              filled.push('username');
+            }
+            if (pw && pVal) {
+              pw.setAttribute('data-wsurf-password', '');
+              R.setValue(pw, pVal);
+              filled.push('password');
+            }
+            if (!filled.length) return JSON.stringify({ error: 'No matching login fields could be filled.' });
+            let submitted = false;
+            if (\(submit ? "true" : "false")) {
+              const anchor = pw || user;
+              R.pressEnter(anchor);
+              submitted = true;
+            }
+            return JSON.stringify({ ok: true, document: R.documentID, filled, submitted });
+            """)
+        guard let object = await evaluateAction(
+            script,
+            fallback: ["ok": true, "filled": [username.isEmpty ? nil : "username", password.isEmpty ? nil : "password"].compactMap { $0 }, "submitted": submit],
+            in: webView
+        ) else {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: "The page did not respond to login fill.")
+        }
+        if let error = object["error"] as? String {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: error)
+        }
+        guard object["ok"] as? Bool == true else {
+            return VaultFillResult(ok: false, documentID: nil, fieldsFilled: [], submitted: false, error: Self.staleMessage)
+        }
+        return VaultFillResult(
+            ok: true,
+            documentID: object["document"] as? String ?? observation(in: webView)?.documentID,
+            fieldsFilled: object["filled"] as? [String] ?? [],
+            submitted: object["submitted"] as? Bool == true,
+            error: nil
+        )
+    }
 
     static func selectOption(
         _ option: String,
@@ -493,7 +626,7 @@ enum PageDriver {
                 """
                   const el = window.__wsurfRefs[\(found.ref) - 1];
                   if (!el || !el.isConnected || el.tagName !== 'SELECT') { return JSON.stringify({ stale: true }); }
-                  if (R.isSensitiveField(el)) { return JSON.stringify({ refused: true }); }
+                  if (R.isSensitiveSecret(el)) { return JSON.stringify({ refused: true }); }
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
                   if (el.readOnly || el.getAttribute('aria-readonly') === 'true') return JSON.stringify({ error: 'This control is read-only.' });
@@ -512,6 +645,8 @@ enum PageDriver {
                   for (const o of options) { o.selected = false; }
                   match.selected = true;
                   el.value = match.value;
+                  el.removeAttribute('data-wsurf-contact');
+                  el.removeAttribute('data-wsurf-autofilled');
                   const view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
                   el.dispatchEvent(new (view.Event)('input', { bubbles: true }));
                   el.dispatchEvent(new (view.Event)('change', { bubbles: true }));

@@ -188,7 +188,7 @@ struct MCPSecretTypingTests {
 
         #expect(typed.isError == false, "\(everything(typed))")
         #expect(try await value(of: "pw", in: rig) == Self.password, "the page holds what was typed")
-        #expect(everything(typed).contains("Typed a secret into"))
+        #expect(everything(typed).contains("(sensitive field, value hidden)"))
         #expect(rig.session.secrets.count == 1)
         // The change report says the field went from empty to filled, without its value.
         #expect(everything(typed).contains("filled false → true"))
@@ -202,23 +202,23 @@ struct MCPSecretTypingTests {
     }
 
     enum Refusal: String, CaseIterable, Sendable {
-        case controlOnly, notADeveloperSite, unpaired, wrongProfile, readOnlySite
+        case disabledUnderControl, readOnlyGrant, readOnlySite
     }
 
     @Test(arguments: Refusal.allCases)
-    func secretTypingIsRefusedOutsideTheDeveloperTier(scenario refusal: Refusal) async throws {
-        // Everyone but the control-only client asks for Developer in the sheet; none of them may get it where it does not apply.
+    func secretTypingIsRefusedWhenPasswordEntryIsDisabledOrReadOnly(scenario refusal: Refusal) async throws {
         let rig = try await makeRig(
-            standing: refusal == .controlOnly ? .off : .developer,
-            profile: refusal == .wrongProfile ? UUID() : Profile.originalID,
-            paired: refusal != .unpaired, thisMac: refusal != .notADeveloperSite, answer: refusal == .controlOnly ? .control : .developer)
+            standing: .off,
+            answer: refusal == .readOnlyGrant ? .readOnly : .control)
         defer { close(rig) }
+        if refusal == .disabledUnderControl {
+            try rig.trust.setAllowsPasswordEntry(false)
+        }
         if refusal == .readOnlySite {
             rig.browser.sitePermissions.setAssistantAccess(.readOnly, for: SitePermissions.origin(for: try rig.server.url()))
         }
-        _ = try await call(rig, "requestAccess", ["development": true, "developer": true], tab: false)
+        _ = try await call(rig, "requestAccess", [:], tab: false)
         #expect(!rig.session.permits(rig.tab, capability: .developer), "\(refusal)")
-        // Reading may be blocked too (a Read Only site is not controllable); the typing calls are what must never reach the page.
         let read = try await call(rig, "readPage")
         let observationID = observation(read) ?? "none"
         let password = (try? ref("Password", in: read)) ?? 2
@@ -234,48 +234,49 @@ struct MCPSecretTypingTests {
             #expect(try await value(of: "pw", in: rig) == "", "\(refusal): nothing may reach the field")
         }
         #expect(rig.session.secrets.isEmpty, "\(refusal): a refused secret is not even remembered")
-        if refusal != .readOnlySite {
-            #expect(everything(typed).contains("Developer access"), "\(refusal): \(everything(typed))")
-        }
         try expectNoSecret(in: typed, "the refusal", secrets: [Self.password])
         try expectNoSecret(in: filled, "the batch refusal", secrets: [Self.password])
     }
 
-    @Test func withoutSecretSensitiveFieldsStayRefusedEvenInTheDeveloperTier() async throws {
-        let rig = try await makeRig()
+    @Test func passwordAndOTPFieldsWorkDirectlyWithoutSecretFlagWhenAllowed() async throws {
+        let rig = try await makeRig(standing: .off, answer: .control)
         defer { close(rig) }
         _ = try await call(rig, "requestAccess", [:], tab: false)
         let first = try await call(rig, "readPage")
         let password = try ref("Password", in: first), code = try ref("Verification code", in: first), username = try ref("Username", in: first)
 
-        for flag in [nil, false] {
-            // A refusal returns no observation, so each attempt reads the page first.
-            let read = try await call(rig, "readPage")
-            var arguments: [String: Value] = [
-                "observationID": .string(try #require(observation(read))), "ref": .int(password), "text": .string(Self.password),
-            ]
-            if let flag {
-                arguments["secret"] = .bool(flag)
-            }
-            let typed = try await call(rig, "typeOnPage", arguments)
-            #expect(typed.isError == true, "\(everything(typed))")
-            #expect(everything(typed).contains("The user has to fill it themselves"), "today's refusal, unchanged: \(everything(typed))")
-        }
+        // Direct password typing under Control without `secret: true` works and automatically scrubs/hides the value.
+        let typed = try await call(rig, "typeOnPage", [
+            "observationID": .string(try #require(observation(first))), "ref": .int(password), "text": .string(Self.password),
+        ])
+        #expect(typed.isError == false, "\(everything(typed))")
+        #expect(everything(typed).contains("(sensitive field, value hidden)"))
+        #expect(try await value(of: "pw", in: rig) == Self.password)
+        try expectNoSecret(in: typed, "direct password typing", secrets: [Self.password])
+
         let latest = try await call(rig, "readPage")
         let filled = try await call(rig, "fillFields", [
             "observationID": .string(try #require(observation(latest))),
             "fields": .array([
                 .object(["ref": .int(username), "value": "alice", "select": false]),
                 .object(["ref": .int(password), "value": .string(Self.password), "select": false]),
-                .object(["ref": .int(code), "value": .string(Self.code), "select": false, "secret": false]),
+                .object(["ref": .int(code), "value": .string(Self.code), "select": false]),
             ]),
         ])
-        #expect(everything(filled).contains("Filled 1 of 3"), "\(everything(filled))")
-        #expect(everything(filled).contains("sensitive field"))
+        #expect(everything(filled).contains("Filled 3 of 3"), "\(everything(filled))")
         #expect(try await value(of: "user", in: rig) == "alice")
-        #expect(try await value(of: "pw", in: rig) == "")
-        #expect(try await value(of: "otp", in: rig) == "")
-        #expect(rig.session.secrets.isEmpty)
+        #expect(try await value(of: "pw", in: rig) == Self.password)
+        #expect(try await value(of: "otp", in: rig) == Self.code)
+        try expectNoSecret(in: filled, "direct batch typing", secrets: [Self.password, Self.code])
+
+        // Turning off allowsPasswordEntry refuses direct password writes under Control.
+        try rig.trust.setAllowsPasswordEntry(false)
+        let afterToggle = try await call(rig, "readPage")
+        let refused = try await call(rig, "typeOnPage", [
+            "observationID": .string(try #require(observation(afterToggle))), "ref": .int(password), "text": "blocked-pw-99",
+        ])
+        #expect(refused.isError == true, "\(everything(refused))")
+        #expect(everything(refused).contains("The user has to fill it themselves"))
     }
 
     @Test func aSecretMustBeLongEnoughToBeHiddenAndIsRefusedBeforeAnythingIsTyped() async throws {
@@ -695,9 +696,10 @@ struct MCPSecretTypingTests {
         try expectNoSecret(in: shot, "the screenshot reply", secrets: [Self.password, Self.token])
     }
 
-    @Test func outsideTheDeveloperTierAFilledSensitiveFieldStillPreventsTheCapture() async throws {
+    @Test func whenPasswordEntryIsDisabledAFilledSensitiveFieldPreventsTheCapture() async throws {
         let rig = try await makeRig(standing: .development)
         defer { close(rig) }
+        try rig.trust.setAllowsPasswordEntry(false)
         _ = try await call(rig, "requestAccess", [:], tab: false)
         _ = try await rig.tab.page.evaluateJavaScript("document.getElementById('pw').value = 'filled-by-the-user'; 0")
         let shot = try await call(rig, "screenshotPage")

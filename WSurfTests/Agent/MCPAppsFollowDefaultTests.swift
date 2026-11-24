@@ -128,7 +128,7 @@ struct MCPAppsFollowDefaultTests {
     /// Shares the home page, moves the tab to the other website with `navigate`, and waits until it has loaded.
     private func moveAway(_ rig: Rig) async throws -> CallTool.Result {
         try await share(rig)
-        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString)])
+        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString), "inPlace": true])
         if moved.isError != true {
             #expect(await settled(rig.tab, at: rig.awayURL))
         }
@@ -184,7 +184,7 @@ struct MCPAppsFollowDefaultTests {
         #expect(rig.tabGrant?.access == .development)
         #expect(try await call(rig, "readPage", rig.tab).isError == false)
 
-        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString)])
+        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString), "inPlace": true])
         #expect(moved.isError == false, "\(text(moved))")
         #expect(await settled(rig.tab, at: rig.awayURL))
         #expect(rig.sheets.opened.isEmpty)
@@ -194,18 +194,15 @@ struct MCPAppsFollowDefaultTests {
         #expect(!rig.session.permits(rig.tab, capability: .developer))
     }
 
-    @Test(.boundedWebViews) func aNewTabFollowsTheDefaultButStillNeedsControlOfASharedTab() async throws {
+    @Test(.boundedWebViews) func aNewTabFollowsTheDefaultWithoutPriorGrantsOrASheet() async throws {
         let rig = try await makeRig()
-        let early = try await call(rig, "newTab", nil, ["url": .string(rig.awayURL.absoluteString)])
-        #expect(early.isError == true, "no grant yet: \(text(early))")
-        #expect(rig.browser.tabs.count == 1)
-        #expect(rig.sheets.opened.isEmpty)
-
-        try await share(rig)
-        let opened = try await call(rig, "newTab", nil, ["url": .string(rig.awayURL.absoluteString)])
+        // MCP v2: newTab works as a first-class entry point with no prior tab grants; under Website access default it opens
+        // immediately in the background without showing a sheet and without touching or sharing the user's active tab.
+        let opened = try await call(rig, "newTab", nil, ["url": .string(rig.awayURL.absoluteString), "engine": "webkit"])
         #expect(opened.isError == false, "\(text(opened))")
         #expect(rig.sheets.opened.isEmpty, "no Open and Share sheet")
         #expect(rig.browser.tabs.count == 2)
+        #expect(rig.session.grants[rig.tab.id] == nil, "the user's active tab was not shared")
         let created = try #require(rig.browser.tabs.first { $0 !== rig.tab })
         let grant = try #require(rig.session.grants[created.id])
         #expect(grant.source == .appDefault && grant.access == .control && grant.origin == rig.awayOrigin)
@@ -219,7 +216,7 @@ struct MCPAppsFollowDefaultTests {
         #expect(try await call(rig, "readPage", rig.tab).isError == false)
 
         let second = try rig.away.url("/second")
-        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(second.absoluteString)])
+        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(second.absoluteString), "inPlace": true])
         #expect(moved.isError == false, "\(text(moved))")
         #expect(await settled(rig.tab, at: second))
         #expect(rig.sheets.opened.isEmpty)
@@ -237,7 +234,7 @@ struct MCPAppsFollowDefaultTests {
         #expect(rig.tab.page.url == rig.homeURL)
 
         rig.sheets.allowOpen = true
-        let approved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString)])
+        let approved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString), "inPlace": true])
         #expect(approved.isError == false, "\(text(approved))")
         #expect(rig.sheets.opened.count == 2)
         #expect(rig.tabGrant?.source == .sheet, "an approved sheet is an ordinary grant")
@@ -346,7 +343,7 @@ struct MCPAppsFollowDefaultTests {
         #expect(rig.sheets.opened == [rig.awayURL])
 
         try rig.trust.setPaused(false, for: rig.client.id)
-        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString)])
+        let moved = try await call(rig, "navigate", rig.tab, ["url": .string(rig.awayURL.absoluteString), "inPlace": true])
         #expect(moved.isError == false, "\(text(moved))")
         #expect(rig.sheets.opened.count == 1, "no second sheet")
         #expect(rig.tabGrant?.source == .appDefault)

@@ -30,13 +30,11 @@ extension MCPBrowserSession {
             return refusal
         }
         let arguments = targeted
-        // A secret is typed only in the Developer tier. Refused before anything is typed, and registered before it is. This
-        // reads the arguments after a selector became a ref, so a selector-targeted secret is covered like a ref-targeted one.
-        let secretEntry = Self.secretEntry(tool: name, arguments: arguments)
-        if let secretEntry, let refusal = secretEntryRefusal(secretEntry, tab: tab) {
-            return refusal
+        // Explicit `secret: true` is refused immediately if password/secret entry is disallowed.
+        let explicitSecretEntry = Self.secretEntry(tool: name, arguments: arguments)
+        if let explicitSecretEntry, !allowsPasswordEntry(for: tab) {
+            return secretEntryRefusal(explicitSecretEntry, tab: tab) ?? failure("Password and secret entry is not allowed.")
         }
-        let typesSecret = secretEntry != nil
         if let refusal = fullInspectionRefusal(name, arguments: arguments, tab: tab) {
             return refusal
         }
@@ -51,12 +49,44 @@ extension MCPBrowserSession {
                 observation.documentURL == url.absoluteString
             else { return failure("The observation is stale. Use readPage again.") }
         }
+        // Under Control (when password entry is allowed) or Developer tier, writes into password/OTP/card fields are
+        // automatically treated as secret entries: registered in MCPSecretScrubber before typing, autofill suppressed,
+        // and value hidden from every result — without requiring `secret: true`.
+        var autoSensitiveRefs: Set<Int> = []
+        if allowsPasswordEntry(for: tab), name == "typeOnPage" || name == "fillFields" {
+            let probeRefs: [Int]
+            if name == "typeOnPage" {
+                probeRefs = arguments["ref"]?.intValue.map { [$0] } ?? []
+            } else {
+                probeRefs = arguments["fields"]?.arrayValue?.compactMap { $0.objectValue?["ref"]?.intValue } ?? []
+            }
+            if !probeRefs.isEmpty {
+                let probeScope = PageAutomationGuard(
+                    documentURL: url.absoluteString, snapshot: observation?.snapshot,
+                    validate: { [weak self, weak tab, weak view] in
+                        guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                        return self.mayProceed(tab, capability: capability)
+                    })
+                autoSensitiveRefs = await PageAutomationGuard.$current.withValue(probeScope) {
+                    await PageDriver.sensitiveSecretRefs(probeRefs, in: view)
+                }
+                guard mayProceed(tab, capability: capability), tab.isLive(view, generation: generation), webURL(of: tab) == url else {
+                    return failure("Page access changed. Read the page again.")
+                }
+            }
+        }
+        let secretEntry = Self.secretEntry(tool: name, arguments: arguments, autoSensitiveRefs: autoSensitiveRefs)
+        if let secretEntry, let refusal = secretEntryRefusal(secretEntry, tab: tab) {
+            return refusal
+        }
+        let typesSecret = secretEntry != nil
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
-                    && (!(typesSecret || readsAsDeveloper) || self.mayProceed(tab, capability: .developer))
+                    && (!typesSecret || self.allowsPasswordEntry(for: tab))
+                    && (!readsAsDeveloper || self.mayProceed(tab, capability: .developer))
                     && (capability != .control || self.isReachable(tab))
             }
         )
@@ -119,6 +149,14 @@ extension MCPBrowserSession {
                 arguments["screenshotOnFailure"]?.stringValue, ref: arguments["ref"]?.intValue, tab: tab, view: view, scope: scope)
         }
         var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
+        if succeeded, name == "readPage" || name == "inspectControl", let currentURL = webURL(of: tab),
+            let hint = await vaultHint(for: tab, view: view, url: currentURL) {
+            guard scope.validate(), !Task.isCancelled else {
+                observations[tab.id] = nil
+                return failure("Page access changed before the operation finished. Its contents were not returned.")
+            }
+            content["vaultHint"] = hint
+        }
         var delivered: PageObservation?
         if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
             output.contains("observationID: " + current.id) {

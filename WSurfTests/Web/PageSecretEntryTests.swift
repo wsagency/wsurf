@@ -93,7 +93,8 @@ struct PageSecretEntryTests {
             let password = try #require(try await refs(in: view).first)
             let typed = await PageDriver.type(
                 text: Self.password, intoField: "", ref: password, submit: true, allowSensitive: true, in: view)
-            #expect(typed.hasPrefix("Typed a secret into"), "engine \(engine): \(typed)")
+            #expect(typed.hasPrefix("Typed into"), "engine \(engine): \(typed)")
+            #expect(typed.contains("(sensitive field, value hidden)"), "engine \(engine): \(typed)")
             #expect(typed.contains("requested submission") && !typed.contains("did not retain"), "engine \(engine): \(typed)")
             #expect(!typed.contains(Self.password))
         }
@@ -113,7 +114,8 @@ struct PageSecretEntryTests {
             var writes: [PageDriver.SecretWrite] = []
             let typed = await PageDriver.type(
                 text: Self.password, intoField: "", ref: password, submit: false, allowSensitive: true, secretWritten: { writes.append($0) }, in: view)
-            #expect(typed.hasPrefix("Typed a secret into"), "engine \(engine): \(typed)")
+            #expect(typed.hasPrefix("Typed into"), "engine \(engine): \(typed)")
+            #expect(typed.contains("(sensitive field, value hidden)"), "engine \(engine): \(typed)")
             #expect(!typed.contains(Self.password), "engine \(engine)")
             #expect(typed.contains("(filled, hidden)"))
             #expect(try await value("pw", in: view) == Self.password)

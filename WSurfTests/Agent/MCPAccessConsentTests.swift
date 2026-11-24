@@ -78,4 +78,26 @@ struct MCPAccessConsentTests {
         #expect(sheet.message.contains("Docs"))
         #expect(sheet.message.contains("example.com"))
     }
+
+    @Test func loginSheetOffersAllFourVaultChoicesAndMapsEscapeToDecline() {
+        let url = URL(string: "https://app.example.com/login")!
+        let withVault = MCPAccessConsent.loginSheet(
+            client: "Claude Code", url: url, hasSavedLogin: true, accountLabels: ["ada@example.com"], reason: "Sign in to check invoices")
+        #expect(withVault.title.contains("app.example.com"))
+        #expect(withVault.message.contains("ada@example.com"))
+        #expect(withVault.message.contains("Sign in to check invoices"))
+        #expect(withVault.buttons.map(\.choice) == [.fill, .fillAndSignIn, .takeOver, .decline])
+        #expect(withVault.choice(forButton: 0) == .fill)
+        #expect(withVault.choice(forButton: 1) == .fillAndSignIn)
+        #expect(withVault.choice(forButton: 2) == .takeOver)
+        #expect(withVault.choice(forButton: 3) == .decline)
+        #expect(withVault.choice(forButton: 99) == .decline)
+        #expect(withVault.buttons.last?.isEscape == true)
+
+        let withoutVault = MCPAccessConsent.loginSheet(
+            client: "codex-mcp-client", url: url, hasSavedLogin: false, accountLabels: [], reason: nil)
+        #expect(withoutVault.message.contains("Codex"))
+        #expect(withoutVault.buttons.map(\.choice) == [.takeOver, .decline])
+        #expect(withoutVault.buttons.last?.isEscape == true)
+    }
 }

@@ -292,6 +292,7 @@
    "MCPTransportTests",
    "MCPVisibilityTests",
    "MCPWindowScopeTests",
+   "MCPv2CoreTests",
    "MacSettingsSyncTests",
    "MacWebsiteSyncTests",
    "MainMenuKeyTests",
