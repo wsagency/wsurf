@@ -131,6 +131,21 @@ struct FaviconLoaderTests {
         #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == 2)
     }
 
+    /// A launch-time disk read that is still running when the host is forgotten must not put the forgotten icon back.
+    @Test func forgettingAHostDuringADiskReadKeepsItForgotten() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #require(FaviconLoader(cacheDirectory: directory).store(try iconData(), forHost: "example.com") != nil)
+        let loader = FaviconLoader(cacheDirectory: directory)
+        let reading = Task { await loader.cachedOffMain(for: "example.com") }
+        // Lets the read start, so the forget lands while it is off the main actor.
+        await Task.yield()
+        loader.forget(host: "example.com")
+        _ = await reading.value
+        #expect(loader.memoryCached(for: "example.com") == nil)
+        #expect(loader.cached(for: "example.com") == nil)
+    }
+
     @Test func forgettingAHostRemovesItsGuessedIconsToo() async throws {
         let directory = makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

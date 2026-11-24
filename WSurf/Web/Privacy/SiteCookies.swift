@@ -61,11 +61,40 @@ nonisolated struct SiteCookie: Identifiable, Hashable, Sendable, CustomStringCon
 
 @MainActor
 enum SiteCookies {
-    /// What a listing found. `chromiumUnavailable` is set when Chromium may hold cookies for the site but could not be asked;
-    /// the WebKit cookies are listed all the same.
+    /// What a listing found. The WebKit cookies are listed whatever Chromium answers.
     struct Listing {
         var cookies: [SiteCookie] = []
+        /// Chromium may hold cookies for the profile but could not be asked (out of process with no tab open, or it failed).
         var chromiumUnavailable = false
+        /// Chromium may hold cookies for the profile but is not running, and the listing was not allowed to start it.
+        var chromiumNotLoaded = false
+    }
+
+    /// How Chromium's cookies of a profile can be reached.
+    enum ChromiumAccess: Equatable {
+        /// Chromium holds nothing for the profile.
+        case none
+        /// An open tab, or a hidden page (Chromium is running, or may be started).
+        case available
+        /// Chromium holds data but is not running, and may not be started for this.
+        case notLoaded
+        /// Chromium holds data, but only a tab could reach it: it runs in its service and none is open.
+        case unreachable
+    }
+
+    /// The decision alone, on its inputs. Starting Chromium blocks the main thread while CEF loads, so a list that opens with a
+    /// panel never does it; an explicit Load or Delete does.
+    nonisolated static func chromiumAccess(
+        hasLivePage: Bool, mayHoldCookies: Bool, isOutOfProcess: Bool, hasStarted: Bool, allowStartup: Bool
+    ) -> ChromiumAccess {
+        if hasLivePage {
+            return .available
+        }
+        guard mayHoldCookies else { return .none }
+        if isOutOfProcess {
+            return .unreachable
+        }
+        return hasStarted || allowStartup ? .available : .notLoaded
     }
 
     // MARK: Matching
@@ -108,21 +137,25 @@ enum SiteCookies {
     // MARK: Listing
 
     /// Every cookie of either engine that applies to `host` in this profile. Chromium is asked only when it may hold some
-    /// (`ChromiumRuntime.mayHoldCookies`), so a profile that never used it does not start it.
-    static func list(host: String, context: BrowserProfileContext) async -> Listing {
+    /// (`ChromiumRuntime.mayHoldCookies`), and started only when `allowChromiumStartup`.
+    static func list(host: String, context: BrowserProfileContext, allowChromiumStartup: Bool = false) async -> Listing {
         var listing = Listing()
         listing.cookies = await webKitCookies(context: context).filter { applies(domain: $0.domain, to: host) }
-        do {
-            let chromium = try await withChromium(context: context) { page in
-                try await chromiumCookies(page).filter { applies(domain: $0.domain, to: host) }
+        switch chromiumAccess(context, allowStartup: allowChromiumStartup) {
+        case .available:
+            do {
+                listing.cookies += try await withChromium(context: context) { page in
+                    try await chromiumCookies(page).filter { applies(domain: $0.domain, to: host) }
+                } ?? []
+            } catch {
+                listing.chromiumUnavailable = true
             }
-            if let chromium {
-                listing.cookies += chromium
-            } else {
-                listing.chromiumUnavailable = isUnreachable(context)
-            }
-        } catch {
+        case .notLoaded:
+            listing.chromiumNotLoaded = true
+        case .unreachable:
             listing.chromiumUnavailable = true
+        case .none:
+            break
         }
         listing.cookies.sort { lhs, rhs in
             let order = lhs.name.localizedStandardCompare(rhs.name)
@@ -140,6 +173,7 @@ enum SiteCookies {
                 await store.deleteCookie(stored)
             }
         case .chromium:
+            try requireReachable(context)
             _ = try await withChromium(context: context) { page in
                 try await deleteChromium([cookie], on: page)
             }
@@ -147,22 +181,25 @@ enum SiteCookies {
         }
     }
 
-    /// Removes every cookie of either engine that applies to `host`, then the host's cached favicon. Returns how many cookies went.
+    /// Removes every cookie of either engine that applies to `host`, starting Chromium if it holds data, then the host's cached
+    /// favicon. Returns how many cookies went. When Chromium cannot be reached or fails, the WebKit cookies and the favicon are
+    /// still cleared and the error is thrown, so the person is not told Chromium's cookies went.
     @discardableResult
     static func deleteAll(host: String, context: BrowserProfileContext) async throws -> Int {
+        defer { context.forgetFavicon(host: host) }
         var removed = 0
         let store = context.dataStore.httpCookieStore
         for cookie in await store.allCookies() where applies(domain: cookie.domain, to: host) {
             await store.deleteCookie(cookie)
             removed += 1
         }
+        try requireReachable(context)
+        defer { flush(context) }
         removed += try await withChromium(context: context) { page in
             let matching = try await chromiumCookies(page).filter { applies(domain: $0.domain, to: host) }
             try await deleteChromium(matching, on: page)
             return matching.count
         } ?? 0
-        flush(context)
-        context.forgetFavicon(host: host)
         return removed
     }
 
@@ -184,26 +221,41 @@ enum SiteCookies {
 
     // MARK: Chromium
 
-    /// Runs `body` on a page of this profile's Chromium: an open tab's page when there is one, else a hidden page when Chromium
-    /// runs in this process and may hold cookies for the profile. Nil when there is nothing to ask, or Chromium cannot be asked
-    /// without a tab (it runs in its service).
+    private static func livePage(_ context: BrowserProfileContext) -> ChromiumPage? {
+        ChromiumRuntime.shared.livePages.first {
+            $0.context.contextID == context.contextID && ($0.raw != nil || $0.remote != nil)
+        }
+    }
+
+    static func chromiumAccess(_ context: BrowserProfileContext, allowStartup: Bool) -> ChromiumAccess {
+        guard !context.privateSessionEnded else { return .none }
+        let runtime = ChromiumRuntime.shared
+        return chromiumAccess(
+            hasLivePage: livePage(context) != nil, mayHoldCookies: runtime.mayHoldCookies(for: context),
+            isOutOfProcess: ChromiumOOP.latch.mode == .outOfProcess, hasStarted: runtime.hasStartedChromium,
+            allowStartup: allowStartup
+        )
+    }
+
+    /// Throws when Chromium holds data for the profile that no page can reach, so a deletion does not claim it removed it.
+    private static func requireReachable(_ context: BrowserProfileContext) throws {
+        guard chromiumAccess(context, allowStartup: true) == .unreachable else { return }
+        throw ChromiumError.unavailable(
+            String(localized: "Chromium cookies couldn’t be reached. Open this website in a Chromium tab and try again.")
+        )
+    }
+
+    /// Runs `body` on a page of this profile's Chromium: an open tab's page when there is one, else a hidden page, which starts
+    /// Chromium if it is not running. Nil when Chromium holds nothing for the profile or cannot be reached. Callers that must not
+    /// start Chromium check `chromiumAccess` first.
     private static func withChromium<T>(
         context: BrowserProfileContext, _ body: (ChromiumPage) async throws -> T
     ) async throws -> T? {
-        let runtime = ChromiumRuntime.shared
-        guard !context.privateSessionEnded else { return nil }
-        if let page = runtime.livePages.first(where: {
-            $0.context.contextID == context.contextID && ($0.raw != nil || $0.remote != nil)
-        }) {
+        if let page = livePage(context) {
             return try await body(page)
         }
-        guard runtime.mayHoldCookies(for: context), ChromiumOOP.latch.mode != .outOfProcess else { return nil }
-        return try await runtime.withHiddenPage(context: context, body)
-    }
-
-    /// Chromium may hold cookies for the profile, but only a tab could reach them (out of process, none open).
-    private static func isUnreachable(_ context: BrowserProfileContext) -> Bool {
-        ChromiumOOP.latch.mode == .outOfProcess && ChromiumRuntime.shared.mayHoldCookies(for: context)
+        guard chromiumAccess(context, allowStartup: true) == .available else { return nil }
+        return try await ChromiumRuntime.shared.withHiddenPage(context: context, body)
     }
 
     private static func chromiumCookies(_ page: ChromiumPage) async throws -> [SiteCookie] {
@@ -261,9 +313,11 @@ enum SiteCookies {
 
 extension BrowserProfileContext {
     /// Forgets the cached favicon of `host` in both appearances and clears it from the open tabs on that host, which load it again.
+    /// A tab's icon is filed under its page's host as written, so a host with a trailing dot is forgotten in both forms.
     func forgetFavicon(host: String) {
-        let host = host.lowercased()
+        guard let host = SiteCookies.canonicalHost(host) else { return }
         favicons.forget(host: host)
+        favicons.forget(host: host + ".")
         for tab in allTabs where URL(string: tab.urlString).flatMap({ SiteCookies.host(of: $0) }) == host {
             tab.favicon = nil
             tab.refreshFavicon()

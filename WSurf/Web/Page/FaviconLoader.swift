@@ -18,6 +18,9 @@ final class FaviconLoader {
     var persistsToDisk = true
 
     private var cacheGeneration = 0
+    /// Bumped by `forget(host:)`, so a disk read that began before it cannot put the forgotten icon back. Apart from
+    /// `cacheGeneration`, which also invalidates in-flight work of every other host.
+    private var forgetGeneration = 0
 
     static func cacheDirectory(for profile: Profile) -> URL {
         profile.isOriginal ? defaultCacheDirectory : defaultCacheDirectory.appendingPathComponent(profile.id.uuidString, isDirectory: true)
@@ -116,12 +119,13 @@ final class FaviconLoader {
 
         let files = [false, true].map { cacheFile(for: key, isGuess: $0) }
         let generation = cacheGeneration
+        let forgets = forgetGeneration
         let found = await Task.detached(priority: .utility) { Self.readIcon(at: files) }.value
-        // A clear, or a store of the same icon, may have happened while the file was read.
+        // A clear, a forget, or a store of the same icon may have happened while the file was read.
         if let image = sessionOnly[key] ?? cache[key] {
             return image
         }
-        guard generation == cacheGeneration else { return nil }
+        guard generation == cacheGeneration, forgets == forgetGeneration else { return nil }
         guard let found else {
             notOnDisk.insert(key)
             return nil
@@ -154,6 +158,7 @@ final class FaviconLoader {
     /// Forgets the icon of `host` in both appearances, in memory and, for a loader that writes the disk, in its files.
     func forget(host: String) {
         let host = host.lowercased()
+        forgetGeneration &+= 1
         for key in [host, host + "#dark"] {
             cache[key] = nil
             sessionOnly[key] = nil

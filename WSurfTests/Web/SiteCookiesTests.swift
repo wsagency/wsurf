@@ -186,6 +186,54 @@ struct SiteCookiesTests {
         await Profile.erase(profile)
     }
 
+    /// Opening Website Settings lists without starting Chromium: starting it blocks the main thread while CEF loads. Only an
+    /// open tab, a running Chromium, or an explicit Load or Delete reaches its cookies.
+    @Test func whenChromiumIsAskedForItsCookies() {
+        func access(live: Bool = false, holds: Bool = true, oop: Bool = false, started: Bool = false, allow: Bool = false)
+            -> SiteCookies.ChromiumAccess {
+            SiteCookies.chromiumAccess(
+                hasLivePage: live, mayHoldCookies: holds, isOutOfProcess: oop, hasStarted: started, allowStartup: allow)
+        }
+        #expect(access() == .notLoaded)
+        #expect(access(allow: true) == .available)
+        #expect(access(started: true) == .available)
+        #expect(access(live: true) == .available)
+        #expect(access(live: true, oop: true) == .available)
+        #expect(access(holds: false) == .none)
+        #expect(access(holds: false, allow: true) == .none)
+        #expect(access(oop: true, allow: true) == .unreachable)
+        #expect(access(oop: true, started: true) == .unreachable)
+    }
+
+    /// A profile with a Chromium disk profile: the passive listing reports Chromium as not loaded instead of starting it, and an
+    /// explicit load or Delete Cookies reaches it.
+    @Test(.boundedWebViews)
+    func aChromiumDiskProfileIsListedPassivelyWithoutStartingChromium() async throws {
+        let profile = Profile(id: UUID(), name: "Cookies", symbol: "person", color: .gray)
+        let context = BrowserProfileContext(profile: profile)
+        try FileManager.default.createDirectory(at: runtime.cacheDirectory(profileID: profile.id), withIntermediateDirectories: true)
+        let wasStarted = runtime.hasStartedChromium
+        let calls = runtime.ensureInitializedCalls
+
+        let passive = await SiteCookies.list(host: "example.test", context: context)
+
+        if wasStarted {
+            #expect(!passive.chromiumNotLoaded, "a running Chromium is asked")
+        } else {
+            #expect(passive.chromiumNotLoaded)
+            #expect(runtime.ensureInitializedCalls == calls)
+            #expect(!runtime.hasContext(contextID: context.contextID))
+        }
+        let loaded = await SiteCookies.list(host: "example.test", context: context, allowChromiumStartup: true)
+        #expect(!loaded.chromiumNotLoaded && !loaded.chromiumUnavailable)
+        #expect(runtime.hasContext(contextID: context.contextID))
+        #expect(try await SiteCookies.deleteAll(host: "example.test", context: context) == 0)
+
+        await runtime.releaseContext(contextID: context.contextID)
+        try await runtime.erase(profile: profile)
+        await Profile.erase(profile)
+    }
+
     @Test(.boundedWebViews)
     func chromiumCookiesAreListedAndDeletedForTheSiteOnly() async throws {
         let profile = Profile(id: UUID(), name: "Cookies", symbol: "person", color: .gray)
@@ -240,11 +288,15 @@ struct SiteCookiesTests {
         let elsewhere = BrowserTab(restoring: true, context: context)
         elsewhere.urlString = "https://other.com/"
         elsewhere.favicon = icon
-        browser.tabs = [onSite, elsewhere]
+        let trailingDot = BrowserTab(restoring: true, context: context)
+        trailingDot.urlString = "https://example.com./"
+        trailingDot.favicon = icon
+        browser.tabs = [onSite, elsewhere, trailingDot]
 
         try await SiteCookies.deleteAll(host: "example.com", context: context)
 
         #expect(onSite.favicon == nil)
+        #expect(trailingDot.favicon == nil)
         #expect(elsewhere.favicon === icon)
         browser.tabs = []
         await Profile.erase(profile)

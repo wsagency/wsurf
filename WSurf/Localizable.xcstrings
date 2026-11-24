@@ -14254,6 +14254,15 @@
     },
     "Value" : {
       "comment" : "Website Settings → Cookies: label of a cookie's value in its details."
+    },
+    "Load Chromium Cookies" : {
+      "comment" : "Website Settings → Cookies: button that starts Chromium to list the website's Chromium cookies. Title case."
+    },
+    "Chromium isn’t running, so its cookies aren’t listed yet." : {
+      "comment" : "Website Settings → Cookies: note beside Load Chromium Cookies when Chromium holds data for the profile but has not started."
+    },
+    "Chromium cookies couldn’t be reached. Open this website in a Chromium tab and try again." : {
+      "comment" : "Website Settings → Cookies: error when deleting a website's cookies could not reach Chromium. WebKit cookies were deleted."
     }
   },
   "version" : "1.0"

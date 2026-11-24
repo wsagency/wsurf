@@ -28,7 +28,7 @@ struct SiteCookiesSettingsSection: View {
                 SettingsButton(title: "Delete Cookies…", isDestructive: true) {
                     confirmingDelete = true
                 }
-                .disabled(model.cookies?.isEmpty != false || model.deleting.contains(SiteCookiesModel.allID))
+                .disabled(!model.canDeleteAll)
                 .confirmationDialog(
                     Text("Delete the cookies of \"\(model.host)\"?"),
                     isPresented: $confirmingDelete
@@ -84,11 +84,11 @@ struct SiteCookiesDetailPage: View {
             }
             .disabled(model.clearedFavicon)
 
-            if !cookies.isEmpty {
+            if !cookies.isEmpty || model.chromiumNotLoaded {
                 SettingsButton(title: "Delete all…", isDestructive: true) {
                     confirmingDeleteAll = true
                 }
-                .disabled(model.deleting.contains(SiteCookiesModel.allID))
+                .disabled(!model.canDeleteAll)
                 .confirmationDialog(
                     Text("Delete every cookie of \"\(model.host)\"?"),
                     isPresented: $confirmingDeleteAll
@@ -154,6 +154,19 @@ struct SiteCookiesDetailPage: View {
 
         if model.chromiumUnavailable {
             Footnote("Chromium cookies aren’t shown. Open this website in a Chromium tab to see them.")
+        }
+
+        if model.chromiumNotLoaded {
+            HStack(spacing: 10) {
+                Text("Chromium isn’t running, so its cookies aren’t listed yet.")
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                SettingsButton(title: "Load Chromium Cookies") {
+                    Task { await model.loadChromium() }
+                }
+            }
         }
     }
 }

@@ -12,6 +12,10 @@ final class SiteCookiesModel {
     /// Nil while counting.
     private(set) var cookies: [SiteCookie]?
     private(set) var chromiumUnavailable = false
+    /// Chromium may hold cookies for this website but is not running; Load Chromium Cookies or a deletion starts it.
+    private(set) var chromiumNotLoaded = false
+    /// Bumped by every reload and removal, so a slower listing that began before one cannot put back what it removed.
+    private var generation = 0
     /// The ids of the cookies being removed, and `allID` while every cookie is.
     private(set) var deleting: Set<String> = []
     var error: String?
@@ -40,13 +44,29 @@ final class SiteCookiesModel {
         Set((cookies ?? []).map(\.engine)).count > 1
     }
 
-    func reload() async {
-        let listing = await SiteCookies.list(host: host, context: context)
+    /// Whether Delete All can remove something: a listed cookie, or Chromium's, which are not listed until it is loaded.
+    var canDeleteAll: Bool {
+        guard let cookies, !deleting.contains(Self.allID) else { return false }
+        return !cookies.isEmpty || chromiumNotLoaded
+    }
+
+    /// Lists the cookies again. Opening a panel lists without starting Chromium; Load Chromium Cookies passes true.
+    func reload(allowChromiumStartup: Bool = false) async {
+        generation &+= 1
+        let started = generation
+        let listing = await SiteCookies.list(host: host, context: context, allowChromiumStartup: allowChromiumStartup)
+        guard started == generation else { return }
         cookies = listing.cookies
         chromiumUnavailable = listing.chromiumUnavailable
+        chromiumNotLoaded = listing.chromiumNotLoaded
+    }
+
+    func loadChromium() async {
+        await reload(allowChromiumStartup: true)
     }
 
     func delete(_ cookie: SiteCookie) async {
+        generation &+= 1
         deleting.insert(cookie.id)
         defer { deleting.remove(cookie.id) }
         do {
@@ -59,6 +79,7 @@ final class SiteCookiesModel {
     }
 
     func deleteAll() async {
+        generation &+= 1
         deleting.insert(Self.allID)
         defer { deleting.remove(Self.allID) }
         do {
@@ -306,7 +327,7 @@ private struct SiteCookiesSummary: View {
             Button("Delete Cookies", role: .destructive) {
                 confirmingDelete = true
             }
-            .disabled(model.cookies?.isEmpty != false || model.deleting.contains(SiteCookiesModel.allID))
+            .disabled(!model.canDeleteAll)
         }
         .controlSize(.small)
         .padding(.horizontal, SiteControlsMetrics.inset)
@@ -330,7 +351,6 @@ private struct SiteCookiesSummary: View {
                     confirmingDelete = false
                     Task { await model.deleteAll() }
                 }
-                .keyboardShortcut(.defaultAction)
             }
             .controlSize(.small)
         }
@@ -443,6 +463,21 @@ struct SiteCookiesManagerPopover: View {
                 .padding(.horizontal, SiteControlsMetrics.inset)
                 .padding(.bottom, 6)
         }
+        if model.chromiumNotLoaded {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Chromium isn’t running, so its cookies aren’t listed yet.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("Load Chromium Cookies") {
+                    Task { await model.loadChromium() }
+                }
+                .controlSize(.small)
+            }
+            .padding(.horizontal, SiteControlsMetrics.inset)
+            .padding(.bottom, 6)
+        }
     }
 
     @ViewBuilder
@@ -469,7 +504,7 @@ struct SiteCookiesManagerPopover: View {
                     ProgressView().controlSize(.mini)
                 }
                 Button("Delete All…", role: .destructive) { confirmingDeleteAll = true }
-                    .disabled(model.cookies?.isEmpty != false || model.deleting.contains(SiteCookiesModel.allID))
+                    .disabled(!model.canDeleteAll)
             }
         }
         .controlSize(.small)
