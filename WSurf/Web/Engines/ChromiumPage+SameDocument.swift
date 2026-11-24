@@ -31,12 +31,27 @@ extension ChromiumPage {
         }
     }
 
+    /// Stop ends WSurf's own work now and the engine's on the next turn: a navigation started in the same turn (Back and Forward
+    /// stop first, and so may a reload or a load) replaces the load anyway and drops the native stop (`supersedeStop`). Sent
+    /// together, a stop that reaches the renderer late can abort that new navigation instead, with ERR_ABORTED, which WSurf
+    /// ignores, and the tab stays on the old document, idle (seen on CI while an error page loaded).
     func stopLoading() {
         pendingLoad?.cancel()
         client?.documentResponses.reset()
-        remote?.send(CefRemote.Op.stop)
-        withBrowser { $0.pointee.stop_load?($0) }
         endUnstartedLoad()
+        pendingStop?.cancel()
+        pendingStop = Task { [weak self] in
+            guard let self, !Task.isCancelled, !closing, !isClosed else { return }
+            pendingStop = nil
+            remote?.send(CefRemote.Op.stop)
+            withBrowser { $0.pointee.stop_load?($0) }
+        }
+    }
+
+    /// A navigation the page starts now drops a native stop not sent yet (`stopLoading`).
+    func supersedeStop() {
+        pendingStop?.cancel()
+        pendingStop = nil
     }
 
     /// Stop ends a load that Chromium has not begun (no `willNavigate` yet). It reports no end of its own: `loading = false` is
