@@ -58,6 +58,19 @@ nonisolated enum MCPPairing {
         guard isWellFormed(token) else { return nil }
         return Data(#"{"wsurf":"hello","v":1,"token":"\#(token)"}"#.utf8)
     }
+
+    /// Extended pairing hello line binding the connection strictly to an Agent Micro Window via `windowToken`.
+    static func helloMessage(token: String, windowToken: String) -> Data? {
+        guard isWellFormed(token), isWellFormed(windowToken) else { return nil }
+        return Data(#"{"wsurf":"hello","v":1,"token":"\#(token)","windowToken":"\#(windowToken)"}"#.utf8)
+    }
+}
+
+/// Whether a `browser.sock` hello line requested binding to a specific Agent Micro Window via `windowToken`.
+nonisolated enum MCPWindowScopeHello: Equatable, Sendable {
+    case none
+    /// `windowToken` was present in the hello payload; associated value is nil if malformed.
+    case requested(String?)
 }
 
 /// Recognizes the optional hello line at the start of a connection.
@@ -78,6 +91,8 @@ nonisolated struct MCPHelloGate {
     static let maximumBytes = 512
     private static let marker = Data(#"{"wsurf":"hello""#.utf8)
     private var pending = Data()
+    /// Populated when a hello line carried a `windowToken` field.
+    private(set) var windowScope: MCPWindowScopeHello = .none
 
     mutating func append(_ chunk: Data) -> Outcome {
         pending.append(chunk)
@@ -88,13 +103,25 @@ nonisolated struct MCPHelloGate {
         }
         let line = Data(pending[..<newline])
         guard line.count <= Self.maximumBytes else { return .rejected }
-        return .hello(token: Self.token(in: line), rest: Data(pending[pending.index(after: newline)...]))
+        let parsed = Self.parse(line: line)
+        windowScope = parsed.windowScope
+        return .hello(token: parsed.token, rest: Data(pending[pending.index(after: newline)...]))
     }
 
-    private static func token(in line: Data) -> String? {
+    private static func parse(line: Data) -> (token: String?, windowScope: MCPWindowScopeHello) {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              object["wsurf"] as? String == "hello", object["v"] as? Int == 1,
-              let token = object["token"] as? String, MCPPairing.isWellFormed(token) else { return nil }
-        return token
+              object["wsurf"] as? String == "hello", object["v"] as? Int == 1
+        else {
+            return (nil, .none)
+        }
+        let token = (object["token"] as? String).flatMap { MCPPairing.isWellFormed($0) ? $0 : nil }
+        let scope: MCPWindowScopeHello
+        if let rawWindowToken = object["windowToken"] {
+            let valid = (rawWindowToken as? String).flatMap { MCPPairing.isWellFormed($0) ? $0 : nil }
+            scope = .requested(valid)
+        } else {
+            scope = .none
+        }
+        return (token, scope)
     }
 }

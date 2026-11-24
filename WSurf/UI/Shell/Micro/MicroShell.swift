@@ -70,8 +70,12 @@ struct MicroShell: View {
     }
 
     /// `keepsBar` for a live window. A page that has no host to show (nothing yet, `about:`, `data:`, a file) counts as no
-    /// page: what cannot be told is a reason to keep the bar, never to drop it.
+    /// page: what cannot be told is a reason to keep the bar, never to drop it. An Agent Micro Window always keeps the bar
+    /// visible so external control status, Take Over, Hand Back, and Stop stay one click away.
     static func keepsBar(browser: BrowserModel, coordinator: AppCoordinator, isEditing: Bool, voiceOver: Bool) -> Bool {
+        if browser.agentCompanion != nil {
+            return true
+        }
         let tab = browser.activeTab
         return keepsBar(
             hasPage: host(of: tab?.urlString) != nil,
@@ -117,9 +121,10 @@ struct MicroShell: View {
 
     var body: some View {
         let spacing = BrowserSettings.application.chromeShape.pageSpacing
+        let extraAgentHeight = browser.agentCompanion != nil ? AgentMicroControlBar.height : 0
         ZStack(alignment: .top) {
             MicroRevealSensor(
-                zoneHeight: reveal.isRevealed ? IslandBar.height + 8 : Self.revealBand,
+                zoneHeight: reveal.isRevealed ? IslandBar.height + extraAgentHeight + 8 : Self.revealBand,
                 showsWindowControls: reveal.isRevealed,
                 onPointerInZone: { reveal.pointer(inZone: $0) }
             )

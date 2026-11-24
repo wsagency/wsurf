@@ -12,6 +12,52 @@ extension AppCoordinator {
         browser.windowKind == .micro
     }
 
+    var isAgentMicro: Bool {
+        browser.isAgentMicro
+    }
+
+    /// Whether tabs opened inside this micro window stay here instead of handing off to the user's main window.
+    var keepsOwnTabs: Bool {
+        isAgentMicro || browser.agentCompanion?.allowsMultipleTabs == true
+    }
+
+    /// User clicked Take Over in an Agent Micro Window's MicroBar.
+    func takeOverAgentMicroWindow() {
+        guard browser.agentCompanion != nil else { return }
+        if let registry = application?.agentWindowRegistry {
+            registry.takeOver(window: browser)
+        } else if var companion = browser.agentCompanion {
+            companion.owner = .human
+            companion.generation += 1
+            companion.isWorking = false
+            browser.agentCompanion = companion
+            mcpServer.cancelActiveCall(in: browser)
+        }
+    }
+
+    /// User clicked Hand Back in an Agent Micro Window's MicroBar.
+    func handBackAgentMicroWindow() {
+        guard browser.agentCompanion != nil else { return }
+        if let registry = application?.agentWindowRegistry {
+            registry.handBack(window: browser)
+        } else if var companion = browser.agentCompanion {
+            companion.owner = .agent
+            companion.generation += 1
+            browser.agentCompanion = companion
+        }
+    }
+
+    /// User clicked Stop in an Agent Micro Window's MicroBar.
+    func stopAgentMicroWindow() {
+        guard browser.agentCompanion != nil else { return }
+        if let registry = application?.agentWindowRegistry {
+            registry.stop(window: browser)
+        } else {
+            mcpServer.stop(window: browser)
+            browser.agentCompanion = nil
+        }
+    }
+
     /// Opens an empty micro window with the address focused. From a private window it opens a regular one, as New Window does.
     @discardableResult
     func requestNewMicroWindow(show: Bool = true) -> AppCoordinator? {
@@ -85,7 +131,7 @@ extension AppCoordinator {
     /// or the assistant had on it, as dragging a tab to another window does.
     @discardableResult
     func giveToMainWindow(_ tab: BrowserTab, activate: Bool) -> Bool {
-        guard isMicro, !isClosed, browser.tabsByID[tab.id] === tab, let application else { return false }
+        guard isMicro, !isAgentMicro, !isClosed, browser.tabsByID[tab.id] === tab, let application else { return false }
         // The page goes back to the row it left, in whichever window keeps it.
         let kept = application.microPlaceholder(for: tab)
         guard let main = kept?.window ?? application.browsingWindow(for: self) else {
@@ -133,6 +179,9 @@ extension AppCoordinator {
             // After the tab has been made, so an opener that chose to show it has already done so.
             Task { @MainActor [weak self, weak tab] in
                 guard let self, let tab else { return }
+                if self.isAgentMicro {
+                    self.application?.agentWindowRegistry.notifyTabsChanged(for: self.browser)
+                }
                 handOff(tab)
             }
         }
@@ -141,7 +190,7 @@ extension AppCoordinator {
     }
 
     private func handOff(_ tab: BrowserTab) {
-        guard browser.tabs.count > 1, browser.tabsByID[tab.id] === tab else { return }
+        guard !keepsOwnTabs, browser.tabs.count > 1, browser.tabsByID[tab.id] === tab else { return }
         giveToMainWindow(tab, activate: browser.activeTabID == tab.id)
     }
 

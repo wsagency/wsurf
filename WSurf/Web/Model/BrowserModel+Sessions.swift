@@ -98,6 +98,7 @@ extension BrowserModel {
     }
 
     func markSessionClosed() {
+        guard !isAgentMicro else { return }
         sessionClosedAt = Date()
         saveBlocking()
     }
@@ -210,6 +211,7 @@ extension BrowserModel {
     }
 
     func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now, renamed: SidebarItem? = nil) {
+        guard !isAgentMicro else { return }
         noteCloudTabsChange()
         publishProfilePins()
         sharedSpaceService?.capture(self, renamed: renamed)
@@ -229,6 +231,7 @@ extension BrowserModel {
     }
 
     func saveNow() {
+        guard !isAgentMicro else { return }
         saveWaitingSince = nil
         let snapshot = snapshot()
         let database = database
@@ -252,6 +255,7 @@ extension BrowserModel {
     /// Persist both owners together before a close or a delayed save can race the move.
     @discardableResult
     func saveTransferredSession(from source: BrowserModel) -> Bool {
+        guard !isAgentMicro, !source.isAgentMicro else { return false }
         sharedSpaceService?.capture(self)
         source.cancelPendingSave()
         cancelPendingSave()
@@ -289,6 +293,7 @@ extension BrowserModel {
     }
 
     func saveBlocking() {
+        guard !isAgentMicro else { return }
         noteCloudTabsChange()
         cancelPendingSave()
         for tab in tabs {

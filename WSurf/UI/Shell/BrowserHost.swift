@@ -48,10 +48,14 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     // MARK: - Visibility
 
-    func show(activate: Bool = true) {
+    func show(activate: Bool = true, orderBack: Bool = false) {
         let window = ensureWindow()
         if !activate {
-            window.orderFront(nil)
+            if orderBack {
+                window.orderBack(nil)
+            } else {
+                window.orderFront(nil)
+            }
             window.alignWindowControls()
             isVisible = true
             publish()
@@ -340,10 +344,10 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         layer.masksToBounds = !isFullScreen
     }
 
-    /// A window's frame is saved under its own key, and a person's private window saves nothing. A test run saves nothing either:
-    /// it opens many windows, and each would leave a key in the standard preferences that no run removes.
+    /// A window's frame is saved under its own key, and a person's private or ephemeral agent window saves nothing.
+    /// A test run saves nothing either: it opens many windows, and each would leave a key in the standard preferences that no run removes.
     private var savesFrame: Bool {
-        coordinator?.profiles.isPrivate == false && !AppDatabase.isRunningTests
+        coordinator?.profiles.isPrivate == false && coordinator?.isAgentMicro != true && !AppDatabase.isRunningTests
     }
 
     /// Removes the tiling slot from the autosaved frame. macOS 26 replays it
@@ -377,10 +381,10 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         return MicroWindowMetrics.openingFrame(visible: visible, last: last.flatMap { $0.isEmpty ? nil : $0 })
     }
 
-    /// The next micro window opens beside this one. A private window leaves no trace of where it was.
+    /// The next micro window opens beside this one. A private or agent window leaves no trace of where it was.
     private func rememberMicroFrame() {
-        guard let window, coordinator?.isMicro == true, coordinator?.profiles.isPrivate == false,
-              !AppDatabase.isRunningTests else { return }
+        guard let window, coordinator?.isMicro == true, coordinator?.isAgentMicro != true,
+              coordinator?.profiles.isPrivate == false, !AppDatabase.isRunningTests else { return }
         UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: MicroWindowMetrics.lastFrameKey)
     }
 

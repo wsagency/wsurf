@@ -256,6 +256,8 @@
    "LinkWindowTests",
    "LyricsModelTests",
    "MCPActionFeedbackTests",
+   "MCPAgentMicroWindowTests",
+   "MCPAgentWindowBridgeTests",
    "MCPAppsFollowDefaultTests",
    "MCPBackgroundTabTests",
    "MCPClientInstallerTests",

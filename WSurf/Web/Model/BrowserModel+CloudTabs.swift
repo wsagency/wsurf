@@ -5,9 +5,9 @@ import Foundation
 import WSurfCore
 
 extension BrowserModel {
-    /// A regular window changed. A private window publishes nothing, not even that it changed.
+    /// A regular window changed. A private or agent micro window publishes nothing, not even that it changed.
     func noteCloudTabsChange() {
-        guard !opensPrivately else { return }
+        guard !opensPrivately, !isAgentMicro else { return }
         CloudTabs.shared?.noteChange()
     }
 
@@ -15,7 +15,7 @@ extension BrowserModel {
     /// pages and no page state. It walks the items the way `snapshot()` does, without its side effects: `snapshot()` bumps
     /// `sessionRevision` and must not be called from here.
     func cloudTabsNodes() -> [SessionNode] {
-        guard !opensPrivately, sessionClosedAt == nil else { return [] }
+        guard !opensPrivately, !isAgentMicro, sessionClosedAt == nil else { return [] }
         let tree = reconciledTree()
         let liveTabs = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let liveFolders = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

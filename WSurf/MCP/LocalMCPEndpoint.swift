@@ -23,6 +23,10 @@ nonisolated enum LocalMCPEndpoint {
         stageDirectory(for: home) + "/browser.sock"
     }
 
+    static func stageHostBridgePath(for home: URL) -> String {
+        stageDirectory(for: home) + "/host-bridge.sock"
+    }
+
     private static func stageDirectory(for home: URL) -> String {
         "/tmp/wsurf-mcp-\(geteuid())-\(StageMode.identity(for: home).prefix(32))"
     }
@@ -32,14 +36,18 @@ nonisolated enum LocalMCPEndpoint {
         directory + "/browser.sock"
     }
 
-    static func lockDirectory(_ directory: String) throws -> Int32 {
+    static var hostBridgePath: String {
+        directory + "/host-bridge.sock"
+    }
+
+    static func lockDirectory(_ directory: String, lockName: String = "server.lock") throws -> Int32 {
         guard mkdir(directory, 0o700) == 0 || errno == EEXIST else { throw failure() }
         var info = stat()
         guard lstat(directory, &info) == 0,
               info.st_uid == geteuid(), info.st_mode & S_IFMT == S_IFDIR,
               info.st_mode & 0o777 == 0o700
         else { throw failure() }
-        let descriptor = open(directory + "/server.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let descriptor = open(directory + "/" + lockName, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw failure() }
         guard fstat(descriptor, &info) == 0,
               info.st_uid == geteuid(), info.st_mode & S_IFMT == S_IFREG,
@@ -78,9 +86,13 @@ final class LocalMCPListener {
     private let path: String
     private var stopped = false
 
-    init(path: String = LocalMCPEndpoint.path, accept: @escaping @MainActor (NWConnection) -> Void) throws {
+    init(
+        path: String = LocalMCPEndpoint.path,
+        lockName: String = "server.lock",
+        accept: @escaping @MainActor (NWConnection) -> Void
+    ) throws {
         self.path = path
-        lock = try LocalMCPEndpoint.lockDirectory(URL(fileURLWithPath: path).deletingLastPathComponent().path)
+        lock = try LocalMCPEndpoint.lockDirectory(URL(fileURLWithPath: path).deletingLastPathComponent().path, lockName: lockName)
         unlink(path)
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .unix(path: path)

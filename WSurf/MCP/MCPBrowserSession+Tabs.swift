@@ -90,7 +90,7 @@ extension MCPBrowserSession {
     /// settings, which a process with a shell can edit: only what this connection did itself, or the Keychain-backed trust
     /// store, which holds Developer access (a paired app, a developer site and the Developer profile).
     private func closesWithoutAsking(_ tab: BrowserTab) -> Bool {
-        openedTabs.contains(tab.id) || closingWasConfirmed || permits(tab, capability: .developer)
+        agentWindowScope != nil || openedTabs.contains(tab.id) || closingWasConfirmed || permits(tab, capability: .developer)
     }
 
     /// The refusal for a `goBack` that would leave the granted website, or nil when the previous page may be loaded.

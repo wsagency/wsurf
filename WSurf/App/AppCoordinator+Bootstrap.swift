@@ -43,7 +43,7 @@ extension AppCoordinator {
             browser.sharedSpaceService?.applyCatalog(to: browser)
         }
         for url in urls.reversed() {
-            browser.newTab(url: url, transition: .link)
+            browser.newTab(url: url, transition: isAgentMicro ? .agent : .link)
         }
         // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
         if browser.activeTabID == nil {
@@ -67,7 +67,12 @@ extension AppCoordinator {
             self?.openPeek(url: url, from: tab, at: origin)
         }
         browser.onOpenInNewWindow = { [weak self] _, url, isPrivate in
-            self?.openLinkInNewWindow(url, isPrivate: isPrivate)
+            guard let self else { return }
+            if isAgentMicro {
+                browser.newTab(url: url, transition: .agent)
+                return
+            }
+            openLinkInNewWindow(url, isPrivate: isPrivate)
         }
         browser.onSummarizeLink = { [weak self] tab, url, anchor in
             guard let self, let tab else { return }
@@ -82,7 +87,11 @@ extension AppCoordinator {
             prepareWindowBloom()
         }
         timing.mark("window preparation")
-        showBrowser(activate: show)
+        if isAgentMicro, !show {
+            showBrowser(activate: false, orderBack: true)
+        } else {
+            showBrowser(activate: show)
+        }
         timing.mark("show window")
         if application == nil {
             mcpServer.resume()

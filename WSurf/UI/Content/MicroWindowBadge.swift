@@ -19,6 +19,9 @@ struct MicroWindowBadge: View {
     /// cannot take it.
     static func offer(for coordinator: AppCoordinator, tab: BrowserTab?) -> Offer? {
         guard let tab else { return nil }
+        if coordinator.isAgentMicro {
+            return nil
+        }
         if coordinator.isMicro {
             return tab.urlString.isEmpty ? nil : .moveBack
         }

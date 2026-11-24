@@ -19,6 +19,8 @@ actor LocalMCPTransport: Transport {
     private let onDisconnect: (@Sendable () async -> Void)?
     private let hello: Data?
     private let onHello: (@Sendable (String?) async -> Void)?
+    private let onHelloScope: (@Sendable (String?, MCPWindowScopeHello) async -> Bool)?
+    private let requiresWindowScope: Bool
     private let helloTimeout: Duration
 
     var isConnected: Bool {
@@ -30,18 +32,25 @@ actor LocalMCPTransport: Transport {
     ///   - onHello: Called once, before any later message is delivered, when the connection starts with a hello
     ///     (the server side). Its token is nil when the hello carries no valid one. A connection that does not start
     ///     with a hello is not reported and reaches MCP unchanged.
+    ///   - onHelloScope: Extended hello handler receiving both the paired token and any optional `windowToken` scope.
+    ///     Returning `false` closes the connection immediately before any MCP message is delivered.
+    ///   - requiresWindowScope: When true, connections that do not start with a hello are rejected immediately.
     ///   - helloTimeout: How long a hello may take to arrive in full.
     init(
         connection: NWConnection,
         onDisconnect: (@Sendable () async -> Void)? = nil,
         hello: Data? = nil,
         onHello: (@Sendable (String?) async -> Void)? = nil,
+        onHelloScope: (@Sendable (String?, MCPWindowScopeHello) async -> Bool)? = nil,
+        requiresWindowScope: Bool = false,
         helloTimeout: Duration = .seconds(2)
     ) {
         self.connection = connection
         self.onDisconnect = onDisconnect
         self.hello = hello
         self.onHello = onHello
+        self.onHelloScope = onHelloScope
+        self.requiresWindowScope = requiresWindowScope
         self.helloTimeout = helloTimeout
         (messages, continuation) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(64))
     }
@@ -107,14 +116,15 @@ actor LocalMCPTransport: Transport {
 
     private func readMessages() async {
         var frames = MCPMessageFramer()
-        var gate = onHello == nil ? nil : MCPHelloGate()
+        let inspectsHello = onHello != nil || onHelloScope != nil || requiresWindowScope
+        var gate = inspectsHello ? MCPHelloGate() : nil
         var deadline: Task<Void, Never>?
         defer { deadline?.cancel() }
         do {
             while connected, !Task.isCancelled {
                 guard var data = try await readChunk() else { break }
                 guard !data.isEmpty else { continue }
-                if let onHello, var pending = gate {
+                if inspectsHello, var pending = gate {
                     let outcome = pending.append(data)
                     gate = pending
                     switch outcome {
@@ -129,9 +139,18 @@ actor LocalMCPTransport: Transport {
                     case .rejected:
                         throw MCPError.invalidRequest("The pairing message is invalid.")
                     case .passthrough(let bytes):
+                        if requiresWindowScope {
+                            throw MCPError.connectionClosed
+                        }
                         data = bytes
                     case .hello(let token, let rest):
-                        await onHello(token)
+                        if let onHelloScope {
+                            guard await onHelloScope(token, pending.windowScope) else {
+                                throw MCPError.connectionClosed
+                            }
+                        } else if let onHello {
+                            await onHello(token)
+                        }
                         data = rest
                     }
                     gate = nil

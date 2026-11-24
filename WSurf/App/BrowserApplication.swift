@@ -110,23 +110,94 @@ final class BrowserApplication {
         }
     }
 
-    @ObservationIgnored lazy var mcpServer = BrowserMCPServer(
-        defaults: BrowserMCPServer.appDefaults,
-        target: { [weak self] in
-            guard let coordinator = self?.activeBrowsingCoordinator,
-                  !coordinator.isClosed, coordinator.nativeWindow != nil,
-                  !coordinator.profiles.isPrivate, !coordinator.isSwitchingProfile
-            else { return nil }
-            return coordinator.browser
+    @ObservationIgnored lazy var agentWindowRegistry: MCPAgentWindowRegistry = MCPAgentWindowRegistry(
+        trustStore: MCPTrustStore.shared,
+        opener: { [weak self] profile, companion, url, engine, floatOnTop, open in
+            guard let self else {
+                preconditionFailure("BrowserApplication deallocated while opening an Agent Micro Window")
+            }
+            return openAgentMicroWindow(
+                profile: profile,
+                companion: companion,
+                url: url,
+                engine: engine,
+                floatOnTop: floatOnTop,
+                open: open
+            )
         },
-        available: { [weak self] browser in
-            self?.windows.contains {
-                $0.browser === browser && !$0.isClosed && $0.nativeWindow != nil && !$0.isMicro
-                    && !$0.profiles.isPrivate && !$0.isSwitchingProfile && !$0.agentTurns.isRunning
-            } == true
+        disconnectMCP: { [weak self] browser in
+            self?.mcpServer.disconnect(browser: browser)
         },
-        developerTarget: { [weak self] profileID in self?.developerWindow(profileID: profileID)?.browser }
+        cancelMCPCalls: { [weak self] browser in
+            self?.mcpServer.cancelActiveCall(in: browser)
+        }
     )
+
+    @ObservationIgnored lazy var agentWindowBridge: MCPAgentWindowBridge = MCPAgentWindowBridge(
+        endpoint: LocalMCPEndpoint.hostBridgePath,
+        trustStore: MCPTrustStore.shared,
+        registry: agentWindowRegistry
+    )
+
+    @ObservationIgnored lazy var mcpServer: BrowserMCPServer = {
+        let server = BrowserMCPServer(
+            defaults: BrowserMCPServer.appDefaults,
+            target: { [weak self] in
+                guard let coordinator = self?.activeBrowsingCoordinator,
+                      !coordinator.isClosed, coordinator.nativeWindow != nil,
+                      !coordinator.profiles.isPrivate, !coordinator.isSwitchingProfile
+                else { return nil }
+                return coordinator.browser
+            },
+            available: { [weak self] browser in
+                self?.windows.contains {
+                    $0.browser === browser && !$0.isClosed && $0.nativeWindow != nil && !$0.isMicro
+                        && !$0.profiles.isPrivate && !$0.isSwitchingProfile && !$0.agentTurns.isRunning
+                } == true
+            },
+            developerTarget: { [weak self] profileID in self?.developerWindow(profileID: profileID)?.browser }
+        )
+        server.agentWindowRegistry = agentWindowRegistry
+        server.hostBridge = agentWindowBridge
+        return server
+    }()
+
+    /// Opens an isolated Agent Micro Window for an external host without activating WSurf or stealing focus unless
+    /// `open` is true. Never uses private browsing and never alters the user's current profile choice.
+    @discardableResult
+    func openAgentMicroWindow(
+        profile: Profile,
+        companion: AgentCompanionInfo,
+        url: URL? = nil,
+        engine: BrowserEngine = .chromium,
+        floatOnTop: Bool = false,
+        open: Bool = false
+    ) -> AppCoordinator {
+        let resolvedProfile = profile.isPrivate
+            ? (ProfileStore.shared.profiles.first(where: { !$0.isPrivate }) ?? .original())
+            : profile
+        let catalog = ProfileStore.shared
+        let previous = catalog.current
+        let context = BrowserProfileContext.shared(for: resolvedProfile, settingsOwner: resolvedProfile)
+        let browser = BrowserModel(context: context, windowID: UUID())
+        browser.windowKind = .micro
+        browser.isEphemeralAgentWindow = true
+        var info = companion
+        info.defaultEngine = engine
+        browser.agentCompanion = info
+        let selection = ProfileStore.selection(profile: resolvedProfile)
+        let coordinator = AppCoordinator(browser: browser, profiles: selection)
+        register(coordinator)
+        coordinator.prepareBrowser(restoring: false, show: open && !AppDatabase.isRunningTests, urls: url.map { [$0] } ?? [])
+        if floatOnTop {
+            coordinator.floatsOnTop = true
+        }
+        if open, AppDatabase.isRunningTests {
+            coordinator.showBrowser(activate: false)
+        }
+        catalog.markCurrent(previous)
+        return coordinator
+    }
 
     /// The regular window of the Developer profile a paired client with a standing grant works in: the one used most
     /// recently, or a new one shown behind other windows. Never a private window, and it never activates WSurf or takes focus.
@@ -557,6 +628,9 @@ final class BrowserApplication {
 
     func didClose(_ coordinator: AppCoordinator) {
         guard !isTerminating else { return }
+        if coordinator.isAgentMicro {
+            agentWindowRegistry.windowDidClose(coordinator)
+        }
         mcpServer.disconnect(browser: coordinator.browser)
         coordinator.extensions.unregister(browser: coordinator.browser)
         windows.removeAll { $0 === coordinator }

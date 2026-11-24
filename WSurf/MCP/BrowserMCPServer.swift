@@ -15,8 +15,9 @@ final class BrowserMCPServer {
     private struct Connection {
         let server: MCP.Server
         let transport: LocalMCPTransport
-        /// Replaced once, when a paired client's hello moves it to the Developer window. The identity (`id`) stays.
-        var session: MCPBrowserSession
+        /// Replaced once, when a paired client's hello moves it to the Developer window or an Agent Micro Window.
+        /// Nil briefly while a window-scope-only connection awaits its hello handshake.
+        var session: MCPBrowserSession?
         let task: Task<Void, Never>
     }
 
@@ -40,6 +41,10 @@ final class BrowserMCPServer {
     @ObservationIgnored private var connections: [UUID: Connection] = [:]
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var activeCall: (id: UUID, sessionID: UUID, task: Task<CallTool.Result, any Error>)?
+    /// Registry of detached Agent Micro Windows addressable exclusively via `windowToken`.
+    @ObservationIgnored var agentWindowRegistry: MCPAgentWindowRegistry?
+    /// External host bridge (`host-bridge.sock`) started and stopped alongside `browser.sock`.
+    @ObservationIgnored var hostBridge: MCPAgentWindowBridge?
 
     static var appDefaults: UserDefaults {
         #if DEBUG
@@ -181,6 +186,7 @@ final class BrowserMCPServer {
                 try await listener.start()
                 guard started == generation, isEnabled else { return }
                 isListening = true
+                hostBridge?.start()
             } catch {
                 guard started == generation else { return }
                 stop()
@@ -194,6 +200,7 @@ final class BrowserMCPServer {
         isListening = false
         isPaused = false
         status = nil
+        hostBridge?.stop()
         listener?.stop()
         listener = nil
         for id in Array(connections.keys) {
@@ -203,8 +210,10 @@ final class BrowserMCPServer {
 
     func disconnect(_ id: UUID) {
         guard let connection = connections.removeValue(forKey: id) else { return }
-        retire(connection.session.activity)
-        connection.session.revoke()
+        if let session = connection.session {
+            retire(session.activity)
+            session.revoke()
+        }
         connection.task.cancel()
         sessions.removeAll { $0.id == id }
         if activeCall?.sessionID == id {
@@ -222,10 +231,22 @@ final class BrowserMCPServer {
         for session in sessions where session.pairedClient?.id == client.id {
             disconnect(session.id)
         }
+        hostBridge?.disconnect(clientID: client.id)
+        agentWindowRegistry?.revokeClient(client.id)
     }
 
     func cancelActiveCall() {
         activeCall?.task.cancel()
+    }
+
+    func cancelActiveCall(in browser: BrowserModel) {
+        guard let active = activeCall,
+              let session = connections[active.sessionID]?.session,
+              session.isBound(to: browser)
+        else {
+            return
+        }
+        active.task.cancel()
     }
 
     private func retire(_ log: ExternalActivityLog) {
@@ -310,16 +331,60 @@ final class BrowserMCPServer {
         )
     }
 
+    /// Creates a pre-approved MCP session bound strictly to an Agent Micro Window via `scope`.
+    func makeAgentWindowSession(
+        for coordinator: AppCoordinator,
+        scope: MCPAgentWindowScope,
+        pairedClient: PairedClient?,
+        id: UUID = UUID()
+    ) -> MCPBrowserSession? {
+        let browser = coordinator.browser
+        guard !coordinator.isClosed, !browser.opensPrivately, !browser.context.profile.isPrivate,
+              coordinator.isAgentMicro, scope.isActive()
+        else {
+            return nil
+        }
+        let session = MCPBrowserSession(
+            browser: browser,
+            id: id,
+            trust: trustStore,
+            available: { [weak coordinator, weak scope] in
+                guard let coordinator, let scope, !coordinator.isClosed, coordinator.isAgentMicro,
+                      !coordinator.profiles.isPrivate, !coordinator.isSwitchingProfile
+                else {
+                    return false
+                }
+                return scope.isActive()
+            },
+            consent: { _, _, _ in nil },
+            openConsent: { _, _ in false },
+            sensitiveConsent: { _, _ in false }
+        )
+        session.pairedClient = pairedClient
+        session.agentWindowScope = scope
+        session.syncAgentWindowGrants()
+        return session
+    }
+
     private func accept(_ connection: NWConnection) {
-        guard isEnabled, connections.count < 8,
-              let session = makeSessionForConnection() else {
+        guard isEnabled, connections.count < 8 else {
             connection.cancel()
             return
         }
-        let id = session.id
-        let transport = LocalMCPTransport(connection: connection, onHello: { [weak self] token in
-            await self?.pair(id, token: token)
-        })
+        let initialSession = makeSessionForConnection()
+        let requiresWindowScope = initialSession == nil
+        guard initialSession != nil || agentWindowRegistry?.hasActiveWindows == true else {
+            connection.cancel()
+            return
+        }
+        let id = initialSession?.id ?? UUID()
+        let transport = LocalMCPTransport(
+            connection: connection,
+            onHelloScope: { [weak self] token, windowScope in
+                await self?.pair(id, token: token, windowScope: windowScope, requiresWindowScope: requiresWindowScope) ?? false
+            },
+            requiresWindowScope: requiresWindowScope
+        )
         let server = MCP.Server(
             name: "WSurf", version: "1.0.0",
             instructions: MCPToolCatalog.instructions,
@@ -336,7 +401,7 @@ final class BrowserMCPServer {
             do {
                 try await server.start(transport: transport) { [weak self] info, _ in
                     await MainActor.run {
-                        self?.connections[id]?.session.clientName = String(
+                        self?.connections[id]?.session?.clientName = String(
                             info.name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
                     }
                 }
@@ -345,17 +410,51 @@ final class BrowserMCPServer {
             }
             self?.disconnect(id)
         }
-        connections[id] = Connection(server: server, transport: transport, session: session, task: task)
-        sessions.append(session)
+        connections[id] = Connection(server: server, transport: transport, session: initialSession, task: task)
+        if let initialSession {
+            sessions.append(initialSession)
+        }
     }
 
-    /// Binds the connection to the paired client that owns `token`; a missing, wrong or revoked token leaves it unpaired.
-    /// The hello arrives before any MCP message, so a client with a standing grant moves to the Developer window while
-    /// nothing has been shared yet.
-    private func pair(_ id: UUID, token: String?) {
-        guard let session = connections[id]?.session, let token, let client = trustStore.authenticate(token: token) else { return }
+    /// Binds the connection to the paired client that owns `token`, and when `windowToken` is present binds it
+    /// exclusively to that Agent Micro Window (rejecting invalid `windowToken` without falling back to regular windows).
+    private func pair(_ id: UUID, token: String?, windowScope: MCPWindowScopeHello, requiresWindowScope: Bool) -> Bool {
+        if case .requested(let windowToken) = windowScope {
+            guard let token,
+                  let client = trustStore.authenticate(token: token),
+                  !client.paused,
+                  let windowToken,
+                  let resolved = agentWindowRegistry?.resolve(windowToken: windowToken, pairedClientId: client.id),
+                  let scopedSession = makeAgentWindowSession(
+                      for: resolved.coordinator,
+                      scope: resolved.scope,
+                      pairedClient: client,
+                      id: id
+                  )
+            else {
+                disconnect(id)
+                return false
+            }
+            let previous = connections[id]?.session
+            connections[id]?.session = scopedSession
+            if let previous, let index = sessions.firstIndex(where: { $0 === previous }) {
+                sessions[index] = scopedSession
+                previous.revoke()
+            } else {
+                sessions.append(scopedSession)
+            }
+            return true
+        }
+        guard !requiresWindowScope else {
+            disconnect(id)
+            return false
+        }
+        guard let session = connections[id]?.session, let token, let client = trustStore.authenticate(token: token) else {
+            return true
+        }
         session.pairedClient = client
         bindToDeveloperWindow(id, client: client)
+        return true
     }
 
     /// A paired client that may work without asking lives in a window of the Developer profile, so it never touches the

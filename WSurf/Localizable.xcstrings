@@ -14041,6 +14041,76 @@
     },
     "• Allow Development: also inspect page structure and styles, read console and network metadata, and change the viewport. These can disclose additional private site data, including text a page writes to its console." : {
       "comment" : "One bullet in the message of the dialog that asks whether a connected app may access a tab; it explains the Allow Development button and follows the bullets for Read Only and Allow Control. Keep the leading bullet, and spell Allow Development as the button’s translation does. Shown only when development access can be granted."
+    },
+    "Hand Back" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vrati kontrolu"
+          }
+        }
+      }
+    },
+    "Human Control" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ručna kontrola"
+          }
+        }
+      }
+    },
+    "MCP Allowed" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MCP dopušten"
+          }
+        }
+      }
+    },
+    "Return control of this window to the external agent." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vrati kontrolu nad ovim prozorom vanjskom agentu."
+          }
+        }
+      }
+    },
+    "Stop external agent control and disconnect this window’s session." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaustavi kontrolu vanjskog agenta i prekini sesiju ovog prozora."
+          }
+        }
+      }
+    },
+    "Take over control of this window from the external agent." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preuzmi kontrolu nad ovim prozorom od vanjskog agenta."
+          }
+        }
+      }
+    },
+    "Unclaimed" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slobodno"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

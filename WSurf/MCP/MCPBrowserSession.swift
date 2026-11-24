@@ -16,7 +16,7 @@ final class MCPBrowserSession: Identifiable {
         /// that setting, the developer site and the Developer profile still do. A default grant came from the Website access
         /// default instead of a sheet, so it holds only while the default still gives it, and Control is all it ever carries.
         enum Source {
-            case sheet, standing, appDefault
+            case sheet, standing, appDefault, agentWindow
         }
 
         let origin: String
@@ -113,6 +113,8 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let secrets = MCPSecretScrubber()
     /// The fields of each tab's current document that this connection typed a secret into, so a screenshot covers them too.
     @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
+    /// When non-nil, this session is bound exclusively to an Agent Micro Window via a host-bridge `windowToken`.
+    @ObservationIgnored var agentWindowScope: MCPAgentWindowScope?
 
     var lastActionTitle: String? {
         lastTool.isEmpty ? nil : Self.actionTitle(forTool: lastTool)
@@ -184,10 +186,24 @@ final class MCPBrowserSession: Identifiable {
         guard isConnected, available(), !Task.isCancelled else {
             return failure("Connection is unavailable. Reconnect after leaving private browsing or after the assistant finishes.")
         }
+        if let scope = agentWindowScope {
+            guard scope.isActive() else {
+                revoke()
+                return failure("Agent Micro Window session is closed or revoked.")
+            }
+            guard scope.isAgentOwned() else {
+                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.")
+            }
+            syncAgentWindowGrants()
+        }
         guard !busy else { return failure("Another operation is running. Wait for its result.") }
         busy = true
         lastTool = name
+        let workToken = agentWindowScope?.onBeginWorking()
         defer {
+            if let workToken {
+                agentWindowScope?.onEndWorking(workToken)
+            }
             busy = false
             completedCalls += 1
         }
