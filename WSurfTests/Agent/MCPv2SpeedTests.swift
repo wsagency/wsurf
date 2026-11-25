@@ -29,6 +29,7 @@ struct MCPv2SpeedTests {
         <button id=alert onclick="alert('Stop')">Alert</button>
         <button id=add onclick="document.body.insertAdjacentHTML('beforeend', '<button>Added later</button>')">Add</button>
         <a id=away href="LINK">Elsewhere</a>
+        <a id=later href="/other" onclick="event.preventDefault(); setTimeout(() => { location.href = '/other'; }, 10)">Later</a>
         <p id=echo></p>
         <script>pw.addEventListener('input', () => { echo.textContent = 'Echo ' + pw.value; });</script>
         """
@@ -567,12 +568,13 @@ struct MCPv2SpeedTests {
     }
 
     /// A step that does not wait (settle none) and navigates: the next step runs on the page that arrives, not half loaded.
-    /// The step after a `settle: none` click runs on the page the click opened, not on the one it left. The scroll waits for
-    /// nothing itself, so only runSteps' own check makes the page loaded by the time the call returns.
+    /// The step after a `settle: none` click runs on the page the click opened, not on the one it left. The link navigates from
+    /// a timer just after the click has answered, so the click's own observation never sees it, and the scroll waits for nothing
+    /// itself: only runSteps' own check makes the page loaded by the time the call returns.
     @Test func runStepsWaitsForANavigationASettleNoneStepStarted() async throws {
         try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
             let read = try await rig.call("readPage", rig.shared)
-            let link = try MCPPhase2Rig.ref("link", "Elsewhere", in: read)
+            let link = try MCPPhase2Rig.ref("link", "Later", in: read)
             let result = try await rig.call("runSteps", rig.shared, [
                 "steps": .array([
                     .object(["tool": "click", "arguments": .object(["ref": .int(link), "settle": "none"])]),
