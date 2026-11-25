@@ -75,6 +75,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         if let tab, navigationAction.navigationType == .linkActivated,
            !navigationAction.modifierFlags.isDisjoint(with: [.command, .shift]) || navigationAction.buttonNumber == Self.middleButton,
            navigationAction.targetFrame?.isMainFrame != false,
+           // Only a trusted click (the agent's native input) becomes a tab; a page's own synthetic Cmd-click stays a plain click.
+           Self.isUserInitiated(navigationAction),
            BrowserPage.from(webView)?.isAutomatedInputRecent == true,
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
