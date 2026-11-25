@@ -15,6 +15,22 @@ extension PageDriver {
         return parseDigest(object)
     }
 
+    /// The digest before an action. When `cached` (the digest after the connection's last action on this page) is still the
+    /// page's state, the same document, snapshot and change count, the page answers that in place of walking itself again.
+    static func digestBefore(in view: BrowserPage, viewportOnly: Bool, cached: PageDigest?) async -> PageDigest? {
+        guard let cached, let changes = cached.changes, let document = jsonString(cached.documentID), let snapshot = jsonString(cached.snapshot)
+        else { return await digest(in: view, commit: false, viewportOnly: viewportOnly) }
+        let script = scripted(
+            """
+            if (R.documentID === \(document) && window.__wsurfSnapshot === \(snapshot) && R.changes() === \(changes)) {
+              return JSON.stringify({ unchanged: true });
+            }
+            return JSON.stringify(R.digest(\(viewportOnly), false));
+            """)
+        guard let object = await evaluateJSON(script, in: view), object["stale"] == nil else { return nil }
+        return object["unchanged"] as? Bool == true ? cached : parseDigest(object)
+    }
+
     /// The observation after an action, taken on whatever document the page is on by then. A page that is still loading is
     /// waited for once.
     static func digestAfterAction(
@@ -81,7 +97,8 @@ extension PageDriver {
             documentID: document, url: url, title: object["title"] as? String ?? "", snapshot: snapshot,
             controls: (object["controls"] as? [[String: Any]] ?? []).compactMap(parseControl),
             controlTotal: object["controlTotal"] as? Int ?? 0, texts: object["texts"] as? [String] ?? [], focus: focus,
-            scrollY: scroll["y"] as? Int ?? 0, scrollHeight: scroll["h"] as? Int ?? 0, viewportHeight: scroll["vh"] as? Int ?? 0)
+            scrollY: scroll["y"] as? Int ?? 0, scrollHeight: scroll["h"] as? Int ?? 0, viewportHeight: scroll["vh"] as? Int ?? 0,
+            changes: object["changes"] as? Int)
     }
 
     private static func parseControl(_ control: [String: Any]) -> PageDigest.Control? {

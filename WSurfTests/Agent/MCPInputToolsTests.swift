@@ -140,9 +140,10 @@ struct MCPInputToolsTests {
         for name in ["fillFields", "scrollPage", "inspectControl", "readPage", "findElements", "inspectElement", "screenshotPage"] {
             #expect(!(entries[name]?.parameters.contains { $0.name == "selector" && $0.type == "string" && $0.description.contains("exactly one visible control") } ?? true), "\(name)")
         }
-        for name in ["clickOnPage", "typeOnPage", "selectOption", "setChecked", "hoverOnPage"] {
+        for name in ["typeOnPage", "selectOption", "setChecked", "hoverOnPage"] {
             #expect(!(entries[name]?.parameters.contains { $0.name == "modifiers" } ?? true), "\(name)")
         }
+        #expect(entries["clickOnPage"]?.parameters.contains { $0.name == "modifiers" } == true, "a pointer click takes modifiers")
         let drag = try #require(entries["dragOnPage"])
         #expect(drag.scope == .control)
         #expect(drag.usesRef == false, "a selector drag needs no observation")

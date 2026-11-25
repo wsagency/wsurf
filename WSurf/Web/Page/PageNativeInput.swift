@@ -69,7 +69,11 @@ extension PageDriver {
         case .failure(let refusal):
             return refusal.message
         }
-        guard view.window != nil, !view.isParked else { return "Keyboard input requires a visible tab. Switch to the page first." }
+        // A parked Chromium page takes the key through DevTools; a parked WebKit page would need the window's focus.
+        let background = view.isParked || view.window == nil
+        guard !background || view.chromium != nil else {
+            return "Keyboard input in a background WebKit tab requires a visible tab. Use switchTab to show it, or setTabEngine to Chromium."
+        }
         let resolved = await resolve(ref: ref, label: "", kinds: #"["field","button","link","checkbox","radio","combobox","select","scrollarea"]"#, in: view)
         let found: Resolved
         switch resolved {
@@ -87,7 +91,7 @@ extension PageDriver {
                 return SensitiveAction.declined(found.label, category: category)
             }
         }
-        guard await validateObservation(in: view, ref: ref), let window = view.window else { return await referenceFailureMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let ready = await evaluateJSON(
             scripted(
                 """
@@ -102,6 +106,13 @@ extension PageDriver {
                 return JSON.stringify({ focused: el.ownerDocument.activeElement === el || el.getRootNode().activeElement === el });
                 """), in: view)
         if let error = ready?["error"] as? String { return error }
+        if background, let chromium = view.chromium {
+            guard ready?["focused"] as? Bool == true, await validateObservation(in: view, ref: ref) else {
+                return "The control could not receive keyboard focus."
+            }
+            return await pressInBackground(chord, chromium: chromium, in: view)
+        }
+        guard let window = view.window else { return "Keyboard input requires a visible tab. Switch to the page first." }
         guard ready?["focused"] as? Bool == true, focusForKeyboard(view, in: window),
             await validateObservation(in: view, ref: ref)
         else { return "The control could not receive keyboard focus." }
@@ -132,6 +143,23 @@ extension PageDriver {
             return "Sent \(chord.name), but the page did not confirm receiving it. Check the resulting page.\n" + (await settleAndSnippet(view))
         } catch PageComputerFailure.sensitive {
             return "The page moved keyboard focus to a sensitive field, so Select All was not applied."
+        } catch {
+            _ = await evaluateJSON(scripted("window.__wsurfComputerAck?.dispose(); return JSON.stringify({ ok: true });"), in: view)
+            return PageAutomationGuard.allowsExecution ? "The key could not be delivered to the page." : staleMessage
+        }
+        return "Sent \(chord.name). Check the resulting page.\n" + (await settleAndSnippet(view))
+    }
+
+    /// `chord` as DevTools key input to the control the page focused, for a page out of sight: the window's first responder and
+    /// the app's menus are never involved. The page's trusted keydown is the receipt.
+    private static func pressInBackground(_ chord: PageKeyChord, chromium: ChromiumPage, in view: BrowserPage) async -> String {
+        let documentURL = view.url
+        do {
+            try await installComputerReceipt("keydown", in: view)
+            try await chromium.dispatchKey(chord: chord, allowed: { PageAutomationGuard.allowsExecution })
+            try await awaitComputerReceipt(in: view, documentURL: documentURL)
+        } catch PageComputerFailure.unverified {
+            return "Sent \(chord.name), but the page did not confirm receiving it. Check the resulting page.\n" + (await settleAndSnippet(view))
         } catch {
             _ = await evaluateJSON(scripted("window.__wsurfComputerAck?.dispose(); return JSON.stringify({ ok: true });"), in: view)
             return PageAutomationGuard.allowsExecution ? "The key could not be delivered to the page." : staleMessage

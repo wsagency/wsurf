@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
+import CoreGraphics
 import Foundation
 import MCP
 
@@ -42,6 +43,49 @@ extension MCPBrowserSession {
         return .success(.init(source: source, destination: .offset(dx: dx, dy: dy)))
     }
 
+    // MARK: Pointer input at a point
+
+    struct PointerClick {
+        let button: PageDriver.PointerButton
+        let count: Int
+        let modifiers: PageKeyChord.Modifiers
+    }
+
+    /// `x` and `y` in viewport CSS pixels, when both are given.
+    nonisolated static func point(_ arguments: [String: Value]) -> CGPoint? {
+        func number(_ value: Value?) -> Double? {
+            switch value {
+            case .int(let whole)?:
+                Double(whole)
+            case .double(let fraction)? where fraction.isFinite:
+                fraction
+            default:
+                nil
+            }
+        }
+        guard let x = number(arguments["x"]), let y = number(arguments["y"]) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// The trusted click `clickOnPage` asks for, nil for the DOM click of a ref. A point, another button, a double click or
+    /// modifiers need pointer input; `pointer: false` with any of them is refused rather than quietly changed.
+    static func pointerClick(_ arguments: [String: Value]) -> Result<PointerClick, PageDriver.TargetFailure>? {
+        let button = arguments["button"]?.stringValue.flatMap(PageDriver.PointerButton.init(rawValue:)) ?? .left
+        let count = arguments["clickCount"]?.intValue ?? 1
+        let modifiers = arguments["modifiers"]?.stringValue ?? ""
+        let needsPointer = point(arguments) != nil || button != .left || count != 1 || !modifiers.isEmpty
+        guard arguments["pointer"]?.boolValue ?? needsPointer else {
+            return needsPointer
+                ? .failure(.init(message: "x and y, the right and middle buttons, double clicks and modifiers need pointer input. Leave out pointer.")) : nil
+        }
+        switch PageDriver.pointerModifiers(modifiers) {
+        case .success(let parsed):
+            return .success(PointerClick(button: button, count: count, modifiers: parsed))
+        case .failure(let refusal):
+            return .failure(.init(message: refusal.message))
+        }
+    }
+
     func dragAction(arguments: [String: Value], view: BrowserPage) async -> String {
         switch Self.dragTargets(arguments) {
         case .failure(let failed):
@@ -68,6 +112,13 @@ extension MCPBrowserSession {
             case .success(let targets):
                 return targets.usesSelector && !mayProceed(tab, capability: .development) ? failure(needsDevelopment) : nil
             }
+        }
+        if arguments["x"] != nil || arguments["y"] != nil {
+            guard Self.point(arguments) != nil else { return failure("Give both x and y.") }
+            guard arguments["ref"] == nil, arguments["selector"] == nil else {
+                return failure("Name the target with one of ref, selector, or x and y.")
+            }
+            return nil
         }
         guard let kinds = MCPToolCatalog.selectorTargets[name] else { return nil }
         guard let selector = arguments["selector"]?.stringValue else {

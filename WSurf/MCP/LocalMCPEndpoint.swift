@@ -63,9 +63,9 @@ nonisolated enum LocalMCPEndpoint {
         .internalError("The local MCP endpoint is unavailable. Another copy of WSurf may be using it.")
     }
 
-    static func runStdioRelay(socketPath: String = path) -> Never {
+    static func runStdioRelay(socketPath: String = path, profile: MCPToolCatalog.Profile = .all) -> Never {
         Task.detached {
-            let relay = MCPStdioRelay(socketPath: socketPath, token: MCPPairing.environmentToken())
+            let relay = MCPStdioRelay(socketPath: socketPath, token: MCPPairing.environmentToken(), profile: profile)
             do {
                 try await relay.run(transport: MCPStdioTransport())
                 exit(EXIT_SUCCESS)

@@ -76,7 +76,7 @@ extension PageDriver {
                 y: plan.start.point.y + (plan.end.point.y - plan.start.point.y) * t)
         }
         do {
-            if let window {
+            if pointer {
                 try await sendPointerDrag(path: path, window: window, in: view)
             } else {
                 let points = path.map { CGPoint(x: $0.x * view.pageZoom, y: $0.y * view.pageZoom) }
@@ -137,10 +137,14 @@ extension PageDriver {
         return nil
     }
 
-    /// A pointer drag acts on the window: it must be visible and free of sheets. AppKit delivers mouse events to a window of an
-    /// inactive app, so unlike a hover the app need not be active.
-    private static func pointerWindow(of view: BrowserPage) -> Result<NSWindow, TargetFailure> {
-        guard let window = view.window, window.attachedSheet == nil, window.isVisible else {
+    /// A WebKit pointer drag acts on the window: it must be visible and free of sheets. AppKit delivers mouse events to a window
+    /// of an inactive app, so unlike a hover the app need not be active. Chromium takes the drag through DevTools, so its page
+    /// only has to be in a window (parked on the shelf is enough).
+    private static func pointerWindow(of view: BrowserPage) -> Result<NSWindow?, TargetFailure> {
+        if view.chromium != nil {
+            return view.window == nil ? .failure(.init(message: "A pointer drag needs the tab kept in its window. Use switchTab.")) : .success(nil)
+        }
+        guard let window = view.window, window.attachedSheet == nil, window.isVisible, !view.isParked else {
             return .failure(.init(message: "A pointer drag needs a visible tab with no sheet open."))
         }
         return .success(window)
@@ -203,7 +207,7 @@ extension PageDriver {
     }
 
     /// Trusted press, move and release along `path` (CSS pixels), with a trusted `mouseup` as proof that it arrived.
-    private static func sendPointerDrag(path: [CGPoint], window: NSWindow, in view: BrowserPage) async throws {
+    private static func sendPointerDrag(path: [CGPoint], window: NSWindow?, in view: BrowserPage) async throws {
         let first = path[0], last = path[path.count - 1]
         let held = await evaluateJSON(
             scripted("return JSON.stringify({ holds: R.dragHolds([\(first.x), \(first.y)], [\(last.x), \(last.y)]) });"), in: view)
@@ -215,7 +219,7 @@ extension PageDriver {
         if let chromium = view.chromium {
             try await chromium.dragPointer(path: path, allowed: { PageAutomationGuard.allowsExecution })
         } else {
-            guard focusForKeyboard(view, in: window) else {
+            guard let window, focusForKeyboard(view, in: window) else {
                 throw PageComputerFailure.unavailable
             }
             let points = path.map { CGPoint(x: $0.x * view.pageZoom, y: $0.y * view.pageZoom) }

@@ -32,6 +32,7 @@ extension MCPBrowserSession {
     /// and a standing grant does not share the tab again for as long as the connection lasts. Its other tabs are untouched,
     /// and the tab is no longer one it opened, so it never closes it without asking.
     func handBack(_ tab: BrowserTab) {
+        digestCache[tab.id] = nil
         tab.dialogs.handBack(connection: id)
         tab.removeDocumentCommitObserver(id: id)
         if let held = developmentTabs.removeValue(forKey: tab.id) {

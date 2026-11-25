@@ -14,12 +14,16 @@ actor MCPStdioRelay {
     private let hello: Data?
     private var clientName = "External Connection"
     private var backend: (client: MCP.Client, transport: LocalMCPTransport)?
-    private var busy = false
+    /// The connect in progress, which concurrent calls wait for instead of opening a second socket.
+    private var connecting: Task<Bool, Never>?
     private var stopped = false
+    /// The tools this client sees and may call (`--tools`).
+    let profile: MCPToolCatalog.Profile
 
-    init(socketPath: String, token: String? = nil) {
+    init(socketPath: String, token: String? = nil, profile: MCPToolCatalog.Profile = .all) {
         self.socketPath = socketPath
         hello = token.flatMap(MCPPairing.helloMessage)
+        self.profile = profile
     }
 
     func run(transport: any Transport) async throws {
@@ -27,8 +31,9 @@ actor MCPStdioRelay {
             name: "WSurf", version: "1.0.0", instructions: MCPToolCatalog.instructions,
             capabilities: .init(tools: .init()), configuration: .strict
         )
+        let profile = profile
         await server.withMethodHandler(ListTools.self) { _ in
-            ListTools.Result(tools: MCPToolCatalog.listed.map(\.tool))
+            ListTools.Result(tools: MCPToolCatalog.listed(for: profile).map(\.tool))
         }
         await server.withMethodHandler(CallTool.self) { params in
             try await self.call(params)
@@ -60,19 +65,38 @@ actor MCPStdioRelay {
 
     private func call(_ params: CallTool.Parameters) async throws -> CallTool.Result {
         guard !stopped else { throw MCPError.connectionClosed }
-        guard let entry = MCPToolCatalog.listed.first(where: { $0.name == params.name }) else {
+        guard let entry = MCPToolCatalog.listed(for: profile).first(where: { $0.name == params.name }) else {
             throw MCPError.invalidParams("Unknown tool.")
         }
         try entry.validate(params.arguments ?? [:])
-        guard !busy else { return failure("Another operation is running. Wait for its result.") }
-        busy = true
-        defer { busy = false }
+        // Calls run side by side; WSurf orders those for one tab and refuses a flood.
+        guard await connectedBackend() else {
+            return failure("WSurf is unavailable. Open WSurf with MCP enabled, then retry. You do not need to restart the client.")
+        }
+        return try await send(params)
+    }
 
-        if let backend, !(await backend.transport.isConnected) {
+    /// Whether a backend connection is up, connecting once for every call that needs it at the same time.
+    private func connectedBackend() async -> Bool {
+        if let backend, !(await backend.transport.isConnected), self.backend?.client === backend.client {
             self.backend = nil
             await backend.client.disconnect()
         }
-        guard !stopped, !Task.isCancelled else { throw CancellationError() }
+        if backend != nil {
+            return true
+        }
+        if let connecting {
+            return await connecting.value
+        }
+        let task = Task { await self.connect() }
+        connecting = task
+        let connected = await task.value
+        connecting = nil
+        return connected
+    }
+
+    private func connect() async -> Bool {
+        guard !stopped, !Task.isCancelled else { return false }
         if backend == nil {
             let client = MCP.Client(name: clientName, version: "1.0.0")
             let transport = LocalMCPTransport(
@@ -80,7 +104,6 @@ actor MCPStdioRelay {
                 onDisconnect: { await client.disconnect() },
                 hello: hello
             )
-            backend = (client, transport)
             do {
                 try await withTaskCancellationHandler {
                     try await withThrowingTaskGroup(of: Void.self) { group in
@@ -101,23 +124,33 @@ actor MCPStdioRelay {
                     }
                 }
                 guard !stopped, !Task.isCancelled else { throw CancellationError() }
+                // Published only once connected: a call that arrives meanwhile waits for `connecting`.
+                backend = (client, transport)
             } catch {
-                backend = nil
                 await client.disconnect()
                 await transport.disconnect()
-                return failure("WSurf is unavailable. Open WSurf with MCP enabled, then retry. You do not need to restart the client.")
+                return false
             }
         }
+        return backend != nil
+    }
+
+    private func send(_ params: CallTool.Parameters) async throws -> CallTool.Result {
+        guard !stopped, !Task.isCancelled else { throw CancellationError() }
         guard let backend else { throw MCPError.connectionClosed }
         do {
             let request = try await backend.client.send(CallTool.request(params))
             return try await withTaskCancellationHandler {
                 try await request.value
             } onCancel: {
+                // ponytail: cancelling one call closes the backend, which also ends the calls running beside it; a per-request
+                // cancel notification would keep them.
                 Task { await backend.client.disconnect() }
             }
         } catch {
-            self.backend = nil
+            if self.backend?.client === backend.client {
+                self.backend = nil
+            }
             await backend.client.disconnect()
             return failure("""
                 The WSurf connection was interrupted. The operation may have completed; it was not retried. \

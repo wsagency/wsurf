@@ -40,7 +40,9 @@ extension MCPBrowserSession {
         }
         // What only the Developer tier may read: a full inspection, a selector that reads attribute values.
         let readsAsDeveloper = (name == "inspectElement" && arguments["full"]?.boolValue == true) || (name == "findElements" && permits(tab, capability: .developer))
-        let usesRef = entry.usesRef || arguments["ref"] != nil || arguments["toRef"] != nil
+        // A click, hover or scroll at x and y names no control, so it needs no observation.
+        let atPoint = Self.point(arguments) != nil && arguments["ref"] == nil
+        let usesRef = (entry.usesRef && !atPoint) || arguments["ref"] != nil || arguments["toRef"] != nil
         let observation = observations[tab.id]
         if usesRef {
             // A ref stays valid for as long as its document does, so the observation ID is optional. One that is sent must
@@ -99,13 +101,19 @@ extension MCPBrowserSession {
                 return self.mayProceed(tab, capability: .read)
             }
         )
+        let tainted = credentialTaintedDocuments[tab.id].map { $0.commitEpoch == tab.documentCommitEpoch } ?? false
         return await PageAutomationGuard.$current.withValue(scope) {
             guard scope.validate(), webURL(of: tab) == url else { return failure("Page access changed. Read the page again.") }
-            return await PageDriver.$accumulatesRefs.withValue(true) {
-                await PageDriver.$expectedObservation.withValue(usesRef ? observation?.snapshot : nil) {
-                    await pageReply(
-                        name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation,
-                        secret: secretEntry)
+            // The ring still shows on a page the person sees, but an MCP action does not wait for it.
+            return await PageDriver.$announceDuration.withValue(.zero) {
+                await PageDriver.$protectedCredentials.withValue(tainted) {
+                    await PageDriver.$accumulatesRefs.withValue(true) {
+                        await PageDriver.$expectedObservation.withValue(usesRef ? observation?.snapshot : nil) {
+                            await pageReply(
+                                name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading,
+                                observation: observation, secret: secretEntry)
+                        }
+                    }
                 }
             }
         }
@@ -128,7 +136,9 @@ extension MCPBrowserSession {
             (output, capturedImage) = await screenshotOutput(arguments: arguments, tab: tab, view: view)
         } else {
             // `result: full` keeps the old grace for a navigation to start; only the longest wait follows the budget.
-            let limits = PageSettle.Limits(quietCeiling: .milliseconds(FeedbackBudget(arguments["budget"]).settleMs))
+            let limits = PageSettle.limits(
+                settle: arguments["settle"]?.stringValue, grace: PageSettle.navigationGrace,
+                quietCeiling: .milliseconds(FeedbackBudget(arguments["budget"]).settleMs))
             // A dialog the action opens blocks the page, so the action cannot return until it is answered.
             let acted = await PageSettle.$limits.withValue(limits) {
                 await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
@@ -201,6 +211,9 @@ extension MCPBrowserSession {
             guard let self, let tab else { return false }
             return self.mayProceed(tab, capability: .development)
         }
+        // A client that holds a current observation of this page gets the image alone unless it asks for the text too.
+        let holdsObservation = observations[tab.id].map { PageDriver.observation(in: view)?.id == $0.id } ?? false
+        let includeSnapshot = arguments["includeSnapshot"]?.boolValue ?? !holdsObservation
         await throttleCapture()
         let outcome = await PageDriver.screenshot(
             request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes,
@@ -214,8 +227,11 @@ extension MCPBrowserSession {
             let shows = request.target == .fullPage ? "the full page, CSS pixels" : "viewport CSS pixels"
             let text =
                 "Screenshot captured. Shows \(shows) x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
-                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
-                + (await PageDriver.snapshot(view, viewportOnly: true))
+                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px."
+                + (includeSnapshot
+                    ? "\n" + (await PageDriver.snapshot(view, viewportOnly: true))
+                    // The image alone still names the observation the client holds, which stays current.
+                    : holdsObservation ? PageDriver.observation(in: view).map { "\nobservationID: " + $0.id } ?? "" : "")
             // The snapshot above was the last await: development access is asked once more right before the
             // image is attached, so a revoke during it never returns an inspection image.
             if capture.requiresDevelopment, !developmentAllowed() {
@@ -269,6 +285,16 @@ extension MCPBrowserSession {
                 controlOffset: arguments["controlOffset"]?.intValue ?? 0,
                 scope: arguments["scope"]?.stringValue ?? "", viewportOnly: arguments["viewportOnly"]?.boolValue ?? false)
         case "clickOnPage":
+            if let request = Self.pointerClick(arguments) {
+                switch request {
+                case .success(let click):
+                    return await PageDriver.pointerClick(
+                        ref: ref > 0 ? ref : nil, point: Self.point(arguments), button: click.button, clickCount: click.count,
+                        modifiers: click.modifiers, in: view)
+                case .failure(let refusal):
+                    return refusal.message
+                }
+            }
             return await PageDriver.click(ref: ref, label: "", in: view, announced: true)
         case "typeOnPage":
             return await PageDriver.type(
@@ -277,8 +303,17 @@ extension MCPBrowserSession {
         case "selectOption":
             return await PageDriver.selectOption(arguments["option"]?.stringValue ?? "", ref: ref, field: "", in: view, announced: true)
         case "scrollPage":
+            if let point = Self.point(arguments) {
+                return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", at: point, in: view)
+            }
             return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", ref: ref, in: view)
         case "hoverOnPage":
+            if view.chromium != nil || Self.point(arguments) != nil {
+                return await PageDriver.pointerHover(ref: ref > 0 ? ref : nil, point: Self.point(arguments), in: view)
+            }
+            if view.isParked {
+                return PageDriver.backgroundWebKitPointer
+            }
             return await PageDriver.hover(ref: ref, in: view)
         case "pressKey":
             return await PageDriver.pressKey(arguments["key"]?.stringValue ?? "", ref: ref, modifiers: arguments["modifiers"]?.stringValue ?? "", in: view)
@@ -293,7 +328,8 @@ extension MCPBrowserSession {
                     return .init(ref: ref, value: value, select: select)
                 } ?? []
             return await PageDriver.fillFields(
-                fields, secretRefs: secret?.refs ?? [], secretWritten: secretWriteSink, in: view, announced: true)
+                fields, secretRefs: secret?.refs ?? [], secretWritten: secretWriteSink, submitRef: arguments["submitRef"]?.intValue,
+                submit: arguments["submit"]?.boolValue ?? false, in: view, announced: true)
         case "inspectControl":
             return await PageDriver.inspectControl(ref: ref, offset: arguments["offset"]?.intValue ?? 0, in: view)
         case "setChecked":

@@ -70,7 +70,8 @@ nonisolated extension MCPToolCatalog {
                 Drag from one element to another, or by an offset, in the top document. By default it dispatches the DOM events of a drag \
                 (dragstart, dragover, drop, or pointer and mouse events); they are untrusted and work with the tab in the background. \
                 With pointer true it sends trusted pointer input instead (DevTools mouse events on Chromium, native mouse events on WebKit); \
-                the tab must be visible, WSurf need not be active. The source is a readPage ref or a selector; the destination is toRef, toSelector, or dx and dy CSS \
+                on WebKit the tab must be visible, on Chromium a background tab works; WSurf need not be active. \
+                The source is a readPage ref or a selector; the destination is toRef, toSelector, or dx and dy CSS \
                 pixels from the source's centre. A selector end needs development access. Both ends must be visible in the viewport; \
                 frames, file inputs, disabled and sensitive elements are refused. Returns what the drag changed; verify it.
                 """,

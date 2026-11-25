@@ -35,6 +35,8 @@ nonisolated struct PageDigest: Equatable, Sendable {
     var scrollY = 0
     var scrollHeight = 0
     var viewportHeight = 0
+    /// The page's change count when the digest was taken (`R.changes`): the same count later means the same digest.
+    var changes: Int?
 }
 
 /// What one action changed, in the order a client wants to read it. Strings from the page (labels, text, console messages,

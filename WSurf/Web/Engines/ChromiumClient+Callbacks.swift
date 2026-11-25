@@ -654,6 +654,11 @@ extension ChromiumClient {
                 let target = ChromiumClient.contextTarget(of: params, frameURL: clicked?.url)
                 let clickPoint = CGPoint(x: Int(params.pointee.get_xcoord?(params) ?? 0), y: Int(params.pointee.get_ycoord?(params) ?? 0))
                 MainActor.assumeIsolated {
+                    // No menu for a right-click WSurf dispatched for an agent: it would open in front of the person.
+                    if client.page?.isAutomatedInputRecent == true {
+                        _ = model.pointee.clear?(model)
+                        return
+                    }
                     client.offerPDFItems(in: model)
                     client.offerContextItems(in: model, target: target)
                     client.offerCredentialPicker(in: model, editable: editable, frame: clicked)

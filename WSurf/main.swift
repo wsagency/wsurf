@@ -11,7 +11,13 @@ if CommandLine.arguments.contains("--mcp") {
     let socketPath = socketOption.flatMap { index in
         CommandLine.arguments.indices.contains(index + 1) ? CommandLine.arguments[index + 1] : nil
     }
-    LocalMCPEndpoint.runStdioRelay(socketPath: socketPath ?? LocalMCPEndpoint.path)
+    switch MCPToolCatalog.Profile.parse(CommandLine.arguments) {
+    case .success(let profile):
+        LocalMCPEndpoint.runStdioRelay(socketPath: socketPath ?? LocalMCPEndpoint.path, profile: profile ?? .all)
+    case .failure:
+        FileHandle.standardError.write(Data("WSurf: --tools must be core, playwright, or all.\n".utf8))
+        exit(EXIT_FAILURE)
+    }
 }
 
 // Install CEF's lightweight AppKit subclass without loading Chromium.

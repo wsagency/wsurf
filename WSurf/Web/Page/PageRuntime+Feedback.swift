@@ -57,7 +57,7 @@ nonisolated extension PageRuntime {
         const root = document.scrollingElement || document.documentElement;
         return { document: documentID, url: location.href, title: clip(document.title, 120), snapshot: window.__wsurfSnapshot,
           controls, controlTotal: all.length, texts: document.body ? textBlocks(600, viewportOnly) : [], focus: focusOf(),
-          scroll: { y: Math.round(root.scrollTop), h: root.scrollHeight, vh: window.innerHeight } };
+          scroll: { y: Math.round(root.scrollTop), h: root.scrollHeight, vh: window.innerHeight }, changes: changeCount };
       };
 
       // The highlight ring animates for a second after an action; its own changes are not the page settling.
