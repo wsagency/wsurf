@@ -50,6 +50,8 @@ final class ChromiumPage: NSView {
     var retainedPreview: CALayer?
     var preparation: Task<Void, Error>?
     var pendingLoad: Task<Void, Never>?
+    /// The engine's stop, sent on the turn after `stopLoading` unless a navigation replaced it (`supersedeStop`).
+    var pendingStop: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var closing = false
     /// CEF's child is owned by the AppKit hierarchy until close detaches it.
@@ -355,6 +357,7 @@ final class ChromiumPage: NSView {
     func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
         guard !isClosed, !closing, let url = request.url else { return nil }
         guard !holdsForRecovery(request, byPerson: byPerson) else { return nil }
+        supersedeStop()
         pendingLoad?.cancel()
         mainFrameGeneration &+= 1
         let next = PageNavigation()
@@ -528,6 +531,7 @@ final class ChromiumPage: NSView {
         guard raw != nil || remote != nil, !isClosed, !closing else {
             return requestedURL.flatMap { load(URLRequest(url: $0), byPerson: byPerson) }
         }
+        supersedeStop()
         let next = PageNavigation()
         navigation = next
         awaitLoad(of: nil)
@@ -546,6 +550,7 @@ final class ChromiumPage: NSView {
     @discardableResult
     func goBack() -> PageNavigation? {
         guard owner?.canGoBack == true else { return nil }
+        supersedeStop()
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
@@ -557,6 +562,7 @@ final class ChromiumPage: NSView {
     @discardableResult
     func goForward() -> PageNavigation? {
         guard owner?.canGoForward == true else { return nil }
+        supersedeStop()
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
@@ -568,6 +574,7 @@ final class ChromiumPage: NSView {
     @discardableResult
     func go(to item: PageHistoryItem) -> PageNavigation? {
         guard let entry = item.chromiumIndex else { return nil }
+        supersedeStop()
         let next = PageNavigation()
         navigation = next
         awaitHistoryMove()

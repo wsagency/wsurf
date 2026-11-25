@@ -17,6 +17,11 @@
 #   - One fixed test identity (WSURF_BUNDLE_ID_SUFFIX, default .ci-local), reused run after run, so CI's last step, which
 #     removes a per-run identity with rm -rf and defaults delete, is skipped.
 #   - Each run writes to a fresh build/ci-local/<UTC stamp>/; build/DD is kept, so a rerun builds incrementally.
+#   - Pro disk hygiene (Tools/disk-hygiene.sh, AGENTS.md): the run aborts below 30 GB free, uses its own TMPDIR and removes
+#     its identities' code_sign_clone on exit. After a PASS it deletes the .xcresult bundles (the JSON and checksum evidence
+#     stays) and the one-off build/DD-oop and build/cefkit-tests, and build/DD too with WSURF_CLEAN_DERIVED_DATA=1;
+#     WSURF_KEEP_XCRESULT=1 keeps all of it. Failed bundles older than 48 hours in build/ci-local go. GitHub keeps everything
+#     for its uploads. WSURF_SOURCE_PACKAGES_CACHE names a shared, pinned SourcePackages directory to clone packages into.
 #   - Opt-in suites (live, foreground, microphone, Stage...) are refused through their environment, as the local gate does:
 #     the default plans ask the system for no permission.
 #   Set WSURF_CEF_PACKAGE only to a CefSwift package with the same sources; a fresh worktree otherwise downloads CEF once.
@@ -40,6 +45,19 @@ XCODE=$(sed -n "s/^  XCODE: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 SWIFTLINT=$(sed -n "s/^  SWIFTLINT: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 export WSURF_BUNDLE_ID_SUFFIX="${WSURF_BUNDLE_ID_SUFFIX:-.ci-local}"
 DD="$PWD/build/DD"
+# shellcheck source=Tools/disk-hygiene.sh
+. Tools/disk-hygiene.sh
+wsurf_preflight_disk_guard || exit 2
+wsurf_setup_run_tmpdir
+trap 'wsurf_exit_cleanup "io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX" "io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX-oop"' EXIT
+SOURCE_PACKAGES="$DD/SourcePackages"
+SPM_ARGS=()
+if [ -n "${WSURF_SOURCE_PACKAGES_CACHE:-}" ]; then
+  mkdir -p "$WSURF_SOURCE_PACKAGES_CACHE"
+  SOURCE_PACKAGES="$(cd "$WSURF_SOURCE_PACKAGES_CACHE" && pwd -P)"
+  export WSURF_SOURCE_PACKAGES_CACHE="$SOURCE_PACKAGES"
+  SPM_ARGS=(-clonedSourcePackagesDirPath "$SOURCE_PACKAGES")
+fi
 OUT="${WSURF_CI_OUTPUT:-build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)}"
 [ ! -e "$OUT" ] || { echo "error: validation output already exists: $OUT" >&2; exit 2; }
 mkdir -p "$OUT/results"
@@ -83,10 +101,14 @@ finish() {
   if [ "$FAILED" -eq 0 ]; then
     xcodebuild -version > "$OUT/xcode-version.txt"
     shasum -a 256 "$manifest" "$OUT"/results/*-tests.json > "$OUT/verified-results.sha256"
+    local intermediates=("$PWD/build/DD-oop" "$PWD/build/cefkit-tests")
+    [ "${WSURF_CLEAN_DERIVED_DATA:-0}" != 1 ] || intermediates+=("$DD")
+    wsurf_cleanup_pass_artifacts "$OUT" "${intermediates[@]}" || echo "warning: some build intermediates were kept"
     echo "ci-local: PASS"
   else
     echo "ci-local: FAIL"
   fi
+  wsurf_prune_old_failed_xcresults "$PWD/build/ci-local"
   exit "$FAILED"
 }
 gate() { [ "$FAILED" -eq 0 ] || finish; }  # CI stops at a failed step before the tests
@@ -109,7 +131,7 @@ lint() {
 }
 
 acknowledgements() {
-  swift Tools/make-acknowledgements.swift "$DD/SourcePackages/checkouts" || return
+  swift Tools/make-acknowledgements.swift "$SOURCE_PACKAGES/checkouts" || return
   git diff --quiet -- WSurf/Support/Acknowledgements.json || {
     echo "error: WSurf/Support/Acknowledgements.json is out of date. Run: swift Tools/make-acknowledgements.swift" >&2
     git diff --stat -- WSurf/Support/Acknowledgements.json
@@ -122,6 +144,7 @@ build_for_testing() {
     -project "$PROJECT" -scheme "$SCHEME" \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DD" \
+    ${SPM_ARGS[@]+"${SPM_ARGS[@]}"} \
     -skipMacroValidation \
     -enableCodeCoverage "$coverage" \
     -disableAutomaticPackageResolution \
@@ -139,7 +162,9 @@ build_for_testing() {
 run_test_plan() {
   local plan="$1" limit="$2"
   shift 2
-  WSURF_CI_TEST_LIMIT_SECONDS="$limit" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+  # The test host gets the selected Xcode too: tools it runs (the strings check's otool) must not fall back to xcode-select.
+  WSURF_CI_TEST_LIMIT_SECONDS="$limit" TEST_RUNNER_DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" \
+    python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
     -xctestrun "$xctestrun" \
     -destination 'platform=macOS,arch=arm64' \
     -resultBundlePath "$OUT/results/$plan.xcresult" \
@@ -224,10 +249,11 @@ step "Check development iCloud signing" python3 -B Tools/check-icloud-developmen
 step "Check CloudKit transport probe" python3 -B Tools/CloudKitTransportProbe/build.py self-test
 step "Check test partition" python3 Tools/check-test-partition.py
 step "Check website design kit" python3 -B Tools/update-design-system.py --check
+step "Check disk hygiene" python3 -B Tools/check-disk-hygiene.py
 skip "Cache Swift packages/CEF" "runner cache; build/DD and Packages/CefSwift/.cef persist here"
 gate
 step "Resolve packages" xcodebuild -resolvePackageDependencies \
-  -project "$PROJECT" -scheme "$SCHEME" -derivedDataPath "$DD" -onlyUsePackageVersionsFromResolvedFile
+  -project "$PROJECT" -scheme "$SCHEME" -derivedDataPath "$DD" ${SPM_ARGS[@]+"${SPM_ARGS[@]}"} -onlyUsePackageVersionsFromResolvedFile
 gate
 step "Check acknowledgements" acknowledgements
 gate
@@ -249,5 +275,5 @@ else
   skip "Coverage and budgets" "minor validation"
 fi
 skip "Uploads" "artifacts stay in $OUT"
-skip "Remove test identity" "fixed identity io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX is reused; no rm -rf or defaults delete"
+skip "Remove test identity" "fixed identity io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX is reused; only its code_sign_clone goes on exit"
 finish
