@@ -175,6 +175,7 @@ struct ChromiumOOPPageTests {
         let rig = makeRig()
         rig.native.willNavigate(URLRequest(url: URL(string: "https://one.example/")!), isRedirect: false)
         rig.native.stopLoading()
+        await rig.native.pendingStop?.value
         rig.native.pageZoom = 1.2
         rig.native.reload()
         rig.native.reload(ignoreCache: true)
@@ -194,7 +195,30 @@ struct ChromiumOOPPageTests {
         rig.native.stopLoading()
         #expect(!rig.page.isLoading)
         #expect(rig.page.estimatedProgress == 1)
+        await rig.native.pendingStop?.value
         #expect(rig.recorder.ops.last == CefRemote.Op.stop)
+        await rig.end()
+    }
+
+    /// CI (`ChromiumHistoryRestoreTests`, the second Back or Forward, or a load after Stop, while an error page loads): the engine's
+    /// stop sent in the same turn as the navigation that replaces it could reach the renderer after that navigation had begun and
+    /// abort it with ERR_ABORTED, which WSurf ignores, so the tab stayed idle on the old document. A navigation started in the
+    /// same turn drops the stop; a Stop on its own reaches the engine on the next turn.
+    @Test func aNavigationInTheSameTurnAsStopDropsTheEnginesStop() async {
+        let rig = makeRig()
+        rig.native.willNavigate(URLRequest(url: URL(string: "https://one.example/")!), isRedirect: false)
+        rig.native.stopLoading()
+        _ = rig.native.load(URLRequest(url: URL(string: "https://two.example/")!))
+        await rig.native.pendingLoad?.value
+        rig.native.stopLoading()
+        rig.native.reload()
+        await Task.yield()
+        #expect(rig.recorder.ops == [CefRemote.Op.load, CefRemote.Op.reload], "no stop was sent: \(rig.recorder.ops)")
+
+        rig.native.stopLoading()
+        #expect(rig.recorder.ops.last == CefRemote.Op.reload, "the engine's stop waits for the turn to end")
+        await rig.native.pendingStop?.value
+        #expect(rig.recorder.ops == [CefRemote.Op.load, CefRemote.Op.reload, CefRemote.Op.stop])
         await rig.end()
     }
 
@@ -207,6 +231,7 @@ struct ChromiumOOPPageTests {
         rig.remote.markCreated()
         #expect(rig.recorder.ops == [CefRemote.Op.mute, CefRemote.Op.zoom])
         rig.native.stopLoading()
+        await rig.native.pendingStop?.value
         #expect(rig.recorder.ops == [CefRemote.Op.mute, CefRemote.Op.zoom, CefRemote.Op.stop])
         await rig.end()
     }
