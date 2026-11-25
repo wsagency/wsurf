@@ -285,11 +285,18 @@ final class BrowserTab: Identifiable {
     /// Holds a sign-in's redirects in the engine that accepted its first request.
     var signInEngine: BrowserEngine? {
         didSet {
+            if signInEngine == nil {
+                inheritedSignInOrigin = nil
+            }
             if signInEngine != oldValue {
                 invalidateSessionState()
             }
         }
     }
+    /// The HTTP(S) origin that an inherited or same-site-promoted `signInEngine` belongs to.
+    /// Keeps automatic redirect and script hops from carrying that session onto unrelated websites,
+    /// while staying nil for genuine sign-in provider flows (`webKitOnlyOrigins`) so OAuth callbacks stay in-session.
+    @ObservationIgnored var inheritedSignInOrigin: String?
     struct SignInDeparture {
         let source: PageNavigation?
         let address: URL
@@ -297,6 +304,8 @@ final class BrowserTab: Identifiable {
     }
     /// Only the commit of the requested WebKit navigation can end the document's session.
     @ObservationIgnored var leavingSignIn: SignInDeparture?
+    /// Deferred opener sign-in for a pop-up that starts without an HTTP(S) URL (`about:blank`).
+    @ObservationIgnored var pendingOpenerSignIn: OpenerSignIn?
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?

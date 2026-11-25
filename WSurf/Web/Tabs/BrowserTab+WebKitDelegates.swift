@@ -275,6 +275,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         let modifiers = navigationAction.modifierFlags
         let activate = !modifiers.contains(.command) || modifiers.contains(.shift)
         onNewWindow(view, activate)
+        (view.navigationDelegate as? TabNavigationDelegate)?.tab?.resolveOpenerSignIn(for: navigationAction.request.url)
         return view
     }
 

@@ -526,12 +526,12 @@ final class AppCoordinator {
         showBrowser()
         if let standing = peek.tab, peek.ownerID == owner?.id {
             peek.aim(at: origin)
-            standing.load(url, transition: .link, byPerson: true)
+            browser.loadPeekTab(standing, url: url, from: owner)
             applyHoverShield()
             return
         }
         closePeek()
-        peek.show(browser.makePeekTab(url), from: owner?.id, at: origin)
+        peek.show(browser.makePeekTab(url, from: owner), from: owner?.id, at: origin)
         applyHoverShield()
     }
 
