@@ -14111,6 +14111,158 @@
           }
         }
       }
+    },
+    "%lld cookies" : {
+      "comment" : "Count of a website's cookies in Website Settings and Settings > Websites > a website. %lld is the number; use a plural variation if the language needs one.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cookie"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cookies"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Cached Favicon Cleared" : {
+      "comment" : "Website Settings → Cookies: the Clear Cached Favicon button after it ran. Title case, button label."
+    },
+    "Chromium cookies aren’t shown. Open this website in a Chromium tab to see them." : {
+      "comment" : "Website Settings → Cookies: note under the cookie list when Chromium may hold cookies but could not be asked."
+    },
+    "Clear Cached Favicon" : {
+      "comment" : "Website Settings → Cookies: button that forgets the website's stored icon (light and dark) without deleting cookies."
+    },
+    "Cookies in WebKit and Chromium and the cached icon are removed. You’re signed out of this website." : {
+      "comment" : "Message of the confirmation before deleting all of a website's cookies in Settings > Websites."
+    },
+    "Cookies keep you signed in and remember your choices on this website." : {
+      "comment" : "Caption of the Cookies page for one website in Settings > Websites."
+    },
+    "Copy Value" : {
+      "comment" : "Website Settings → Cookies: button that copies one cookie's value to the clipboard (concealed, cleared after a minute)."
+    },
+    "Couldn’t update cookies" : {
+      "comment" : "Website Settings → Cookies: title of the alert when listing or deleting cookies failed."
+    },
+    "Counting cookies" : {
+      "comment" : "Website Settings → Cookies: VoiceOver label of the spinner while a website's cookies are counted."
+    },
+    "Delete All" : {
+      "comment" : "Website Settings → Cookies: confirming button of the inline Delete All confirmation in the cookie manager popover."
+    },
+    "Delete All…" : {
+      "comment" : "Website Settings → Cookies: button in the cookie manager popover that asks before deleting every cookie of the website."
+    },
+    "Delete Cookie" : {
+      "comment" : "Website Settings → Cookies: help tag of the trash button on one cookie."
+    },
+    "Delete Cookies" : {
+      "comment" : "Website Settings → Cookies: button that deletes all of the website's cookies after a confirmation; also the confirming button of that dialog."
+    },
+    "Delete Cookies…" : {
+      "comment" : "Settings > Websites > a website: button that asks before deleting all of the website's cookies."
+    },
+    "Delete all" : {
+      "comment" : "Settings > Websites > a website > Cookies: confirming button of the Delete all dialog."
+    },
+    "Delete all…" : {
+      "comment" : "Settings > Websites > a website > Cookies: button that asks before deleting every cookie of the website."
+    },
+    "Delete cookie %@" : {
+      "comment" : "Website Settings → Cookies: VoiceOver label of the trash button on one cookie. %@ is the cookie's name."
+    },
+    "Delete cookies" : {
+      "comment" : "Settings > Websites > a website: title of the row with the Delete Cookies… button."
+    },
+    "Delete cookies for %@ in WebKit and Chromium, and its cached icon? You’ll be signed out of this website." : {
+      "comment" : "Website Settings → Cookies: inline confirmation before deleting a website's cookies. %@ is the website's host name."
+    },
+    "Delete every cookie and the cached icon?" : {
+      "comment" : "Website Settings → Cookies: inline confirmation in the cookie manager popover before Delete All."
+    },
+    "Delete every cookie of \"%@\"?" : {
+      "comment" : "Settings > Websites > a website > Cookies: title of the Delete all dialog. %@ is the website's host name."
+    },
+    "Delete the cookies of \"%@\"?" : {
+      "comment" : "Settings > Websites > a website: title of the Delete Cookies dialog. %@ is the website's host name."
+    },
+    "Domain" : {
+      "comment" : "Website Settings → Cookies: label of a cookie's domain in its details."
+    },
+    "Engine" : {
+      "comment" : "Website Settings → Cookies: hidden label of the engine filter (All, WebKit, Chromium) of the cookie list."
+    },
+    "Flags" : {
+      "comment" : "Website Settings → Cookies: label of a cookie's Secure and HttpOnly attributes in its details."
+    },
+    "Hides the cookie’s details" : {
+      "comment" : "Website Settings → Cookies: VoiceOver hint of an opened cookie row."
+    },
+    "Inspect, copy, or delete the cookies of this website in WebKit and Chromium." : {
+      "comment" : "Settings > Websites > a website: caption of the Manage cookies row."
+    },
+    "Manage cookies" : {
+      "comment" : "Settings > Websites > a website: row that opens the list of the website's cookies."
+    },
+    "Manage…" : {
+      "comment" : "Website Settings → Cookies: button that opens the list of the website's cookies."
+    },
+    "No cookie matches what you typed." : {
+      "comment" : "Website Settings → Cookies: empty list after a search."
+    },
+    "No cookies" : {
+      "comment" : "Settings > Websites > a website > Cookies: title of the empty list."
+    },
+    "Partition" : {
+      "comment" : "Website Settings → Cookies: label of a partitioned cookie's top-level site in its details."
+    },
+    "Path" : {
+      "comment" : "Website Settings → Cookies: label of a cookie's path in its details."
+    },
+    "SameSite" : {
+      "comment" : "Website Settings → Cookies: label of a cookie's SameSite attribute in its details. A web term; usually kept as is."
+    },
+    "Search cookies" : {
+      "comment" : "Website Settings → Cookies: placeholder of the search field of the cookie list."
+    },
+    "Session" : {
+      "comment" : "Website Settings → Cookies: a cookie's expiry when it lasts only until the browser quits."
+    },
+    "Shows the cookie’s details" : {
+      "comment" : "Website Settings → Cookies: VoiceOver hint of a closed cookie row."
+    },
+    "Signs you out of this website and clears its cached icon." : {
+      "comment" : "Settings > Websites > a website: caption of the Delete cookies row."
+    },
+    "This website has no cookies on this Mac." : {
+      "comment" : "Settings > Websites > a website > Cookies: caption of the empty list."
+    },
+    "This website has no cookies." : {
+      "comment" : "Website Settings → Cookies: empty cookie list in the manager popover."
+    },
+    "Value" : {
+      "comment" : "Website Settings → Cookies: label of a cookie's value in its details."
+    },
+    "Load Chromium Cookies" : {
+      "comment" : "Website Settings → Cookies: button that starts Chromium to list the website's Chromium cookies. Title case."
+    },
+    "Chromium isn’t running, so its cookies aren’t listed yet." : {
+      "comment" : "Website Settings → Cookies: note beside Load Chromium Cookies when Chromium holds data for the profile but has not started."
+    },
+    "Chromium cookies couldn’t be reached. Open this website in a Chromium tab and try again." : {
+      "comment" : "Website Settings → Cookies: error when deleting a website's cookies could not reach Chromium. WebKit cookies were deleted."
     }
   },
   "version" : "1.0"

@@ -69,6 +69,11 @@ struct SiteControlsPanel: View {
         return host
     }
 
+    private var cookieHost: String? {
+        guard let url = URL(string: tab.urlString), ["http", "https"].contains(url.scheme?.lowercased()) else { return nil }
+        return SiteCookies.host(of: url)
+    }
+
     private var showsSafety: Bool {
         blockableHost != nil || !tab.permissions.origin.isEmpty
     }
@@ -81,6 +86,9 @@ struct SiteControlsPanel: View {
 
             if !siteOrigin.isEmpty {
                 SiteMediaSection(browser: browser, tab: tab)
+                if let cookieHost {
+                    SiteCookiesSection(tab: tab, host: cookieHost)
+                }
             }
 
             if showsSafety {
