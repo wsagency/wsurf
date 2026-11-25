@@ -726,6 +726,10 @@ enum PageDriver {
 
     /// `userGesture` only for an action the person asked for (click, type): WSurf's reads never count as their activation.
     static func evaluateJSON(_ script: String, userGesture: Bool = false, in webView: BrowserPage) async -> [String: Any]? {
+        if userGesture {
+            // An agent's gesture never opens a chooser or menu nobody planned (`BrowserPage.markAutomatedInput`).
+            webView.markAutomatedInput()
+        }
         guard PageAutomationGuard.allowsExecution,
             await selectedFrameIsLive(in: webView),
             let raw = (try? await webView.evaluateJavaScript(

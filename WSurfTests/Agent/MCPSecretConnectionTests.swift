@@ -103,7 +103,8 @@ struct MCPSecretConnectionTests {
         defer { withExtendedLifetime(fixture) {} }
         let session = try #require(running.server.sessions.first)
 
-        let (opened, openFailed) = try await connection.client.callTool(name: "newTab", arguments: ["url": .string(try fixture.url().absoluteString)])
+        // WebKit: this window has no view to keep a Chromium page in, and newTab defaults to Chromium.
+        let (opened, openFailed) = try await connection.client.callTool(name: "newTab", arguments: ["url": .string(try fixture.url().absoluteString), "engine": "webkit"])
         #expect(openFailed == false, "\(text(opened))")
         let tab = try #require(running.developer.tabs.first)
         let tabID: Value = .string(tab.id.uuidString)
@@ -157,7 +158,7 @@ struct MCPSecretConnectionTests {
         defer { withExtendedLifetime(fixture) {} }
         let session = try #require(running.server.sessions.first)
 
-        _ = try await connection.client.callTool(name: "newTab", arguments: ["url": .string(try fixture.url().absoluteString)])
+        _ = try await connection.client.callTool(name: "newTab", arguments: ["url": .string(try fixture.url().absoluteString), "engine": "webkit"])
         let tab = try #require(running.developer.tabs.first)
         let tabID: Value = .string(tab.id.uuidString)
         #expect(await PageSettle.untilIdle(tab.page))

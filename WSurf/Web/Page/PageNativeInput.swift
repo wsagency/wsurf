@@ -116,6 +116,11 @@ extension PageDriver {
         guard ready?["focused"] as? Bool == true, focusForKeyboard(view, in: window),
             await validateObservation(in: view, ref: ref)
         else { return "The control could not receive keyboard focus." }
+        return await pressInWindow(chord, extended: extended, window: window, in: view)
+    }
+
+    /// `chord` as native key events to the page's own responder in `window`, which the page has just taken focus in.
+    private static func pressInWindow(_ chord: PageKeyChord, extended: Bool, window: NSWindow, in view: BrowserPage) async -> String {
         let documentURL = view.url
         do {
             // The page's own trusted keydown is the receipt: it proves what arrived, not only that a responder was called.

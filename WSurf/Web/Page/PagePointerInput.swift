@@ -213,6 +213,9 @@ extension PageDriver {
                 guard let window = view.window, !view.isParked, window.isVisible, window.attachedSheet == nil else {
                     return backgroundWebKitPointer
                 }
+                // WebKit would open its own context menu, in front of the person, for a native right or middle click.
+                guard button == .left else { return "Right and middle clicks need a Chromium tab (setTabEngine)." }
+                view.markAutomatedInput()
                 try await installComputerReceipt(button.receipt(clickCount: clickCount), in: view)
                 guard await pointerTargetHolds(target.point, in: view) else { throw PageComputerFailure.stale }
                 let native = CGPoint(x: target.point.x * view.pageZoom, y: target.point.y * view.pageZoom)
@@ -309,5 +312,20 @@ extension PageDriver {
             return status
         }
         return status + "\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, viewportOnly: true) })
+    }
+}
+
+extension BrowserPage {
+    /// Longer than Chromium's transient user activation (5 s), so a page cannot spend the activation of an agent's input on a
+    /// chooser or menu after the mark has gone.
+    nonisolated static let automatedInputGrace: Duration = .seconds(6)
+
+    var isAutomatedInputRecent: Bool {
+        automatedInputUntil.map { ContinuousClock.now < $0 } ?? false
+    }
+
+    /// Marks input WSurf is about to dispatch for an agent (`automatedInputUntil`).
+    func markAutomatedInput() {
+        automatedInputUntil = .now + Self.automatedInputGrace
     }
 }

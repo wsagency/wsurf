@@ -372,6 +372,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     ) async -> [URL]? {
         guard let page = BrowserPage.from(webView) else { return nil }
         let selection = PageFileSelection.pending.object(forKey: page)
+        // A chooser nobody planned, on a page out of sight or right after input WSurf sent for an agent, is not the person's.
+        guard selection != nil || (!page.isParked && !page.isAutomatedInputRecent) else { return nil }
         let beforeObservation: String?
         if selection == nil {
             beforeObservation = nil

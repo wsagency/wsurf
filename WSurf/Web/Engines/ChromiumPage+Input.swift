@@ -50,16 +50,15 @@ extension ChromiumPage {
         (modifiers.contains(.option) ? 1 : 0) | (modifiers.contains(.command) ? 4 : 0) | (modifiers.contains(.shift) ? 8 : 0)
     }
 
-    /// While set, a file chooser the page opens without a planned selection, and the engine's context menu, are refused: input
-    /// WSurf dispatched for an agent must never put a native panel or menu in front of the person.
-    private static let automatedInputGrace: Duration = .seconds(2)
-
-    var isAutomatedInputRecent: Bool {
-        automatedInputUntil.map { ContinuousClock.now < $0 } ?? false
+    /// Whether a file chooser the page opens without a planned selection, or the engine's context menu, must be refused: the
+    /// person cannot see the page, or input WSurf dispatched for an agent is recent. Neither may put a native panel or menu
+    /// in front of the person.
+    var refusesUnplannedPanels: Bool {
+        !isShownToPerson || owner?.isAutomatedInputRecent == true
     }
 
     private func markAutomatedInput() {
-        automatedInputUntil = .now + Self.automatedInputGrace
+        owner?.markAutomatedInput()
     }
 
     /// Sends one `Input.dispatchMouseEvent`, asking `allowed` in the turn it is sent.
@@ -79,9 +78,11 @@ extension ChromiumPage {
         to point: CGPoint, modifiers: PageKeyChord.Modifiers = [], allowed: @escaping @MainActor @Sendable () -> Bool
     ) async throws {
         try await ensureReady()
-        try await sendMouse(
-            ["type": "mouseMoved", "x": Double(point.x), "y": Double(point.y), "button": "none", "buttons": 0,
-             "modifiers": Self.cdpModifiers(modifiers)], allowed: allowed)
+        let params: [String: Any] = [
+            "type": "mouseMoved", "x": Double(point.x), "y": Double(point.y), "button": "none", "buttons": 0,
+            "modifiers": Self.cdpModifiers(modifiers),
+        ]
+        try await sendMouse(params, allowed: allowed)
     }
 
     /// A trusted click: move, then press and release `clickCount` times with the click count each press would have. Once a
@@ -105,9 +106,11 @@ extension ChromiumPage {
     /// A trusted wheel turn at `point` by `deltaX` and `deltaY` CSS pixels.
     func dispatchWheel(at point: CGPoint, deltaX: Double, deltaY: Double, allowed: @escaping @MainActor @Sendable () -> Bool) async throws {
         try await ensureReady()
-        try await sendMouse(
-            ["type": "mouseWheel", "x": Double(point.x), "y": Double(point.y), "deltaX": deltaX, "deltaY": deltaY, "button": "none",
-             "buttons": 0], allowed: allowed)
+        let params: [String: Any] = [
+            "type": "mouseWheel", "x": Double(point.x), "y": Double(point.y), "deltaX": deltaX, "deltaY": deltaY, "button": "none",
+            "buttons": 0,
+        ]
+        try await sendMouse(params, allowed: allowed)
     }
 
     /// Sends `chord` as a trusted key down and up to the page's focused element. Only a `PageKeyChord` can be sent, so the
@@ -137,10 +140,12 @@ extension ChromiumPage {
             guard allowed() else { throw ChromiumError.staleFrame }
         })
         markAutomatedInput()
-        _ = try await devTools.command(
-            "Input.dispatchKeyEvent",
-            params: ["type": "keyUp", "key": key.key, "code": key.code, "windowsVirtualKeyCode": key.virtualKey,
-                     "nativeVirtualKeyCode": Int(chord.keyCode), "modifiers": Self.cdpModifiers(chord.modifiers)])
+        var up = down
+        up["type"] = "keyUp"
+        up["text"] = nil
+        up["unmodifiedText"] = nil
+        up["commands"] = nil
+        _ = try await devTools.command("Input.dispatchKeyEvent", params: up)
     }
 
     nonisolated struct CDPKey: Equatable {

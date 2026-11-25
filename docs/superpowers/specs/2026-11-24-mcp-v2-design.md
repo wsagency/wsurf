@@ -4,7 +4,7 @@
 # WSurf MCP v2 Design Specification
 
 **Date:** 2026-11-24  
-**Status:** Approved (Phase 1 implementing; Phases 2–4 planned)  
+**Status:** Approved (Phase 1 implemented; Phase 2 implemented; Phases 3–4 planned)  
 **Scope:** Native WSurf MCP Server (`WSurf --mcp`), Page Automation Runtime, Autofill/Vault Integration, Developer Tools, and Settings
 
 ---
@@ -173,6 +173,17 @@ To guarantee that neither Vault-filled passwords nor user-typed passwords can be
 - **Adaptive settle windows:** Shorten `PageSettle` quiet ceilings when no network requests, animations, or mutations are observed after an action, while honoring explicit `budget.settleMs`.
 - **Compound batching:** Optional action-sequence tool (`runSteps`) for deterministic local UI flows (fill + click + wait) with single-round-trip failure diagnostics.
 - **Background Chromium pre-warming:** Keep one standby Chromium renderer warm when the MCP server is enabled so `newTab` achieves sub-second first paint.
+
+**Implemented (Phase 2):** Chromium background `isTrusted` pointer and keyboard input through DevTools (`clickOnPage` with
+`x`/`y`, `button`, `clickCount`, `modifiers` or `pointer`; `hoverOnPage`; `scrollPage` wheel at a point; `dragOnPage` with
+`pointer`; `pressKey`), hit-tested with the ref click's protections (file inputs, password reveal toggles on protected
+forms, `SensitiveAction`), and a 6-second refusal of unplanned file choosers and context menus after agent input;
+`getDevelopmentInfo` `backgroundPointer`/`backgroundKeyboard`; no announce pause for MCP actions; `waitAndRead` on `newTab`
+and `navigate`; cached digests keyed by page generation, document, observation, change count and taint, and a single-round
+readiness check; batch `fillFields` (one inspect round, one write round per field, one verify round, one settle) with
+`submitRef`/`submit`; `runSteps` (≤ 10 steps, fail-fast); `settle: none|fast|auto` and animation/off-screen noise filtering;
+per-tab call lanes with a 4-call FIFO and a global lane for sheets and focus; `--tools=core|playwright|all`;
+`screenshotPage` `includeSnapshot`. See MCP.md. Pre-warming remains planned.
 
 ---
 

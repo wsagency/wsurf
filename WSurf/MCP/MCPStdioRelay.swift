@@ -18,7 +18,7 @@ actor MCPStdioRelay {
     private var connecting: Task<Bool, Never>?
     private var stopped = false
     /// The tools this client sees and may call (`--tools`).
-    let profile: MCPToolCatalog.Profile
+    nonisolated let profile: MCPToolCatalog.Profile
 
     init(socketPath: String, token: String? = nil, profile: MCPToolCatalog.Profile = .all) {
         self.socketPath = socketPath

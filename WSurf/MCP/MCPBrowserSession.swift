@@ -329,8 +329,10 @@ final class MCPBrowserSession: Identifiable {
         if name == "navigate" {
             let url = arguments["url"]?.stringValue ?? ""
             let inPlace = arguments["inPlace"]?.boolValue ?? false
+            // waitAndRead waits for a document other than this one.
+            let previous = tab.isMaterialised ? tab.page.mainDocumentID : nil
             let started = await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant, inPlace: inPlace) } ?? interruptedResult(tab)
-            return await waitingAndReading(started, arguments: arguments)
+            return await waitingAndReading(started, arguments: arguments, previousDocument: previous)
         }
         if name == "goBack", let refusal = goBackRefusal(tab, grant: grant) { return refusal }
         if name == "goBack" { rotateDiagnosticsKey(on: tab) }

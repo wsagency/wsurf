@@ -4,6 +4,27 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 nonisolated extension PageRuntime {
+    /// Spliced into the runtime before the walk that registers roots with it.
+    static let changeScript = #"""
+      // What can change a digest: DOM mutations other than the highlight ring (in the document, and in every shadow root and
+      // frame a walk has entered), and input, focus and scroll. An unchanged count lets an action reuse its last digest.
+      let changeCount = 0;
+      const ringMutation = record => {
+        const ring = n => n.nodeType === 1 && n.classList.contains('__wsurf-ring');
+        return ring(record.target) || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(ring));
+      };
+      const watchedRoots = new WeakSet();
+      let changeWatcher = null;
+      try { changeWatcher = new MutationObserver(records => { if (!records.every(ringMutation)) changeCount++; }); } catch (e) {}
+      const watchRoot = root => {
+        if (!root || watchedRoots.has(root)) return;
+        watchedRoots.add(root);
+        try { changeWatcher?.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); } catch (e) {}
+        for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout']) root.addEventListener(type, () => { changeCount++; }, true);
+      };
+      watchRoot(document);
+      """#
+
     /// Spliced into the runtime, where it shares the helpers (`collect`, `visible`, `norm`, `clip`...) it is written against.
     static let feedbackScript = #"""
       // MARK: Action feedback: digest, quiet wait, condition wait

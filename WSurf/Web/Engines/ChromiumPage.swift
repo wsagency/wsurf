@@ -48,8 +48,6 @@ final class ChromiumPage: NSView {
     /// The frame layer of a browser the service took with it, with its last frame: shown while a shown page waits for its replacement
     /// (`ChromiumPage+Display`).
     var retainedPreview: CALayer?
-    /// Until when input WSurf dispatched for an agent is recent (`ChromiumPage+Input`).
-    var automatedInputUntil: ContinuousClock.Instant?
     var preparation: Task<Void, Error>?
     var pendingLoad: Task<Void, Never>?
     /// The engine's stop, sent on the turn after `stopLoading` unless a navigation replaced it (`supersedeStop`).

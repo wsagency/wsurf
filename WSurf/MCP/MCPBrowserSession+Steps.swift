@@ -59,12 +59,17 @@ extension MCPBrowserSession {
     /// Whether `tab`'s page committed a document other than `previous` and finished loading within `waitAndReadTimeout`.
     private func loaded(_ tab: BrowserTab, after previous: String?) async -> Bool {
         let deadline = ContinuousClock.now + Self.waitAndReadTimeout
+        // The page loads once it exists, as a call that uses it would make it (`usePage`), also with no window to keep it in.
+        tab.realizeDeferredSession()
+        _ = tab.page
         while ContinuousClock.now < deadline, !Task.isCancelled, isConnected {
-            if tab.isMaterialised {
-                let view = tab.page
-                if let document = view.mainDocumentID, document != previous, !view.isLoading, view.url != nil {
-                    return true
-                }
+            // A dialog (a beforeunload question) blocks the page: the caller reports it instead of waiting it out.
+            if tab.dialogs.hasOpenDialog {
+                return true
+            }
+            let view = tab.page
+            if let document = view.mainDocumentID, document != previous, !view.isLoading, view.url != nil {
+                return true
             }
             // ponytail: polls every 50 ms; a commit observer would answer sooner.
             try? await Task.sleep(for: .milliseconds(50))

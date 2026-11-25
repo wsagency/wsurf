@@ -431,15 +431,11 @@ final class ChromiumClient {
             return
         }
         let selection = planned ? PageFileSelection.pending.object(forKey: owner) : nil
-        // A chooser the page opens right after input WSurf sent for an agent was not asked for by the person.
-        guard selection != nil || !chromiumPage.isAutomatedInputRecent else {
-            cancelFileDialog(raw)
-            return
-        }
         selection?.requestedPanel = true
         let expectedURL = owner.url
         Task { @MainActor [weak self, weak chromiumPage, weak owner, selection] in
-            guard let self, !self.isClosed, let chromiumPage, let owner,
+            // A chooser nobody planned, on a page out of sight or right after input WSurf sent for an agent, is not the person's.
+            guard let self, !self.isClosed, let chromiumPage, let owner, selection != nil || !chromiumPage.refusesUnplannedPanels,
                   owner.chromium === chromiumPage, owner.window === window else {
                 selection?.finish(nil)
                 self?.cancelFileDialog(raw)

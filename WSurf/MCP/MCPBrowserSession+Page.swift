@@ -278,6 +278,9 @@ extension MCPBrowserSession {
 
     private func pageAction(name: String, arguments: [String: Value], view: BrowserPage, secret: SecretEntry?, developer: Bool) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
+        if let pointer = await pointerAction(name: name, arguments: arguments, ref: ref, view: view) {
+            return pointer
+        }
         switch name {
         case "readPage":
             return await PageDriver.readRenderedPage(
@@ -285,16 +288,6 @@ extension MCPBrowserSession {
                 controlOffset: arguments["controlOffset"]?.intValue ?? 0,
                 scope: arguments["scope"]?.stringValue ?? "", viewportOnly: arguments["viewportOnly"]?.boolValue ?? false)
         case "clickOnPage":
-            if let request = Self.pointerClick(arguments) {
-                switch request {
-                case .success(let click):
-                    return await PageDriver.pointerClick(
-                        ref: ref > 0 ? ref : nil, point: Self.point(arguments), button: click.button, clickCount: click.count,
-                        modifiers: click.modifiers, in: view)
-                case .failure(let refusal):
-                    return refusal.message
-                }
-            }
             return await PageDriver.click(ref: ref, label: "", in: view, announced: true)
         case "typeOnPage":
             return await PageDriver.type(
@@ -303,17 +296,8 @@ extension MCPBrowserSession {
         case "selectOption":
             return await PageDriver.selectOption(arguments["option"]?.stringValue ?? "", ref: ref, field: "", in: view, announced: true)
         case "scrollPage":
-            if let point = Self.point(arguments) {
-                return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", at: point, in: view)
-            }
             return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", ref: ref, in: view)
         case "hoverOnPage":
-            if view.chromium != nil || Self.point(arguments) != nil {
-                return await PageDriver.pointerHover(ref: ref > 0 ? ref : nil, point: Self.point(arguments), in: view)
-            }
-            if view.isParked {
-                return PageDriver.backgroundWebKitPointer
-            }
             return await PageDriver.hover(ref: ref, in: view)
         case "pressKey":
             return await PageDriver.pressKey(arguments["key"]?.stringValue ?? "", ref: ref, modifiers: arguments["modifiers"]?.stringValue ?? "", in: view)
@@ -354,6 +338,34 @@ extension MCPBrowserSession {
             return await PageDriver.goBack(in: view)
         default:
             return "Unknown page action."
+        }
+    }
+
+    /// Trusted pointer input for a click, hover or scroll that asks for it (a point, `pointer`, another button...), and every
+    /// Chromium hover; nil for the tool's ordinary path.
+    private func pointerAction(name: String, arguments: [String: Value], ref: Int, view: BrowserPage) async -> String? {
+        let point = Self.point(arguments)
+        switch name {
+        case "clickOnPage":
+            switch Self.pointerClick(arguments) {
+            case .success(let click)?:
+                return await PageDriver.pointerClick(
+                    ref: ref > 0 ? ref : nil, point: point, button: click.button, clickCount: click.count, modifiers: click.modifiers, in: view)
+            case .failure(let refusal)?:
+                return refusal.message
+            case nil:
+                return nil
+            }
+        case "scrollPage":
+            guard let point else { return nil }
+            return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", at: point, in: view)
+        case "hoverOnPage":
+            if view.chromium != nil || point != nil {
+                return await PageDriver.pointerHover(ref: ref > 0 ? ref : nil, point: point, in: view)
+            }
+            return view.isParked ? PageDriver.backgroundWebKitPointer : nil
+        default:
+            return nil
         }
     }
 

@@ -17,36 +17,16 @@ nonisolated enum PageRuntime {
       const expectedValues = new WeakMap();
       let lastControlQuery = null;
       window.__wsurfRefs = [];
-      // What can change a digest: DOM mutations other than the highlight ring (in the document, and in every shadow root and
-      // frame a walk has entered), and input, focus and scroll. An unchanged count lets an action reuse its last digest.
-      let changeCount = 0;
-      const ringMutation = record => {
-        const ring = n => n.nodeType === 1 && n.classList.contains('__wsurf-ring');
-        return ring(record.target) || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(ring));
-      };
-      const watchedRoots = new WeakSet();
-      let changeWatcher = null;
-      try { changeWatcher = new MutationObserver(records => { if (!records.every(ringMutation)) changeCount++; }); } catch (e) {}
-      const watchRoot = root => {
-        if (!root || watchedRoots.has(root)) return;
-        watchedRoots.add(root);
-        try { changeWatcher?.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); } catch (e) {}
-        for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout']) root.addEventListener(type, () => { changeCount++; }, true);
-      };
-      watchRoot(document);
+      \#(changeScript)
       const parentOf = el => el.parentElement || el.getRootNode()?.host || el.ownerDocument?.defaultView?.frameElement;
 
       function* walk(root) {
         for (const el of root.querySelectorAll('*')) {
           yield el;
-          if (el.shadowRoot) {
-            watchRoot(el.shadowRoot);
-            yield* walk(el.shadowRoot);
-          }
+          if (el.shadowRoot) { watchRoot(el.shadowRoot); yield* walk(el.shadowRoot); }
           if (el.tagName === 'IFRAME') {
             try {
-              if (el.contentDocument) watchRoot(el.contentDocument);
-              if (el.contentDocument && el.contentDocument.body) yield* walk(el.contentDocument.body);
+              if (el.contentDocument) { watchRoot(el.contentDocument); if (el.contentDocument.body) yield* walk(el.contentDocument.body); }
             } catch (e) {}
           }
         }
