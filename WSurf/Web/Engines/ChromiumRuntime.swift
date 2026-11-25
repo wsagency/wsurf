@@ -473,7 +473,7 @@ final class ChromiumRuntime {
     private(set) var cookieFlushCount = 0
 
     /// Asks Chromium to write the cookie store of a context that exists to disk; it finishes in the background.
-    private func flushCookieStore(contextID: UUID) {
+    func flushCookieStore(contextID: UUID) {
         guard let entry = contexts[contextID], entry.isStarted,
               let manager = entry.raw.pointee.get_cookie_manager?(entry.raw, nil) else { return }
         defer { ChromiumInterop.release(UnsafeMutableRawPointer(manager)) }
@@ -499,6 +499,11 @@ final class ChromiumRuntime {
     }
 
     func command(context: BrowserProfileContext, method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+        try await withHiddenPage(context: context) { try await $0.command(method, params: params) }
+    }
+
+    /// Runs `body` on one hidden page of `context`, so a batch of DevTools commands opens one browser, not one per command.
+    func withHiddenPage<T>(context: BrowserProfileContext, _ body: (ChromiumPage) async throws -> T) async throws -> T {
         guard !context.privateSessionEnded else { throw ChromiumError.closed }
         try ensureInitialized()
         let window = NSWindow(
@@ -511,7 +516,7 @@ final class ChromiumRuntime {
         do {
             try await prepareContext(for: context)
             try page.materialize()
-            let result = try await page.command(method, params: params)
+            let result = try await body(page)
             await page.close()
             window.close()
             return result

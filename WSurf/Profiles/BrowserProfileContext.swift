@@ -70,9 +70,13 @@ final class BrowserProfileContext {
     func tabs(sharingSitePermissionsWith browser: BrowserModel) -> [BrowserTab] {
         browser.tabs + browsers.allObjects.filter { $0 !== browser && $0.sitePermissions === browser.sitePermissions }.flatMap(\.tabs)
     }
+    /// The tabs of this profile's windows.
+    var allTabs: [BrowserTab] {
+        browsers.allObjects.flatMap(\.tabs)
+    }
     /// The tabs of this profile's windows whose page is open on Chromium (`ChromiumRuntime.mirrorSiteAnswers`).
     var chromiumTabs: [BrowserTab] {
-        browsers.allObjects.flatMap(\.tabs).filter { $0.liveView?.chromium != nil }
+        allTabs.filter { $0.liveView?.chromium != nil }
     }
     private(set) var privateSessionEnded = false
 

@@ -326,6 +326,7 @@
    "SharedProfileLifecycleTests",
    "SharedSpacesTests",
    "SidebarListHeightTests",
+   "SiteCookiesTests",
    "TabSleepScheduleTests",
    "TabSleepSparesTests",
    "TabSwitchWorkTests",
