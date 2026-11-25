@@ -102,11 +102,13 @@ extension PageDriver {
             if (verifying && target !== window.__wsurfPointerTarget) {
               return JSON.stringify({ error: 'The page put another element under the pointer. Nothing was clicked. Read the page again.' });
             }
-            if (option && hit.closest?.('a[href],area[href]')) {
+            // Across shadow roots: a link or label wrapping a component is still the link or label the click activates.
+            const outer = test => { for (let n = hit; n; n = up(n)) if (test(n)) return n; return null; };
+            if (option && outer(n => n.matches?.('a[href],area[href]'))) {
               return JSON.stringify({ error: 'Option-click on a link downloads it, so it is never sent. Click without option.' });
             }
             const isFile = n => n?.tagName === 'INPUT' && (n.type || '').toLowerCase() === 'file';
-            const label = hit.closest?.('label');
+            const label = outer(n => n.tagName === 'LABEL');
             if ([hit, target, label?.control].some(isFile)) {
               return JSON.stringify({ error: 'File selection requires the user. Use chooseFilesOnPage.' });
             }

@@ -44,7 +44,7 @@ struct MCPv2SpeedTests {
                   <button id=go>Continue</button>
                 </form>
                 """),
-            "/other": .html("<!doctype html><title>Other</title><p>Other page text</p><button>Next</button><a href=\"/\">Home</a>"),
+            "/other": .html("<!doctype html><title>Other</title><p>Other page text</p><button>Next</button><a href=\"/\">Home</a><div style=\"height: 3000px\"></div>"),
             "/busy": .html("""
                 <!doctype html><title>Busy</title><button id=go onclick="document.title = 'Went'">Go</button>
                 <div id=spin style="position: absolute; left: 0; top: 200px; width: 20px; height: 20px">.</div>
@@ -567,6 +567,8 @@ struct MCPv2SpeedTests {
     }
 
     /// A step that does not wait (settle none) and navigates: the next step runs on the page that arrives, not half loaded.
+    /// The step after a `settle: none` click runs on the page the click opened, not on the one it left. The scroll waits for
+    /// nothing itself, so only runSteps' own check makes the page loaded by the time the call returns.
     @Test func runStepsWaitsForANavigationASettleNoneStepStarted() async throws {
         try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
             let read = try await rig.call("readPage", rig.shared)
@@ -574,11 +576,28 @@ struct MCPv2SpeedTests {
             let result = try await rig.call("runSteps", rig.shared, [
                 "steps": .array([
                     .object(["tool": "click", "arguments": .object(["ref": .int(link), "settle": "none"])]),
-                    .object(["tool": "waitForPage", "arguments": .object(["condition": "text", "value": "Other page text", "timeout": 1])]),
+                    .object(["tool": "scroll", "arguments": .object(["direction": "down", "settle": "none"])]),
                 ]),
             ])
             #expect(result.isError == false, "\(MCPPhase2Rig.text(result))")
             #expect(result.structuredContent?.objectValue?["completedSteps"]?.intValue == 2)
+            #expect(rig.shared.page.url?.path == "/other" && !rig.shared.page.isLoading, "the scroll ran on the loaded new page")
+        }
+    }
+
+    /// Steps that stay on the page pay no navigation wait: six `settle: none` scrolls take well under the 500 ms an action
+    /// allows for a navigation to start, per step (2.5 s for the five between them).
+    @Test func settleNoneStepsThatStayOnThePageStayFast() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes(), path: "/busy") { rig in
+            let steps: [Value] = (0..<6).map { index in
+                .object(["tool": "scroll", "arguments": .object(["direction": .string(index.isMultiple(of: 2) ? "down" : "up"), "settle": "none"])])
+            }
+            let started = ContinuousClock.now
+            let result = try await rig.call("runSteps", rig.shared, ["steps": .array(steps)])
+            let elapsed = started.duration(to: .now)
+            #expect(result.isError == false, "\(MCPPhase2Rig.text(result))")
+            #expect(result.structuredContent?.objectValue?["completedSteps"]?.intValue == 6)
+            #expect(elapsed < .seconds(2), "six steps took \(elapsed)")
         }
     }
 

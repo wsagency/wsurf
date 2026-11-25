@@ -157,9 +157,11 @@ extension MCPBrowserSession {
                 return finish(failedAt: index, Self.stepLine(line, limit: 600, scrub: scrubbed))
             }
             // A step that did not wait for the page (settle none or fast) may have started a navigation the next step would race.
+            // ponytail: a 50 ms window, not the 500 ms an action allows, so steps that stay on the page stay fast; a navigation the
+            // page starts later than that (a timer, a slow handler) races the next step as it would between two separate calls.
             if index + 1 < steps.count, ["none", "fast"].contains(stepArguments["settle"]?.stringValue ?? ""), tab.isMaterialised {
                 let view = tab.page
-                if await PageSettle.pageWasLeft(view, document: documentBefore, url: urlBefore) {
+                if await PageSettle.pageWasLeft(view, document: documentBefore, url: urlBefore, within: .milliseconds(50)) {
                     await PageSettle.untilIdle(view, timeout: Self.waitAndReadTimeout)
                 }
             }

@@ -40,6 +40,7 @@ struct MCPv2BackgroundInputTests {
         <button id=picker class=box style="top: 370px" onclick="document.body.dataset.picked = 'asked'; hidden.click()">Pick</button>
         <input id=hidden type=file style="display: none">
         <a id=link class=box style="top: 420px" href="/other">Linked page</a>
+        <a id=wrapped class=box style="left: 200px; top: 420px" href="/other"><span id=icon style="display: block; height: 36px"></span></a>
         <button id=swap class=box style="top: 470px" onmouseover="swapOnHover(this)">Harmless</button>
         <button id=relabel class=box style="left: 200px; top: 470px" onmouseover="this.textContent = 'Delete account'"
           onclick="document.body.dataset.relabelled = 'clicked'">Harmless too</button>
@@ -50,6 +51,8 @@ struct MCPv2BackgroundInputTests {
               meta: e.metaKey, key: e.key || '', target: e.target.id || '' }), true);
           }
           document.addEventListener('contextmenu', e => e.preventDefault());
+          // A link around a component: the point hits an element inside the component's shadow root.
+          icon.attachShadow({ mode: 'open' }).innerHTML = '<span style="display: block; height: 36px">Icon</span>';
           // A page that puts another element under the pointer when it arrives, between the move and the press.
           function swapOnHover(el) {
             const other = document.createElement('button');
@@ -216,8 +219,11 @@ struct MCPv2BackgroundInputTests {
                 #expect(rig.browser.activeTabID == rig.owner.id, "\(modifiers): the person's tab stays selected")
                 #expect(rig.window.firstResponder === responder, "\(modifiers): focus did not move")
             }
-            let option = try await rig.call("clickOnPage", rig.shared, ["x": .double(point.x), "y": .double(point.y), "modifiers": "option"])
-            #expect(option.isError == true && MCPPhase2Rig.text(option).contains("Option-click"), "\(MCPPhase2Rig.text(option))")
+            let wrapped = try await rig.centre(of: "wrapped")
+            for target in [point, wrapped] {
+                let option = try await rig.call("clickOnPage", rig.shared, ["x": .double(target.x), "y": .double(target.y), "modifiers": "option"])
+                #expect(option.isError == true && MCPPhase2Rig.text(option).contains("Option-click"), "\(MCPPhase2Rig.text(option))")
+            }
             #expect(rig.shared.page.url?.path == "/", "the link was never followed")
         }
     }

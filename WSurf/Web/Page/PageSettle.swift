@@ -84,8 +84,10 @@ enum PageSettle {
     }
 
     /// Whether the page is loading, or is no longer on `document` and `url`, within a moment: an action navigated it.
-    static func pageWasLeft(_ webView: BrowserPage, document: String?, url: URL?) async -> Bool {
-        await wait(on: webView, timeout: .milliseconds(500), clock: ContinuousClock()) {
+    static func pageWasLeft(
+        _ webView: BrowserPage, document: String?, url: URL?, within timeout: Duration = .milliseconds(500)
+    ) async -> Bool {
+        await wait(on: webView, timeout: timeout, clock: ContinuousClock()) {
             $0.isLoading || $0.mainDocumentID != document || $0.url != url
         }
     }
