@@ -360,8 +360,10 @@ struct MCPv2SpeedTests {
             #expect(dialog.isError == true && MCPPhase2Rig.text(dialog).contains("dialog"), "\(MCPPhase2Rig.text(dialog))")
             #expect(dialog.structuredContent?.objectValue?["completedSteps"]?.intValue == 1, "\(MCPPhase2Rig.text(dialog))")
             // The page is blocked until the dialog is answered; only then can it be read.
-            let id = try #require(MCPPhase2Rig.text(dialog).firstMatch(of: /"dialogID":"([^"]+)"/)?.1, "\(MCPPhase2Rig.text(dialog))")
-            let answered = try await rig.call("handleDialog", rig.shared, ["action": "accept", "dialogID": .string(String(id))])
+            let reply = MCPPhase2Rig.text(dialog)
+            let found = try #require(reply.range(of: #""dialogID":"[^"]+""#, options: .regularExpression), "\(reply)")
+            let id = String(reply[found].dropFirst(#""dialogID":""#.count).dropLast())
+            let answered = try await rig.call("handleDialog", rig.shared, ["action": "accept", "dialogID": .string(id)])
             #expect(answered.isError == false, "\(MCPPhase2Rig.text(answered))")
             #expect(await rig.js("document.getElementById('first').value") as? String == "", "the step after the dialog did not run")
         }
