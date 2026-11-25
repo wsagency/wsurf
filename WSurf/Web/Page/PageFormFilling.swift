@@ -44,7 +44,7 @@ extension PageDriver {
             guard let control = await evaluateJSON(scripted("""
                 const el = window.__wsurfRefs[\(field.ref) - 1];
                 return JSON.stringify({ kind: R.kindOf(el), type: (el.type || '').toLowerCase(),
-                  sensitive: R.isSensitiveField(el), unavailable: R.disabled(el) || !!el.readOnly
+                  sensitive: R.isSensitiveSecret(el), unavailable: R.disabled(el) || !!el.readOnly
                     || el.getAttribute('aria-readonly') === 'true' });
                 """), in: webView), await canContinueBatch(field.ref, in: webView)
             else {
@@ -176,6 +176,13 @@ extension PageDriver {
               };
               omitCheckedValue(copy);
               copy.querySelectorAll('[checked],[aria-checked]').forEach(omitCheckedValue);
+              const omitAutofillMarkers = field => {
+                field.removeAttribute('data-wsurf-contact');
+                field.removeAttribute('data-wsurf-autofilled');
+                field.removeAttribute('data-wsurf-password');
+              };
+              omitAutofillMarkers(copy);
+              copy.querySelectorAll('[data-wsurf-contact],[data-wsurf-autofilled],[data-wsurf-password]').forEach(omitAutofillMarkers);
               return copy.outerHTML.replace(/value="[^"]*"/g, '');
             };
             let text = textOutsideFields(document);

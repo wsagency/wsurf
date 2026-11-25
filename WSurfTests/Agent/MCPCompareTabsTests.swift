@@ -313,9 +313,12 @@ struct MCPCompareTabsTests {
             let before = rig.browser.tabs.count
             let opened = try await call(rig, "openComparison", ["url": .string(try rig.server.url("/same").absoluteString)])
             #expect(opened.isError == true && text(opened).contains("development access"), "\(text(opened))")
-            let chosen = try await call(rig, "newTab", ["url": .string(try rig.server.url("/other").absoluteString), "engine": "webkit"])
-            #expect(chosen.isError == true && text(chosen).contains("development access"), "\(text(chosen))")
             #expect(rig.browser.tabs.count == before)
+            // MCP v2: choosing an engine on newTab works under Control (no development access required).
+            let chosen = try await call(rig, "newTab", ["url": .string(try rig.server.url("/other").absoluteString), "engine": "webkit"])
+            #expect(chosen.isError == false, "\(text(chosen))")
+            #expect(rig.browser.tabs.count == before + 1)
+            #expect(rig.browser.tabs.last?.engine == .webKit)
         }
     }
 

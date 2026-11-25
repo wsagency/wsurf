@@ -166,12 +166,12 @@ revoke it immediately.
 | --- | --- |
 | `requestAccess` | Ask to share the webpages currently on screen. One sheet per connection; later calls only add tabs that a paired app's standing grant covers. `development: true` also asks for development access and `developer: true` for Developer access; the user may grant less. |
 | `listTabs` | List only tabs shared with this connection. |
-| `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. |
+| `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. Sensitive fields show type and state (`(password, sensitive) = (empty)` / `(filled, hidden)`), never values. On login forms, includes anonymized `vaultHint: { hasSavedLogin, requiresUserApproval: true }`. |
 | `clickOnPage` | Click a numbered control. Returns what the click changed (see Action results). |
-| `typeOnPage` | Fill a nonsensitive field, optionally submitting it. In the Developer tier, `secret: true` types a test credential into a sensitive field; see Test credentials. |
+| `typeOnPage` | Fill a field, optionally submitting it. Under Control (when password entry is allowed in Settings › Connected apps) or Developer access, writes into password and OTP fields work directly without `secret: true` and are automatically scrubbed and screenshot-masked; `secret: true` remains optional for non-password secret fields. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. In the Developer tier an item may add `secret: true` for a test credential. |
-| `inspectControl` | Read control state and paginate dropdown options. |
+| `fillFields` | Fill up to 32 distinct form controls without submitting; report exactly which refs retained their values. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
+| `inspectControl` | Read control state and paginate dropdown options. Reports `sensitive`, `type`, `filled`, and `value: "(hidden)"` on sensitive fields, plus anonymized `vaultHint` on login forms. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
 | `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
@@ -191,12 +191,14 @@ revoke it immediately.
 | `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit), `detail` (when an opt-in was asked for) and, with a filter, `skipped`. A read returns at most about 100 KB of records; `nextCursor` continues it. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
 | `readAccessibility` | Read access. A compact outline of the page's roles, names and states: landmarks, headings, lists, tables, controls, images and same-origin iframes, with a `[ref]` on each control `readPage` also lists. At most 400 nodes and about 24 KiB per call; `offset` continues and `scope` (a safe CSS selector) limits the outline to part of the page. Never shows field values; a sensitive field shows its role, its name and `sensitive`. |
 | `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
-| `evaluateScript` | Developer tier. Run one JavaScript expression in the page and return its value, bounded and with sensitive values hidden. See Scripts and DOM edits. |
+| `evaluateScript` | Developer tier. Run one JavaScript expression in the page and return its value, bounded and with sensitive values hidden. Denied (`status: "denied"`, `code: "protectedSecretPresent"`) while the document is `credentialTainted` (WSurf Vault filled credentials into it) or holds a live filled sensitive secret field not explicitly approved for inspection. See Scripts and DOM edits. |
 | `editDOM` | Developer tier. Set or remove an attribute, set text or an inline style, remove an element, or insert a new one. See Scripts and DOM edits. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
-| `navigate` | Navigate a shared tab; another website requires approval, except for a paired app that follows the Website access default (see Website access default). |
-| `newTab` | Ask to open and share a new webpage. It opens in the background, behind the user's tab (in a window with no tab it becomes the tab shown). Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. A paired app that follows the Website access default needs no sheet for the new website either, but still needs the existing control access. `engine` (`webkit` or `chromium`) opens it in that engine whatever the website's setting says; that needs development access. |
+| `navigate` | Navigate a shared tab. Tabs opened by this connection navigate in place. User-owned tabs shared via `requestAccess` open the destination in a new background tab by default (returning the new `tabID`) so the user's tab is untouched, unless `inPlace: true` is passed. Another website requires approval, except for a paired app that follows the Website access default (see Website access default). |
+| `newTab` | Open and share a new webpage in the background, behind the user's tab (in a window with no tab it becomes the tab shown). Works even with no prior tab grants: a standing grant or Website access default opens immediately without a sheet; otherwise one consent sheet asks to open and share the URL at Control without touching or sharing the user's active tab. Defaults to Chromium (except WebKit-only origins); `engine` (`webkit` or `chromium`) is selectable under Control to test Safari/WebKit. |
+| `setTabEngine` | Control. Switch a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable. Respects WebKit-only origins. Because switching reloads the tab and clears Back/Forward history, user-owned shared tabs require `inPlace: true` (agent-opened tabs and Agent Micro Window tabs switch directly). |
+| `requestUserLogin` | Control. Ask the user in WSurf to sign in on a shared tab: blind-fill a user-selected saved WSurf Vault login (**Fill** or **Fill & Sign In** — credentials never reach the client and mark the document `credentialTainted`), **Sign In Myself** (`waitingForUser`, omitted in `vaultFill` mode), or **Cancel** (`declined`). Supports `mode`: `vaultOrManual` (default), `vaultFill`, or `manualLogin`. |
 | `openComparison` | Development. Open a page in WebKit and in Chromium, split side by side in the background, and share both tabs; see Comparing engines. |
 | `compareTabs` | Development. What differs between two tabs that show one page: pixels, layout numbers, console and network. See Comparing engines. |
 | `switchTab` | Show an already shared tab in place of the tab the user sees. Not needed to control a tab (see Background tabs); use it for keyboard input or when the user should watch. |
@@ -532,50 +534,20 @@ they do without the default; the default never skips those, and neither does the
 **Stop.** **Stop External Connections** pauses an app that follows the default, as it pauses one with a standing grant.
 Choose **Resume** in Connected apps to bring it back.
 
-### Test credentials
+### Credentials, passwords, and WSurf Vault
 
-In the Developer tier an app can type **test** credentials that it supplies itself into
-password, one-time code, card and other sensitive fields: `typeOnPage` with
-`secret: true`, or `secret: true` on `fillFields` items. Without `secret`, a sensitive
-field is refused exactly as before. With it, anywhere the Developer tier does not
-hold (an unpaired app, a site that is not a developer site, a window outside the
-Developer profile, a Read Only site) the call is refused before anything is typed. Use
-test accounts and test values only. The app's own transcript holds what it sent, which
-WSurf cannot reach, and the page under test receives the value like any other input.
+WSurf separates **reading**, **writing**, and **WSurf Vault blind fill** for credential fields:
 
-- **Saved passwords are never involved.** The vault and autofill are not read, offered
-  or written: the field is not focused (so no suggestion list opens), open suggestions
-  are dismissed, and any save offer the form could raise is dropped.
-- **Every result hides the secret.** WSurf remembers each secret for that connection
-  only, in memory, and removes it from everything it returns: page text and control
-  values, tab titles and URLs, console and network records, and the structured copy of
-  each result. It matches the exact value as typed, with whitespace collapsed,
-  percent-encoded, JSON-escaped and HTML-escaped (also layered, and ignoring ASCII case),
-  so a page that echoes the value into its text, a console line or a URL still shows
-  `‹secret›`. The registry is wiped when the connection ends: disconnect, **Stop**, revoking
-  the app or turning MCP off, and a result still being computed at that moment is dropped.
-  Nothing is written to disk or to a log, and the registry prints as a count.
-- **Your records stay complete.** The app decides what it registers as a secret, so that
-  registry only shapes what the app is told, never what you read about what it did. A
-  record of an action (a confirmation the Developer tier skipped, an activity entry) hides
-  only a value of at least 8 characters that a password, code or card field kept as typed
-  (or the grouped form the page stored for it), and only as a whole word. It shows
-  `‹hidden secret›` where it did. The action's kind, the site and the amount stay fields
-  of their own, and a long label keeps its start and end, so padding cannot push the action
-  out. A phrase typed into an ordinary field is never hidden there.
-- **Screenshots cover the fields.** In the Developer tier, filled sensitive fields and
-  fields a secret was typed into are painted black in the returned image instead of
-  refusing the capture (a field inside a frame is covered by the whole frame, and one
-  that cannot be measured still refuses it). Page text that merely repeats a secret is not
-  covered in pixels; use `readPage`, which hides it.
-- **Limits.** A secret is at least 4 characters, because a shorter value cannot be hidden
-  without damaging ordinary results, and one connection holds at most 32 different ones.
-  Secrets go into text fields of the page itself, not into frames, dropdowns or
-  checkboxes. Only the value and the encodings above are recognised, plus the form a
-  field ends up holding when the page reformats it (digits grouped in a card number, say);
-  a page that hashes or otherwise transforms the value shows the result as it is. A page
-  can also keep what it receives (its own logs, a form sent with GET in the address bar
-  and history); choose test values that mean nothing.
+- **Autofilled usernames and contacts stay hidden on read, writable on write.** `readPage`, `readAccessibility`, and `inspectControl` redact autofilled usernames and contact fields as well as passwords, never exposing prior values. However, `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` can overwrite username, email, and contact fields directly.
+- **Typing passwords and one-time codes under Control.** Governed by **Allow password entry** (Keychain-backed in Settings › Assistant › Connected apps, enabled by default) or the Developer tier, an app with Control access can type agent- or user-supplied passwords and OTPs directly into password/OTP fields via `typeOnPage`, `fillFields`, `browser_type`, or `browser_fill_form` without needing `secret: true` or restricting to `localhost`. (`secret: true` remains supported as an opt-in hint for non-password fields such as API tokens.) Turning **Allow password entry** off refuses password/OTP typing outside the Developer tier.
+- **Automatic protection on every sensitive write:**
+  1. The field is not focused, open autofill suggestions are dismissed, and save-password offers are cleared.
+  2. The typed value (and any reformatted value stored by the page) is automatically registered in memory-only `MCPSecretScrubber` (wiped on disconnect) and scrubbed to `‹secret›` from all subsequent outputs.
+  3. Tool replies never echo the value (`Typed into "<label>" (sensitive field, value hidden).`).
+  4. `screenshotPage` masks filled sensitive fields in black under Control (when password entry is allowed) as well as in the Developer tier, still refusing if a sensitive field cannot be reliably measured.
+- **Anonymized `vaultHint` and `requestUserLogin` blind fill.** When `readPage` or `inspectControl` sees a visible login form, WSurf checks unlocked Vaults for the tab's verified HTTPS origin and adds `vaultHint: { hasSavedLogin, requiresUserApproval: true }` — never usernames, counts, or passwords. Calling `requestUserLogin(tabID, mode?, reason?, accountHint?)` opens WSurf's native login sheet showing the exact saved account (or an account picker when multiple accounts match) with **Fill**, **Fill & Sign In**, **Sign In Myself** (hands the tab to the user, returning `status: "waitingForUser"`, omitted in `vaultFill` mode), and **Cancel** (`status: "declined"`). On **Fill** or **Fill & Sign In**, WSurf re-verifies the page origin, registers the password in a dedicated Vault scrubber bucket (exempt from the 32-secret agent cap, aborting before DOM injection if registration fails), writes credentials directly into the main document via `callAsyncJavaScript` arguments without ever sending them to the client or targeting iframes, marks the document `credentialTainted`, and returns `{ status: "filledByVault", submitted, fieldsFilled, valuesHidden: true, documentProtected: true }`.
+- **No password read-back across MCP or Developer Tools (`credentialTainted` & sticky password protection).** Whenever a document is `credentialTainted` (filled by WSurf Vault) or holds any live non-empty sensitive field (including user-typed passwords marked with sticky `data-wsurf-password` so "Show password" toggling to `type="text"` cannot expose them, as well as autofilled usernames/contacts), `evaluateScript` and host-bridge `preview_evaluate` are denied before running (`status: "denied"`, `code: "protectedSecretPresent"`). On `credentialTainted` documents, `readNetwork` omits `requestBody` and `responseBody` with `"omitted: protected credential form"` and `readConsole` suppresses object previews. Taint survives `history.pushState`/hash changes and clears only once navigation commits to a new document.
+- **Limits and audit records.** Secrets must be at least 4 characters (and up to 32 distinct secrets per connection) and go into text fields of the page itself, not frames, dropdowns, or checkboxes. Audit records (`scrubForAudit`) hide only values of at least 8 characters confirmed as written into a sensitive field (`‹hidden secret›`). Plain login buttons (`Log in`, `Sign in`) stay clickable without confirmation while OAuth / third-party account linking (`Continue with Google`, `Authorize`, etc.) still asks.
 
 ### Scripts and DOM edits
 
@@ -831,7 +803,7 @@ both engines. WSurf's own tool names are unchanged.
 
 | Playwright MCP name | WSurf tool | Differences |
 | --- | --- | --- |
-| `browser_navigate` | `navigate` | |
+| `browser_navigate` | `navigate` / `newTab` | Opens a new background Chromium tab automatically when no agent-opened or shared tab exists yet. |
 | `browser_navigate_back` | `goBack` | Stays within the shared website. |
 | `browser_click` | `clickOnPage` | One left click: `doubleClick`, `button` other than `left`, and `modifiers` are refused. |
 | `browser_type` | `typeOnPage` | `slowly` is ignored. |
@@ -880,7 +852,7 @@ normal WSurf. Nothing here bypasses consent.
    ```
 
    It prints the fixture address. Open it in the Stage window, press Return, and choose **Allow Development** on the
-   access sheet. It then calls `initialize`, `tools/list` (58 tools: 39 of its own and 19 Playwright MCP names), `requestAccess`, `listTabs`, `readPage`,
+   access sheet. It then calls `initialize`, `tools/list` (60 tools: 41 of its own and 19 Playwright MCP names), `requestAccess`, `listTabs`, `readPage`,
    `screenshotPage`, `getDevelopmentInfo`, `setViewport`, `emulateDevice` (`phone`), `startDiagnostics`, `readConsole` and
    `resetDevelopment`, closes stdin, and expects the relay to exit 0. Every step prints `PASS` or `FAIL`; the exit code is 1 if any failed.
 4. Repeat step 3 with the fixture page on Chromium: in the Stage app open **Settings → Websites**, choose `127.0.0.1`,
@@ -894,7 +866,7 @@ normal WSurf. Nothing here bypasses consent.
      -- /path/to/owned/WSurf.app/Contents/MacOS/WSurf --mcp
    ```
 
-   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 58 tools. With the fixture
+   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 60 tools. With the fixture
    page open in the Stage window, send:
 
    > Use the wsurf-stage MCP server. Call requestAccess with development true, then listTabs. For the tab on 127.0.0.1

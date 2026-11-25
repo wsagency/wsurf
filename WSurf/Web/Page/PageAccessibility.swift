@@ -82,7 +82,7 @@ nonisolated enum PageAccessibility {
         const STATE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'option',
           'slider', 'spinbutton', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
         const BUTTON_TYPES = new Set(['button', 'submit', 'reset', 'image', 'file', 'color']);
-        const MARKERS = ['data-wsurf-payment-card', 'data-wsurf-contact', 'data-wsurf-password'];
+        const MARKERS = ['data-wsurf-payment-card', 'data-wsurf-contact', 'data-wsurf-password', 'data-wsurf-autofilled'];
 
         const hasNameAttributes = el => !!(norm(attr(el, 'aria-label')) || norm(attr(el, 'aria-labelledby')) || norm(attr(el, 'title')));
         const explicitRole = el => {

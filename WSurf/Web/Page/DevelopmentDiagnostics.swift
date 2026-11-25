@@ -27,6 +27,11 @@ final class DevelopmentDiagnostics {
     var policyProvider: (@MainActor () -> PageDiagnostics.DetailPolicy)?
     /// Hides the secrets the connection typed. Applied to headers, bodies and previews before they are cut to their limits.
     var scrub: (String) -> String = { $0 }
+    /// Whether `documentID` is credential-tainted (e.g. Vault-filled login form): network bodies and console object previews
+    /// are omitted for that document while keeping sanitized metadata and header redaction.
+    var isCredentialTainted: (@MainActor (_ documentID: String) -> Bool)?
+    /// Note placed on network bodies omitted due to credential tainting.
+    nonisolated static let protectedCredentialBodyNote = "omitted: protected credential form"
     /// Bytes of body text this capture may still keep (`PageDiagnostics.Redaction.captureBodyBytes` in all).
     private(set) var bodyBudget = PageDiagnostics.Redaction.captureBodyBytes
     private var bodyFetches = 0
@@ -102,6 +107,32 @@ final class DevelopmentDiagnostics {
     /// `record` without the detail this capture's options added.
     func withoutDetail(_ record: PageDiagnostics.Record) -> PageDiagnostics.Record {
         PageDiagnostics.withoutDetail(record, options: options, queryValues: queryValues)
+    }
+
+    /// Strips network bodies and console object previews from any already-buffered records belonging to `documentID`.
+    func taintDocument(_ documentID: String) {
+        let omitBodies = options.bodies
+        buffer.rewrite { record in
+            guard record.documentID == documentID else { return record }
+            return Self.redactTaintedRecord(record, omitBodies: omitBodies)
+        }
+    }
+
+    nonisolated static func redactTaintedRecord(_ record: PageDiagnostics.Record, omitBodies: Bool) -> PageDiagnostics.Record {
+        var fields = record.fields
+        if record.stream == .console {
+            fields["preview"] = nil
+        } else if record.stream == .network, omitBodies {
+            let hadRequest = fields["requestBody"] != nil || fields["requestBodyBytes"] != nil || fields["requestBodyNote"] != nil
+            let hadResponse = fields["responseBody"] != nil || fields["responseBodyBytes"] != nil || fields["responseBodyNote"] != nil
+            fields["requestBody"] = nil
+            fields["responseBody"] = nil
+            if hadRequest { fields["requestBodyNote"] = .text(protectedCredentialBodyNote) }
+            if hadResponse { fields["responseBodyNote"] = .text(protectedCredentialBodyNote) }
+        }
+        return PageDiagnostics.Record(
+            seq: record.seq, timestamp: record.timestamp, documentID: record.documentID,
+            stream: record.stream, fields: fields, truncated: record.truncated)
     }
 
     var engine: String { page?.chromium != nil ? "chromium" : "webkit" }
@@ -293,12 +324,27 @@ final class DevelopmentDiagnostics {
     private func record(_ entry: PageDiagnostics.Entry) {
         var fields = entry.fields
         var truncated = entry.truncated
+        let tainted = isCredentialTainted?(buffer.documentID) == true
         if entry.stream == .network, options.network {
             let policy = currentPolicy()
             if let input = entry.detail, policy.network(input.url) {
-                let detail = PageDiagnostics.detailFields(input, options: options, budget: &bodyBudget, scrub: scrub)
-                fields.merge(detail.fields) { $1 }
-                truncated = truncated || detail.truncated
+                if tainted, options.bodies {
+                    var headerOnly = options
+                    headerOnly.bodies = false
+                    let detail = PageDiagnostics.detailFields(input, options: headerOnly, budget: &bodyBudget, scrub: scrub)
+                    fields.merge(detail.fields) { $1 }
+                    truncated = truncated || detail.truncated
+                    if input.requestBody != nil {
+                        fields["requestBodyNote"] = .text(Self.protectedCredentialBodyNote)
+                    }
+                    if input.responseBody != nil {
+                        fields["responseBodyNote"] = .text(Self.protectedCredentialBodyNote)
+                    }
+                } else {
+                    let detail = PageDiagnostics.detailFields(input, options: options, budget: &bodyBudget, scrub: scrub)
+                    fields.merge(detail.fields) { $1 }
+                    truncated = truncated || detail.truncated
+                }
             } else {
                 fields["detail"] = .text(noDetail(for: entry, policy))
             }
@@ -310,7 +356,16 @@ final class DevelopmentDiagnostics {
                 }
             }
         }
-        if case .text(let preview)? = fields["preview"] {
+        if entry.stream == .console {
+            if case .text(let text)? = fields["text"] {
+                fields["text"] = .text(scrub(text))
+            }
+            if tainted {
+                fields["preview"] = nil
+            } else if case .text(let preview)? = fields["preview"] {
+                fields["preview"] = .text(scrub(preview))
+            }
+        } else if case .text(let preview)? = fields["preview"] {
             fields["preview"] = .text(scrub(preview))
         }
         buffer.append(stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: fields, truncated: truncated)
@@ -332,6 +387,17 @@ final class DevelopmentDiagnostics {
 
     /// Reads what DevTools holds for a finished request, then records it if the capture, the document and the policy still stand.
     private func complete(_ entry: PageDiagnostics.Entry, fetch: PageDiagnostics.BodyFetch, devTools: ChromiumDevTools) {
+        if isCredentialTainted?(buffer.documentID) == true {
+            var omitted = entry
+            if fetch.response {
+                omitted.detail?.responseBody = PageDiagnostics.RawBody(note: Self.protectedCredentialBodyNote)
+            }
+            if fetch.requestPost {
+                omitted.detail?.requestBody = PageDiagnostics.RawBody(note: Self.protectedCredentialBodyNote)
+            }
+            record(omitted)
+            return
+        }
         guard bodyFetches < Self.maxConcurrentFetches else {
             var skipped = entry
             skipped.detail?.responseBody = fetch.response ? PageDiagnostics.RawBody(note: "not captured: too many bodies were being read") : nil

@@ -77,6 +77,18 @@ extension MCPBrowserSession {
         }
         let world = PageScripting.World(rawValue: arguments["world"]?.stringValue ?? "page") ?? .page
         let timeout = arguments["timeoutMs"]?.intValue ?? PageScripting.defaultTimeoutMilliseconds
+        // CRITICAL SECURITY INVARIANT: Never run JavaScript on a document that WSurf Vault filled (`credentialTainted`)
+        // or that currently holds a live filled sensitive secret field not explicitly approved for inspection.
+        if await isDocumentCredentialProtected(tab: tab, view: view) {
+            return result(
+                .denied,
+                "Script execution is blocked while a protected password or sensitive field is present on this document. "
+                    + "Wait until the form navigates away or clears, or ask the user to approve inspection.",
+                ["code": "protectedSecretPresent"])
+        }
+        guard scope.validate(), !Task.isCancelled else {
+            return result(.stale, "Page access changed before the script ran. Nothing was run.")
+        }
         let started = ContinuousClock.now
         let outcome = await PageScripting.evaluate(source, world: world, timeout: timeout, in: view, authorized: scope.validate)
         let elapsed = Int((ContinuousClock.now - started) / .milliseconds(1))

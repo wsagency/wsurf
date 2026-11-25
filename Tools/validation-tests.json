@@ -90,7 +90,7 @@
     },
     {
       "paths": ["WSurf/Agent/*", "WSurf/MCP/*", "WSurf/UI/Ask/*", "WSurf/UI/DevMode/*", "WSurf/Web/Assistant/*", "WSurf/Web/DevMode/*", "WSurfTests/Agent/*Support.swift", "WSurfTests/Agent/*Rig.swift", "WSurfTests/Evals/*"],
-      "suites": ["AgentActionPolicyTests", "MCPAccessConsentTests", "MCPAgentMicroWindowTests", "MCPAgentWindowBridgeTests", "AttachmentTests", "OpenAIConversationTests", "MCPTransportTests"]
+      "suites": ["AgentActionPolicyTests", "MCPAccessConsentTests", "MCPAgentMicroWindowTests", "MCPAgentWindowBridgeTests", "AttachmentTests", "OpenAIConversationTests", "MCPTransportTests", "MCPv2CoreTests"]
     },
     {
       "paths": ["WSurf/Extensions/*", "WSurf/Web/Privacy/*", "WSurf/Web/System/*", "WSurf/Support/*"],

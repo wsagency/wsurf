@@ -493,6 +493,9 @@ extension MCPAgentWindowRegistry {
         if await PageSensitiveProbe.hasFilledSensitiveField(in: view) {
             throw MCPAgentWindowError(.forbidden, "Refused to evaluate script on a page with a filled sensitive or password field.")
         }
+        if await session.isDocumentCredentialProtected(tab: tab, view: view) {
+            throw MCPAgentWindowError(.forbidden, "Refused to evaluate script on a protected credential document.")
+        }
         guard session.mayProceed(tab, capability: .developer),
               tab.isLive(view, generation: pageGeneration),
               session.webURL(of: tab) == url

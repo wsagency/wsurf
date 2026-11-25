@@ -270,6 +270,7 @@ extension BrowserTab {
         assistantAccess.pageChanged(url: nil)
         adopt(makePage(engine: engine))
         pageGeneration &+= 1
+        notifyDocumentCommitted()
         return true
     }
 }

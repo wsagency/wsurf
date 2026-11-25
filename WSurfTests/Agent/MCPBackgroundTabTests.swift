@@ -180,7 +180,7 @@ struct MCPBackgroundTabTests {
         try await withRig(engine: engine) { rig in
             _ = try await call(rig, "readPage", rig.shared)
             let other = try rig.server.url("/other")
-            let opened = try await call(rig, "newTab", nil, ["url": .string(other.absoluteString)])
+            let opened = try await call(rig, "newTab", nil, ["url": .string(other.absoluteString), "engine": .string(engine.rawValue)])
             #expect(opened.isError == false, "\(engine): \(text(opened))")
             #expect(text(opened).contains("in the background"))
             let tab = try #require(rig.browser.tabs.first { rig.session.openedTabs.contains($0.id) })

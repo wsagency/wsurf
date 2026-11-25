@@ -457,6 +457,10 @@ extension MCPBrowserSession {
             return detailPolicy(for: tab)
         }
         diagnostics.scrub = { [secrets] in secrets.scrub($0) }
+        diagnostics.isCredentialTainted = { [weak self, weak tab] documentID in
+            guard let self, let tab else { return false }
+            return self.isMainDocumentCredentialTainted(tab: tab, mainDocumentID: documentID)
+        }
         owner.diagnostics = diagnostics
         guard await diagnostics.start() else {
             diagnostics.stop()
@@ -509,6 +513,9 @@ extension MCPBrowserSession {
         // page are all worked out from records without the detail: matching a withheld value would otherwise tell a client what it is.
         if diagnostics.options.isEnabled, !permits(tab, capability: .developer) {
             diagnostics.endDetail()
+        }
+        if isMainDocumentCredentialTainted(tab: tab, mainDocumentID: diagnostics.buffer.documentID) {
+            diagnostics.taintDocument(diagnostics.buffer.documentID)
         }
         func shown(_ record: PageDiagnostics.Record) -> Value {
             MCPDevelopmentTools.value(record, formatter: formatter)

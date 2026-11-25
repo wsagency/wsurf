@@ -36,6 +36,11 @@ struct MCPScriptingTests {
         _ = try await rig.page("document.getElementById('pw').value = '\(Self.password)'; document.getElementById('card').value = '\(Self.card)'; 1")
     }
 
+    private func approveInspection(_ rig: ScriptingRig) async throws {
+        let state = try #require(await PageDriver.protectedSecretState(in: rig.tab.page))
+        rig.session.approveSensitiveInspection(for: rig.tab, documentID: state.documentID)
+    }
+
     // MARK: Who may run a script
 
     @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
@@ -224,6 +229,14 @@ struct MCPScriptingTests {
     func aScriptCannotLeaveTheExpressionItRunsIn(engine: BrowserEngine) async throws {
         try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
             try await fillSensitiveFields(rig)
+            // First verify the MCP v2 hard guard: a filled sensitive field blocks evaluateScript completely before running.
+            let blocked = try await rig.run("document.title = 'pwned'")
+            #expect(blocked.status == "denied", "\(blocked.allText)")
+            #expect(blocked.fields["code"]?.stringValue == "protectedSecretPresent")
+            #expect(try await rig.page("document.title") as? String == "Scripting")
+
+            // Even when the user explicitly approves inspecting the document, expression isolation and redaction hold.
+            try await approveInspection(rig)
             // Closing the parenthesis to carry on only ends the expression: what follows `return` is never run.
             let breakout = try await rig.run("0); document.title = 'pwned'; window.__stolen = document.getElementById('pw').value; (0")
             #expect(breakout.status == "ok", "\(breakout.allText)")
@@ -253,6 +266,7 @@ struct MCPScriptingTests {
     func aFailureOfTheHarnessIsHiddenToo(engine: BrowserEngine) async throws {
         try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
             try await fillSensitiveFields(rig)
+            try await approveInspection(rig)
             // A page that makes the harness itself fail with a field's value: what the engine says is a reply like any other.
             _ = try await rig.page("window.setTimeout = () => { throw new Error('boom ' + document.getElementById('pw').value) }; 1")
             let failed = try await rig.run("1")
@@ -348,6 +362,14 @@ struct MCPScriptingTests {
             try await fillSensitiveFields(rig)
             let hidden = "‹hidden›"
 
+            // By default (without explicit user inspection approval), filled sensitive fields block evaluateScript outright.
+            let denied = try await rig.run("document.querySelector('input[type=password]').value")
+            #expect(denied.status == "denied", "\(denied.allText)")
+            #expect(denied.fields["code"]?.stringValue == "protectedSecretPresent")
+            #expect(!denied.allText.contains(Self.password))
+
+            // Even if the user explicitly approves inspecting this document, defense-in-depth redaction still hides values.
+            try await approveInspection(rig)
             let direct = try await rig.run("document.querySelector('input[type=password]').value")
             #expect(direct.status == "ok", "\(direct.allText)")
             #expect(direct.fields["value"]?.stringValue == hidden)
@@ -404,6 +426,12 @@ struct MCPScriptingTests {
     func aShortSensitiveValueIsHiddenWhenItIsTheWholeString() async throws {
         try await ScriptingRig.with(html: Self.page) { rig in
             _ = try await rig.page("document.getElementById('pw').value = 'abc'; 1")
+            // Blocked by default when filled.
+            let blocked = try await rig.run("document.getElementById('pw').value")
+            #expect(blocked.status == "denied")
+            #expect(blocked.fields["code"]?.stringValue == "protectedSecretPresent")
+
+            try await approveInspection(rig)
             let whole = try await rig.run("document.getElementById('pw').value")
             #expect(whole.fields["value"]?.stringValue == "‹hidden›")
             // Inside longer text a value under 4 characters is not recognized: it would destroy ordinary output.
@@ -422,6 +450,13 @@ struct MCPScriptingTests {
             let typed = try await rig.call("typeOnPage", ["ref": .int(ref), "text": .string(Self.password), "secret": true])
             #expect(typed.isError == false, "\(typed.allText)")
 
+            // While the password field still holds its value, evaluateScript is denied by default.
+            let blocked = try await rig.run("document.title")
+            #expect(blocked.status == "denied")
+            #expect(blocked.fields["code"]?.stringValue == "protectedSecretPresent")
+
+            // Once the field clears (e.g., cleared before navigating or explicitly approved), the echoed title is still scrubbed.
+            _ = try await rig.page("document.getElementById('pw').value = ''; 1")
             let echo = try await rig.run("document.title")
             #expect(echo.status == "ok", "\(echo.allText)")
             #expect(!echo.allText.contains(Self.password))
@@ -430,7 +465,7 @@ struct MCPScriptingTests {
             // The script itself names the secret: the user's record hides it.
             _ = try await rig.run("'\(Self.password)'.length")
             let entries = rig.session.activity.entries.filter { $0.event == .tool("evaluateScript") }
-            #expect(entries.count == 2)
+            #expect(entries.count == 3)
             let details = entries.compactMap(\.detail).joined(separator: "\n")
             #expect(!details.contains(Self.password), "\(details)")
             #expect(details.contains(MCPSecretScrubber.auditReplacement), "\(details)")

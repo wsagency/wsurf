@@ -169,6 +169,21 @@ private struct WebsiteDefaultSection: View {
                 .disabled(isPrivate)
             }
 
+            RowSeparator()
+
+            DetailRow(
+                title: "Allow password entry",
+                caption: """
+                    Connected apps with Control access can type passwords and one-time codes you give them. \
+                    Typed values are scrubbed from results and covered in screenshots; saved Vault passwords still ask first.
+                    """
+            ) {
+                SettingsToggle(Binding(
+                    get: { store.allowsPasswordEntry },
+                    set: { allowed in change { try store.setAllowsPasswordEntry(allowed) } }
+                ))
+            }
+
             if let failure {
                 RowSeparator()
                 DetailRow(verbatimTitle: failure) { EmptyView() }

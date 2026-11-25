@@ -25,8 +25,10 @@ extension MCPBrowserSession {
         // The current tab: the one browser_tabs chose or opened, else the shared tab on screen, else the first shared tab.
         let tabs = browser.tabs.filter { sharedTab($0.id) != nil }
         let current = tabs.first { $0.id == playwrightTab } ?? tabs.first { onScreen($0) } ?? tabs.first
+        let hasOpenedTab = current.map { openedTabs.contains($0.id) } ?? false
         let dialogID = entry.name == "browser_handle_dialog" ? current?.dialogs.pending(for: id).first?.id : nil
-        switch Self.playwrightStep(entry.name, arguments, tabs: tabs.map(\.id), current: current?.id, dialogID: dialogID) {
+        switch Self.playwrightStep(
+            entry.name, arguments, tabs: tabs.map(\.id), current: current?.id, dialogID: dialogID, hasOpenedTab: hasOpenedTab) {
         case .refuse(let message):
             return failure(message)
         case .select(let tab):
@@ -38,8 +40,8 @@ extension MCPBrowserSession {
             }
             let held = Set(grants.keys)
             let result = try await call(name: name, arguments: translated)
-            // As in Playwright, the tab browser_tabs new opened is the current one from now on.
-            if name == "newTab", let opened = Set(grants.keys).subtracting(held).first {
+            // As in Playwright, a tab opened by browser_tabs new or browser_navigate becomes the current one.
+            if name == "newTab" || name == "navigate", let opened = Set(grants.keys).subtracting(held).first {
                 playwrightTab = opened
             }
             return result
@@ -50,10 +52,13 @@ extension MCPBrowserSession {
     /// `current` the tab the call acts on and `dialogID` the dialog open there. The arguments passed the alias entry's checks;
     /// the WSurf tool checks its own again.
     nonisolated static func playwrightStep(
-        _ name: String, _ arguments: [String: Value], tabs: [UUID], current: UUID?, dialogID: String?
+        _ name: String, _ arguments: [String: Value], tabs: [UUID], current: UUID?, dialogID: String?, hasOpenedTab: Bool = true
     ) -> PlaywrightStep {
         if let step = playwrightTabFreeStep(name, arguments, tabs: tabs) {
             return step
+        }
+        if name == "browser_navigate", current == nil || !hasOpenedTab, let url = arguments["url"] {
+            return .call("newTab", ["url": url], delay: 0)
         }
         guard let current else { return .refuse(noPlaywrightTab) }
         var translated: [String: Value] = ["tabID": .string(current.uuidString)]

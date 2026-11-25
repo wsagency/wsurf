@@ -228,22 +228,16 @@ struct MCPDeveloperSessionTests {
         withExtendedLifetime(server) {}
     }
 
-    @Test func newTabElsewhereStillNeedsAControlGrantAndTheSheet() async throws {
+    @Test func newTabElsewhereNeedsTheSheetWithoutPriorGrants() async throws {
         let rig = try makeRig(standing: .developer)
-        let refused = try await call(rig, "newTab", nil, ["url": .string("https://shop.invalid/")])
-        #expect(refused.isError == true)
-        #expect(rig.sheets.opened.isEmpty)
-        #expect(rig.browser.tabs.isEmpty)
-
-        // With a control grant on a page it is the sheet that decides, and the new site gets control only.
-        _ = await parkTab(rig.browser, at: try url("https://first.invalid/"))
-        _ = try await call(rig, "requestAccess")
-        let declined = try await call(rig, "newTab", nil, ["url": .string("https://shop.invalid/")])
+        // MCP v2: newTab works with no prior tab grants; for a non-developer site it presents openConsent and grants Control.
+        let declined = try await call(rig, "newTab", nil, ["url": .string("https://shop.invalid/"), "engine": "webkit"])
         #expect(declined.isError == true)
         #expect(rig.sheets.opened == [try url("https://shop.invalid/")])
-        #expect(rig.browser.tabs.count == 1)
+        #expect(rig.browser.tabs.isEmpty)
+
         rig.sheets.allowOpen = true
-        let approved = try await call(rig, "newTab", nil, ["url": .string("https://shop.invalid/")])
+        let approved = try await call(rig, "newTab", nil, ["url": .string("https://shop.invalid/"), "engine": "webkit"])
         #expect(approved.isError == false, "\(text(approved))")
         let opened = try #require(rig.browser.tabs.last)
         #expect(rig.session.grants[opened.id]?.access == .control)
@@ -262,7 +256,7 @@ struct MCPDeveloperSessionTests {
         #expect(rig.session.grants[tab.id]?.source == .standing)
         rig.session.hasReadContent = true  // from now on only an observed link may be followed
 
-        let moved = try await call(rig, "navigate", tab, ["url": .string(try second.url().absoluteString)])
+        let moved = try await call(rig, "navigate", tab, ["url": .string(try second.url().absoluteString), "inPlace": true])
         #expect(moved.isError == false, "\(text(moved))")
         #expect(rig.sheets.opened.isEmpty)
         #expect(await waitUntil { tab.page.url == (try? second.url()) })
@@ -271,11 +265,11 @@ struct MCPDeveloperSessionTests {
 
         // Leaving the developer sites: an address that was never observed is refused, an observed one asks first.
         let elsewhere = try url("https://elsewhere.invalid/page")
-        let unseen = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString)])
+        let unseen = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString), "inPlace": true])
         #expect(unseen.isError == true)
         #expect(rig.sheets.opened.isEmpty)
         rig.session.destinations.insert(rig.session.destinationKey(elsewhere))
-        let asked = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString)])
+        let asked = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString), "inPlace": true])
         #expect(asked.isError == true)
         #expect(rig.sheets.opened == [elsewhere])
         #expect(tab.page.url == (try? second.url()))
@@ -294,7 +288,7 @@ struct MCPDeveloperSessionTests {
         rig.sheets.allowOpen = true
 
         let elsewhere = try url("https://elsewhere.invalid/")
-        _ = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString)])
+        _ = try await call(rig, "navigate", tab, ["url": .string(elsewhere.absoluteString), "inPlace": true])
         #expect(rig.sheets.opened == [elsewhere])
         let carried = try #require(rig.session.grants[tab.id])
         #expect(carried.source == .sheet)

@@ -27,16 +27,30 @@ extension MCPBrowserSession {
         var refs: Set<Int>
     }
 
-    /// The secrets `tool` would type, or nil when it types none. A malformed `secret` is the catalog's to refuse.
-    static func secretEntry(tool: String, arguments: [String: Value]) -> SecretEntry? {
+    /// Whether this connection may write agent-supplied passwords/secrets into sensitive fields on `tab`: allowed in the
+    /// Developer tier, or under `Control` when the Keychain trust store is available and enables password entry. Fails closed
+    /// when the Keychain cannot be read.
+    func allowsPasswordEntry(for tab: BrowserTab) -> Bool {
+        if permits(tab, capability: .developer) {
+            return true
+        }
+        trust.loadIfNeeded()
+        return permits(tab, capability: .control) && trust.isAvailable && trust.allowsPasswordEntry
+    }
+
+    /// The secrets `tool` would type, combining explicit `secret: true` items with any target refs in `autoSensitiveRefs`
+    /// that point to a password, one-time-code, or other sensitive secret field.
+    static func secretEntry(tool: String, arguments: [String: Value], autoSensitiveRefs: Set<Int> = []) -> SecretEntry? {
         switch tool {
         case "typeOnPage":
-            guard arguments["secret"]?.boolValue == true, let text = arguments["text"]?.stringValue, let ref = arguments["ref"]?.intValue else { return nil }
+            guard let text = arguments["text"]?.stringValue, let ref = arguments["ref"]?.intValue else { return nil }
+            guard arguments["secret"]?.boolValue == true || autoSensitiveRefs.contains(ref) else { return nil }
             return SecretEntry(values: [text], refs: [ref])
         case "fillFields":
             var entry = SecretEntry(values: [], refs: [])
-            for case .object(let field) in arguments["fields"]?.arrayValue ?? [] where field["secret"]?.boolValue == true {
+            for case .object(let field) in arguments["fields"]?.arrayValue ?? [] {
                 guard let ref = field["ref"]?.intValue, let value = field["value"]?.stringValue else { continue }
+                guard field["secret"]?.boolValue == true || autoSensitiveRefs.contains(ref) else { continue }
                 entry.values.append(value)
                 entry.refs.insert(ref)
             }
@@ -48,9 +62,9 @@ extension MCPBrowserSession {
 
     /// Why `entry` may not be typed, or nil after registering its values. Nothing is registered or typed for a refusal.
     func secretEntryRefusal(_ entry: SecretEntry, tab: BrowserTab) -> CallTool.Result? {
-        guard permits(tab, capability: .developer) else {
+        guard allowsPasswordEntry(for: tab) else {
             return failure(
-                "Typing a secret needs Developer access: a paired app, a developer site, and a window of the Developer profile. Nothing was typed.")
+                "Password and secret entry is turned off in Settings › Connected apps (or requires Developer access). Nothing was typed.")
         }
         for value in entry.values {
             switch secrets.register(value) {
@@ -133,9 +147,10 @@ extension MCPBrowserSession {
         secretFields[tab.id] = fields
     }
 
-    /// How a screenshot of `tab` treats filled sensitive fields: covered in the Developer tier, a refusal everywhere else.
+    /// How a screenshot of `tab` treats filled sensitive fields: covered in black under Control (when password entry is
+    /// allowed) and in the Developer tier, a refusal otherwise.
     func screenshotMasking(for tab: BrowserTab) -> ScreenshotMasking? {
-        guard permits(tab, capability: .developer) else { return nil }
+        guard allowsPasswordEntry(for: tab) else { return nil }
         let fields = secretFields[tab.id]
         return ScreenshotMasking(secretRefs: fields?.refs ?? [], documentID: fields?.documentID)
     }

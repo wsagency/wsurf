@@ -672,6 +672,26 @@ final class BrowserTab: Identifiable {
         scrollReturns.remember(lastReportedScrollY, leaving: lastReportedScrollURL?.absoluteString)
     }
 
+    /// Monotonically incremented only on real main-frame document commits (never on `history.pushState` or hash changes)
+    /// and engine replacements.
+    @ObservationIgnored private(set) var documentCommitEpoch: UInt64 = 0
+    @ObservationIgnored private var documentCommitObservers: [UUID: @MainActor () -> Void] = [:]
+
+    func observeDocumentCommit(id: UUID, handler: @escaping @MainActor () -> Void) {
+        documentCommitObservers[id] = handler
+    }
+
+    func removeDocumentCommitObserver(id: UUID) {
+        documentCommitObservers[id] = nil
+    }
+
+    func notifyDocumentCommitted() {
+        documentCommitEpoch &+= 1
+        for observer in Array(documentCommitObservers.values) {
+            observer()
+        }
+    }
+
     func noteDocumentChanged() {
         lastReportedScrollY = 0
         lastReportedScrollURL = nil

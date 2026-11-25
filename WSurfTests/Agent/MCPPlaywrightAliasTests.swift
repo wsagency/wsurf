@@ -130,9 +130,15 @@ struct MCPPlaywrightAliasTests {
     }
 
     @Test func withNothingSharedOnlyTheTabFreeCallsGoThrough() throws {
-        for mapping in mappings where mapping.call.arguments["tabID"] != nil && mapping.arguments["index"] == nil {
+        for mapping in mappings where mapping.call.arguments["tabID"] != nil && mapping.arguments["index"] == nil && mapping.alias != "browser_navigate" {
             #expect(try step(mapping.alias, mapping.arguments, shared: false) == .refuse(MCPBrowserSession.noPlaywrightTab), "\(mapping.alias)")
         }
+        // browser_navigate opens a new background tab automatically when no shared or agent-opened tab exists yet.
+        #expect(try step("browser_navigate", ["url": "https://example.com/"], shared: false) == .call("newTab", ["url": "https://example.com/"], delay: 0))
+        #expect(
+            MCPBrowserSession.playwrightStep(
+                "browser_navigate", ["url": "https://example.com/"], tabs: [tab], current: tab, dialogID: nil, hasOpenedTab: false)
+                == .call("newTab", ["url": "https://example.com/"], delay: 0))
         #expect(try step("browser_tabs", ["action": "list"], shared: false) == .call("listTabs", [:], delay: 0))
         #expect(try step("browser_tabs", ["action": "new", "url": "https://example.com/"], shared: false) == .call("newTab", ["url": "https://example.com/"], delay: 0))
     }
