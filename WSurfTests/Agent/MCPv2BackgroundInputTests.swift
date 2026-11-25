@@ -37,6 +37,8 @@ struct MCPv2BackgroundInputTests {
         <label id=upload class=box for=file>Upload</label><input id=file type=file aria-label=File>
         <button id=delete class=box onclick="document.body.dataset.deleted = 'yes'">Delete account</button>
         <div id=knob class=box>Knob</div>
+        <button id=picker class=box style="top: 370px" onclick="document.body.dataset.picked = 'asked'; hidden.click()">Pick</button>
+        <input id=hidden type=file style="display: none">
         <script>
           window.events = [];
           for (const type of ['click', 'dblclick', 'contextmenu', 'auxclick', 'mousemove', 'wheel', 'keydown', 'mousedown', 'mouseup']) {
@@ -194,6 +196,21 @@ struct MCPv2BackgroundInputTests {
             }
             #expect(await events(rig, "click").isEmpty)
             #expect(rig.window.attachedSheet == nil, "no file panel")
+        }
+    }
+
+    /// A button whose own handler opens a hidden file input: the hit test sees only a button, so the engine's chooser is what
+    /// must not appear. Nobody planned a selection and the page is out of sight, so WSurf cancels it.
+    @Test func aButtonThatOpensAFileInputShowsNoPanel() async throws {
+        try await MCPPhase2Rig.with(engine: .chromium, routes: ["/": .html(Self.page)]) { rig in
+            let windows = Set(NSApp.windows.map(ObjectIdentifier.init))
+            let point = try await rig.centre(of: "picker")
+            let clicked = try await rig.call("clickOnPage", rig.shared, ["x": .double(point.x), "y": .double(point.y)])
+            #expect(clicked.isError == false, "\(MCPPhase2Rig.text(clicked))")
+            #expect(await waitUntil { await rig.js("document.body.dataset.picked || ''") as? String == "asked" }, "the handler ran")
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(rig.window.attachedSheet == nil, "no file panel on the window")
+            #expect(!NSApp.windows.contains { !windows.contains(ObjectIdentifier($0)) && $0 is NSOpenPanel }, "no file panel at all")
         }
     }
 

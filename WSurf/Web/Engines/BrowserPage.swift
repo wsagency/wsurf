@@ -610,6 +610,7 @@ final class BrowserPage: NSView {
     /// True only when the engine's own responder held keyboard focus and was invoked. A key for a page that is not the
     /// first responder is dropped, never reported as delivered.
     func sendKeyEvent(_ event: NSEvent) -> Bool {
+        markAutomatedInput()
         if webKit != nil {
             guard let responder = window?.firstResponder, ownsResponder(responder) else { return false }
             if event.type == .keyUp {

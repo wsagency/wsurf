@@ -215,7 +215,6 @@ extension PageDriver {
                 }
                 // WebKit would open its own context menu, in front of the person, for a native right or middle click.
                 guard button == .left else { return "Right and middle clicks need a Chromium tab (setTabEngine)." }
-                view.markAutomatedInput()
                 try await installComputerReceipt(button.receipt(clickCount: clickCount), in: view)
                 guard await pointerTargetHolds(target.point, in: view) else { throw PageComputerFailure.stale }
                 let native = CGPoint(x: target.point.x * view.pageZoom, y: target.point.y * view.pageZoom)
