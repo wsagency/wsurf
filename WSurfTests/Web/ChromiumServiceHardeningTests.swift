@@ -191,10 +191,15 @@ struct ChromiumServiceHardeningTests {
         URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    private static func runChecker(_ arguments: [String], root: URL? = nil) throws -> ScriptRun {
+    private static func runChecker(_ arguments: [String], root: URL? = nil, developerDir: String? = nil) throws -> ScriptRun {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/bash")
         process.arguments = [(root ?? repositoryRoot).appending(path: "Tools/check-service-strings.sh").path] + arguments
+        if let developerDir {
+            var environment = ProcessInfo.processInfo.environment
+            environment["DEVELOPER_DIR"] = developerDir
+            process.environment = environment
+        }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -372,9 +377,28 @@ struct ChromiumServiceHardeningTests {
         let source = try String(contentsOf: checker, encoding: .utf8)
         try Data(source.replacingOccurrences(of: "/usr/bin/otool", with: "\"\(otool.path)\"").utf8).write(to: checker)
         for arguments in [[plain.path], ["--expect-debug", debug.path]] {
-            let result = try Self.runChecker(arguments, root: root)
-            #expect(result.status == 2, "otool failed: \(result.output)")
+            for developerDir in [nil, Self.missingDeveloperDir] {
+                let result = try Self.runChecker(arguments, root: root, developerDir: developerDir)
+                #expect(result.status == 2, "otool failed (\(developerDir ?? "inherited")): \(result.output)")
+            }
         }
+    }
+
+    private static let missingDeveloperDir = "/nonexistent/Xcode.app/Contents/Developer"
+
+    /// CI run 45198232205: a test host is not given the caller's DEVELOPER_DIR, and the runner's xcode-select named an Xcode without
+    /// otool. The check finds a working one itself, and still certifies nothing it did not disassemble.
+    @Test
+    func aMissingDeveloperDirectoryStillGetsADisassembly() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let plain = try Self.machOCopy(in: folder, named: "plain")
+        let debug = try Self.machOCopy(in: folder, named: "debug", appending: Self.listed().texts)
+        let clear = try Self.runChecker([plain.path], developerDir: Self.missingDeveloperDir)
+        #expect(clear.status == 0, "\(clear.output)")
+        // Only the texts are in it: the short names need a real disassembly to be reported missing, not a failed otool (exit 2).
+        let missing = try Self.runChecker(["--expect-debug", debug.path], developerDir: Self.missingDeveloperDir)
+        #expect(missing.status == 1, "\(missing.output)")
     }
 
     @Test
