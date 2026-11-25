@@ -36,6 +36,14 @@ struct MCPv2SpeedTests {
     static func routes(_ server: String = "") -> [String: HTTPFixtureServer.Response] {
         [
             "/": .html(form.replacingOccurrences(of: "LINK", with: server.isEmpty ? "/other" : server)),
+            "/checkout": .html("""
+                <!doctype html><title>Checkout</title>
+                <form onsubmit="event.preventDefault(); document.title = 'Paid'">
+                  <input id=amount aria-label=Amount oninput="note.textContent = this.value ? 'Pay 49 EUR' : ''">
+                  <p id=note></p>
+                  <button id=go>Continue</button>
+                </form>
+                """),
             "/other": .html("<!doctype html><title>Other</title><p>Other page text</p><button>Next</button><a href=\"/\">Home</a>"),
             "/busy": .html("""
                 <!doctype html><title>Busy</title><button id=go onclick="document.title = 'Went'">Go</button>
@@ -114,7 +122,7 @@ struct MCPv2SpeedTests {
             })
             await waitUntilQueued(lanes, .tab(tabA), index)
         }
-        #expect(await lanes.acquire([.tab(tabA)], session: session) == .full, "a fifth waiting call is refused")
+        #expect(await lanes.acquire([.tab(tabA)], session: session) == .full(.tab(tabA)), "a fifth waiting call is refused")
         lanes.release([.tab(tabA)])
         for task in waiting {
             #expect(await task.value == .admitted)
@@ -472,6 +480,125 @@ struct MCPv2SpeedTests {
         }
     }
 
+    // MARK: Review regressions
+
+    /// The last write turns the form into a payment ("Pay 49 EUR" next to a plain Continue): the submit control is classified with
+    /// the context it has after the writes, not the one it had before them. (A changed label of the control itself already makes
+    /// its ref stale.)
+    @Test func aSubmitButtonRelabelledByTheFillIsApprovedAsItNowReads() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes(), path: "/checkout") { rig in
+            let read = try await rig.call("readPage", rig.shared)
+            let amount = try MCPPhase2Rig.ref("field", "Amount", in: read)
+            let go = try MCPPhase2Rig.ref("button", "Continue", in: read)
+            var asked: [(String, SensitiveAction.Category)] = []
+            let filled = try await AgentActionConsent.$decisionForTesting.withValue(.init { label, category, _, _ in
+                asked.append((label, category))
+                return .decline
+            }) {
+                try await rig.call("fillFields", rig.shared, [
+                    "fields": .array([.object(["ref": .int(amount), "value": "49", "select": false])]),
+                    "submitRef": .int(go), "result": "full",
+                ])
+            }
+            #expect(asked.map(\.1) == [.purchase], "the payment label was asked about: \(asked)")
+            #expect(MCPPhase2Rig.text(filled).contains("Not submitted"), "\(MCPPhase2Rig.text(filled))")
+            #expect(await rig.js("document.title") as? String == "Checkout", "nothing was submitted")
+        }
+    }
+
+    /// A secret that straddles the cut of a step summary is scrubbed first, so no prefix of it survives the cut.
+    @Test func aStepSummaryIsScrubbedBeforeItIsCut() {
+        let scrubber = MCPSecretScrubber()
+        let secret = "Straddle-Secret-77!"
+        scrubber.register(secret)
+        let text = String(repeating: "a", count: 290) + secret + " tail"
+        let line = MCPBrowserSession.stepLine(text, limit: 300, scrub: scrubber.scrub)
+        #expect(!line.contains(String(secret.prefix(5))), "\(line.suffix(20))")
+        #expect(PageOutputBudget.cost(line) <= 300)
+    }
+
+    /// `listTabs` holds no lane, so it answers while a sheet call (newTab, requestAccess) of the same connection waits on the person.
+    @Test func listTabsAnswersWhileASheetCallWaits() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
+            let gate = SheetGate()
+            let session = MCPBrowserSession(
+                browser: rig.browser, trust: rig.trust, available: { true },
+                consent: { _, _, _ in await gate.wait() ? .control : nil },
+                openConsent: { _, _ in await gate.wait() })
+            defer { session.revoke() }
+            let url = try rig.server.url("/other").absoluteString
+            let opening = Task { @MainActor in try await session.call(name: "newTab", arguments: ["url": .string(url), "waitAndRead": false]) }
+            #expect(await waitUntil { await gate.waiting == 1 })
+            let listed = try await session.call(name: "listTabs", arguments: [:])
+            #expect(listed.isError == false, "\(MCPPhase2Rig.text(listed))")
+            let second = try await session.call(name: "requestAccess", arguments: [:])
+            #expect(second.isError == true && MCPPhase2Rig.text(second).contains("sheet"), "two sheets never stack: \(MCPPhase2Rig.text(second))")
+            await gate.open()
+            #expect(try await opening.value.isError == false)
+        }
+    }
+
+    /// A Playwright call runs on the tab the server resolved when it queued it, even when browser_tabs chose another meanwhile.
+    @Test func aQueuedPlaywrightCallKeepsItsTab() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
+            let opened = try await rig.call("newTab", nil, ["url": .string(try rig.server.url("/other").absoluteString), "engine": "webkit"])
+            let other = try #require(opened.structuredContent?.objectValue?["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)))
+            rig.session.playwrightTab = other
+            let snapshot = try await MCPBrowserSession.$playwrightPin.withValue(.init(tab: rig.shared.id)) {
+                try await rig.session.call(name: "browser_snapshot", arguments: [:])
+            }
+            #expect(MCPPhase2Rig.text(snapshot).contains("Save"), "the pinned tab was read: \(MCPPhase2Rig.text(snapshot))")
+            #expect(!MCPPhase2Rig.text(snapshot).contains("Other page text"))
+        }
+    }
+
+    @Test func viewportAndMediaChangesDropTheCachedDigest() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
+            let origin = try #require(rig.session.grants[rig.shared.id]).origin
+            rig.session.grants[rig.shared.id] = .init(origin: origin, access: .development)
+            let read = try await rig.call("readPage", rig.shared)
+            let save = try MCPPhase2Rig.ref("button", "Save", in: read)
+            _ = try await rig.call("clickOnPage", rig.shared, ["ref": .int(save)])
+            #expect(rig.session.digestCache[rig.shared.id] != nil)
+            _ = try await rig.call("setViewport", rig.shared, ["width": 500, "height": 400])
+            #expect(rig.session.digestCache[rig.shared.id] == nil, "a viewport change drops it")
+            _ = try await rig.call("resetDevelopment", rig.shared)
+        }
+    }
+
+    /// A step that does not wait (settle none) and navigates: the next step runs on the page that arrives, not half loaded.
+    @Test func runStepsWaitsForANavigationASettleNoneStepStarted() async throws {
+        try await MCPPhase2Rig.with(engine: .webKit, routes: Self.routes()) { rig in
+            let read = try await rig.call("readPage", rig.shared)
+            let link = try MCPPhase2Rig.ref("link", "Elsewhere", in: read)
+            let result = try await rig.call("runSteps", rig.shared, [
+                "steps": .array([
+                    .object(["tool": "click", "arguments": .object(["ref": .int(link), "settle": "none"])]),
+                    .object(["tool": "waitForPage", "arguments": .object(["condition": "text", "value": "Other page text", "timeout": 1])]),
+                ]),
+            ])
+            #expect(result.isError == false, "\(MCPPhase2Rig.text(result))")
+            #expect(result.structuredContent?.objectValue?["completedSteps"]?.intValue == 2)
+        }
+    }
+
+    @Test func aFullGlobalLaneSaysSo() async {
+        let lanes = MCPCallLanes()
+        let session = UUID()
+        #expect(await lanes.acquire([.global], session: session) == .admitted)
+        var waiting: [Task<MCPCallLanes.Admission, Never>] = []
+        for index in 1...MCPCallLanes.queueLimit {
+            waiting.append(Task { @MainActor in await lanes.acquire([.global], session: session) })
+            await waitUntilQueued(lanes, .global, index)
+        }
+        #expect(await lanes.acquire([.global], session: session) == .full(.global))
+        lanes.drain(session: session)
+        for task in waiting {
+            #expect(await task.value == .cancelled)
+        }
+        lanes.release([.global])
+    }
+
     // MARK: Timing
 
     /// The same three-field form and submit, as separate calls and as one `runSteps`, on a background Chromium tab. Prints both;
@@ -518,6 +645,27 @@ struct MCPv2SpeedTests {
 
         func record(_ duration: Duration) {
             durations.append(duration)
+        }
+    }
+
+    /// A consent sheet the test answers when it chooses.
+    private actor SheetGate {
+        private(set) var waiting = 0
+        private var continuations: [CheckedContinuation<Bool, Never>] = []
+        private var isOpen = false
+
+        func wait() async -> Bool {
+            if isOpen {
+                return true
+            }
+            waiting += 1
+            return await withCheckedContinuation { continuations.append($0) }
+        }
+
+        func open() {
+            isOpen = true
+            continuations.forEach { $0.resume(returning: true) }
+            continuations = []
         }
     }
 }

@@ -138,25 +138,39 @@ actor MCPStdioRelay {
     private func send(_ params: CallTool.Parameters) async throws -> CallTool.Result {
         guard !stopped, !Task.isCancelled else { throw CancellationError() }
         guard let backend else { throw MCPError.connectionClosed }
+        let request: RequestContext<CallTool.Result>
         do {
-            let request = try await backend.client.send(CallTool.request(params))
+            request = try await backend.client.send(CallTool.request(params))
+        } catch {
+            return await interrupted(backend)
+        }
+        do {
             return try await withTaskCancellationHandler {
                 try await request.value
             } onCancel: {
-                // ponytail: cancelling one call closes the backend, which also ends the calls running beside it; a per-request
-                // cancel notification would keep them.
-                Task { await backend.client.disconnect() }
+                // Only this request ends: WSurf is told to cancel it, and the connection, its grants and secrets, and the calls
+                // running beside it stay as they are.
+                Task { try? await backend.client.cancelRequest(request.requestID, reason: "The client cancelled the call.") }
             }
         } catch {
-            if self.backend?.client === backend.client {
-                self.backend = nil
+            // The client's own cancel gets no reply; a backend that went away (its pending requests end as cancelled too) does.
+            if Task.isCancelled {
+                throw CancellationError()
             }
-            await backend.client.disconnect()
-            return failure("""
-                The WSurf connection was interrupted. The operation may have completed; it was not retried. \
-                On your next call WSurf will reconnect with no shared tabs. Request access again, then check the page before repeating an action.
-                """)
+            return await interrupted(backend)
         }
+    }
+
+    /// The backend failed under a call: it is dropped, and the next call reconnects with no access.
+    private func interrupted(_ backend: (client: MCP.Client, transport: LocalMCPTransport)) async -> CallTool.Result {
+        if self.backend?.client === backend.client {
+            self.backend = nil
+        }
+        await backend.client.disconnect()
+        return failure("""
+            The WSurf connection was interrupted. The operation may have completed; it was not retried. \
+            On your next call WSurf will reconnect with no shared tabs. Request access again, then check the page before repeating an action.
+            """)
     }
 
     private func failure(_ message: String) -> CallTool.Result {

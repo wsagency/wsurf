@@ -59,6 +59,10 @@ extension MCPBrowserSession {
         for tab in browser.tabs where changed.contains(tab.id) {
             tab.processState.setExternalController(id, holds: grants[tab.id] != nil)
             tab.liveView?.ignoresWindowOcclusion = !tab.processState.externalControllers.isEmpty
+            // Once no connection drives the tab (taken over, revoked, disconnected), its page stops pretending to be focused.
+            if tab.processState.externalControllers.isEmpty {
+                tab.liveView?.chromium?.endAgentFocusEmulation()
+            }
         }
     }
 

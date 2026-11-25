@@ -512,13 +512,15 @@ final class BrowserMCPServer {
             trustStore.touch(client.id)
         }
         let arguments = params.arguments ?? [:]
-        let held = MCPCallLanes.lanes(tool: params.name, arguments: arguments, playwrightTab: session.playwrightTab)
+        let pinned = params.name.hasPrefix("browser_") ? session.currentPlaywrightTab() : nil
+        let held = MCPCallLanes.lanes(tool: params.name, arguments: arguments, playwrightTab: pinned)
         switch await lanes.acquire(held, session: session.id) {
         case .admitted:
             break
-        case .full:
+        case .full(let lane):
+            let what = lane == .global ? "for a sheet or tab change" : "for this tab"
             return CallTool.Result(
-                content: [.text(text: "\(MCPCallLanes.queueLimit) calls already wait for this tab. Wait for a result before sending more.", annotations: nil, _meta: nil)],
+                content: [.text(text: "\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.", annotations: nil, _meta: nil)],
                 isError: true)
         case .cancelled:
             throw CancellationError()
@@ -529,7 +531,12 @@ final class BrowserMCPServer {
             throw MCPError.connectionClosed
         }
         let id = UUID()
-        let task = Task { try await session.call(name: params.name, arguments: arguments) }
+        let pin = params.name.hasPrefix("browser_") ? MCPBrowserSession.PlaywrightPin(tab: pinned) : nil
+        let task = Task {
+            try await MCPBrowserSession.$playwrightPin.withValue(pin) {
+                try await session.call(name: params.name, arguments: arguments)
+            }
+        }
         running[id] = (session.id, held, task)
         defer { running[id] = nil }
         return try await withTaskCancellationHandler {

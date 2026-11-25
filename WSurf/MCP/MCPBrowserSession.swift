@@ -112,9 +112,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var closingWasConfirmed = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
     @ObservationIgnored var developerApprovals: [DeveloperApprovalRecord] = []
-    /// The tabs (by ID) and the tab-free lane ("*") a call of this connection runs on now: one call per tab at a time, while
-    /// calls on different tabs run side by side. `BrowserMCPServer` queues calls before they get here.
-    @ObservationIgnored private var busy: Set<String> = []
+    /// The lanes (`MCPCallLanes.lanes`) the calls of this connection hold now: one call per tab, and one sheet or focus call, at a
+    /// time; `listTabs` holds none. `BrowserMCPServer` queues calls on the same lanes before they get here, so this only refuses a
+    /// caller that bypasses it (an Agent Micro Window preview, a test).
+    @ObservationIgnored private var busy: Set<MCPCallLanes.Lane> = []
     /// Every call this connection ran, for Agent Activity. Never holds arguments or results.
     @ObservationIgnored let activity = ExternalActivityLog()
     /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
@@ -220,16 +221,20 @@ final class MCPBrowserSession: Identifiable {
             }
             syncAgentWindowGrants()
         }
-        let lane = arguments["tabID"]?.stringValue ?? "*"
-        guard !busy.contains(lane) else { return failure("Another operation is running on this tab. Wait for its result.") }
-        busy.insert(lane)
+        let lanes = Set(MCPCallLanes.lanes(tool: name, arguments: arguments, playwrightTab: nil))
+        guard busy.isDisjoint(with: lanes) else {
+            return failure(lanes.contains(.global) && busy.contains(.global)
+                ? "Another operation that can show a sheet is running. Wait for its result."
+                : "Another operation is running on this tab. Wait for its result.")
+        }
+        busy.formUnion(lanes)
         lastTool = name
         let workToken = agentWindowScope?.onBeginWorking()
         defer {
             if let workToken {
                 agentWindowScope?.onEndWorking(workToken)
             }
-            busy.remove(lane)
+            busy.subtract(lanes)
             completedCalls += 1
         }
         let started = ContinuousClock.now

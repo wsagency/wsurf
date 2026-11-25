@@ -23,6 +23,9 @@ nonisolated extension PageRuntime {
         for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout']) root.addEventListener(type, () => { changeCount++; }, true);
       };
       watchRoot(document);
+      // A viewport or media change (resize, emulation, appearance) moves what is in view without touching the DOM.
+      window.addEventListener('resize', () => { changeCount++; });
+      try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { changeCount++; }); } catch (e) {}
       """#
 
     /// Spliced into the runtime, where it shares the helpers (`collect`, `visible`, `norm`, `clip`...) it is written against.

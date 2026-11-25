@@ -39,6 +39,10 @@ struct MCPv2BackgroundInputTests {
         <div id=knob class=box>Knob</div>
         <button id=picker class=box style="top: 370px" onclick="document.body.dataset.picked = 'asked'; hidden.click()">Pick</button>
         <input id=hidden type=file style="display: none">
+        <a id=link class=box style="top: 420px" href="/other">Linked page</a>
+        <button id=swap class=box style="top: 470px" onmouseover="swapOnHover(this)">Harmless</button>
+        <button id=relabel class=box style="left: 200px; top: 470px" onmouseover="this.textContent = 'Delete account'"
+          onclick="document.body.dataset.relabelled = 'clicked'">Harmless too</button>
         <script>
           window.events = [];
           for (const type of ['click', 'dblclick', 'contextmenu', 'auxclick', 'mousemove', 'wheel', 'keydown', 'mousedown', 'mouseup']) {
@@ -46,6 +50,13 @@ struct MCPv2BackgroundInputTests {
               meta: e.metaKey, key: e.key || '', target: e.target.id || '' }), true);
           }
           document.addEventListener('contextmenu', e => e.preventDefault());
+          // A page that puts another element under the pointer when it arrives, between the move and the press.
+          function swapOnHover(el) {
+            const other = document.createElement('button');
+            other.id = 'pay'; other.className = 'box'; other.style.top = '470px'; other.textContent = 'Delete account';
+            other.onclick = () => { document.body.dataset.paid = 'yes'; };
+            el.replaceWith(other);
+          }
         </script>
         """
 
@@ -181,6 +192,69 @@ struct MCPv2BackgroundInputTests {
             #expect(capabilities["backgroundPointer"]?.stringValue == expected)
             #expect(capabilities["backgroundKeyboard"]?.stringValue == expected)
             #expect((capabilities["backgroundInputReason"] != nil) == (engine == .webKit))
+        }
+    }
+
+    // MARK: Modifier clicks are the agent's, not the person's
+
+    /// A link clicked with Shift, Command or Command+Shift through the agent opens at most a background tab: no Peek, the person's
+    /// tab stays selected, and their focus does not move. Option on a link (a download) is refused before anything is sent.
+    @Test func modifierClicksOnALinkNeverPeekOrTakeThePersonsPlace() async throws {
+        let routes: [String: HTTPFixtureServer.Response] = ["/": .html(Self.page), "/other": .html("<p>Other</p>")]
+        try await MCPPhase2Rig.with(engine: .chromium, routes: routes) { rig in
+            var peeked: [URL] = []
+            rig.browser.onOpenInPeek = { _, url, _ in peeked.append(url) }
+            let responder = rig.window.firstResponder
+            let point = try await rig.centre(of: "link")
+            for modifiers in ["shift", "command", "command+shift"] {
+                let before = rig.browser.tabs.count
+                let clicked = try await rig.call(
+                    "clickOnPage", rig.shared, ["x": .double(point.x), "y": .double(point.y), "modifiers": .string(modifiers)])
+                #expect(clicked.isError == false, "\(modifiers): \(MCPPhase2Rig.text(clicked))")
+                #expect(await waitUntil(timeout: .seconds(10)) { rig.browser.tabs.count > before }, "\(modifiers): a tab opened")
+                #expect(peeked.isEmpty, "\(modifiers): no Peek")
+                #expect(rig.browser.activeTabID == rig.owner.id, "\(modifiers): the person's tab stays selected")
+                #expect(rig.window.firstResponder === responder, "\(modifiers): focus did not move")
+            }
+            let option = try await rig.call("clickOnPage", rig.shared, ["x": .double(point.x), "y": .double(point.y), "modifiers": "option"])
+            #expect(option.isError == true && MCPPhase2Rig.text(option).contains("Option-click"), "\(MCPPhase2Rig.text(option))")
+            #expect(rig.shared.page.url?.path == "/", "the link was never followed")
+        }
+    }
+
+    // MARK: The target is checked again before the press
+
+    @Test func anElementSwappedInOnHoverIsNeverPressed() async throws {
+        try await MCPPhase2Rig.with(engine: .chromium, routes: ["/": .html(Self.page)]) { rig in
+            var asked: [SensitiveAction.Category] = []
+            let swap = try await rig.centre(of: "swap")
+            let swapped = try await AgentActionConsent.$decisionForTesting.withValue(.init { _, category, _, _ in
+                asked.append(category)
+                return .allowOnce
+            }) {
+                try await rig.call("clickOnPage", rig.shared, ["x": .double(swap.x), "y": .double(swap.y)])
+            }
+            #expect(swapped.isError == true && MCPPhase2Rig.text(swapped).contains("another element"), "\(MCPPhase2Rig.text(swapped))")
+            #expect(await rig.js("document.body.dataset.paid || ''") as? String == "", "the swapped-in button was not pressed")
+            #expect(asked.isEmpty, "approval was never given for the element that appeared")
+
+            let relabel = try await rig.centre(of: "relabel")
+            let changed = try await rig.call("clickOnPage", rig.shared, ["x": .double(relabel.x), "y": .double(relabel.y)])
+            #expect(changed.isError == true && MCPPhase2Rig.text(changed).contains("changed under the pointer"), "\(MCPPhase2Rig.text(changed))")
+            #expect(await rig.js("document.body.dataset.relabelled || ''") as? String == "", "the relabelled button was not pressed")
+        }
+    }
+
+    @Test func focusEmulationEndsWhenTheUserTakesTheTabBack() async throws {
+        try await MCPPhase2Rig.with(engine: .chromium, routes: ["/": .html(Self.page)]) { rig in
+            let read = try await rig.call("readPage", rig.shared)
+            let field = try MCPPhase2Rig.ref("field", "Field", in: read)
+            let pressed = try await rig.call("pressKey", rig.shared, ["ref": .int(field), "key": "x", "modifiers": ""])
+            #expect(pressed.isError == false, "\(MCPPhase2Rig.text(pressed))")
+            let chromium = try #require(rig.shared.page.chromium)
+            #expect(chromium.agentFocusEmulated, "a parked page is focused for the agent's keys")
+            rig.session.handBack(rig.shared)
+            #expect(!chromium.agentFocusEmulated, "taking the tab back ends it")
         }
     }
 

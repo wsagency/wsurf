@@ -48,6 +48,8 @@ final class ChromiumPage: NSView {
     /// The frame layer of a browser the service took with it, with its last frame: shown while a shown page waits for its replacement
     /// (`ChromiumPage+Display`).
     var retainedPreview: CALayer?
+    /// Focus emulation is on for an agent's background keys (`dispatchKey`), until no connection drives the tab.
+    var agentFocusEmulated = false
     var preparation: Task<Void, Error>?
     var pendingLoad: Task<Void, Never>?
     /// The engine's stop, sent on the turn after `stopLoading` unless a navigation replaced it (`supersedeStop`).

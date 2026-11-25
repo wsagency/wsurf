@@ -176,7 +176,7 @@ revoke it immediately.
 | `clickOnPage` | Click a numbered control, or with `x` and `y` (viewport CSS pixels) whatever is at that point. A ref is clicked with a DOM click by default; `pointer: true`, a point, `button` (`left`, `right`, `middle`), `clickCount: 2` or `modifiers` (`shift`, `option`, `command`) send trusted pointer input instead (see Background pointer and keyboard input). Returns what the click changed (see Action results). |
 | `typeOnPage` | Fill a field, optionally submitting it. Under Control (when password entry is allowed in Settings › Connected apps) or Developer access, writes into password and OTP fields work directly without `secret: true` and are automatically scrubbed and screenshot-masked; `secret: true` remains optional for non-password secret fields. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct form controls and report exactly which refs retained their values. One round checks every field, one small round writes each field, one verifies them all, and the page settles once. `submitRef` clicks a submit control, and `submit: true` presses Enter in the last text field, but only after every field was filled and verified, with the approval a click on that control needs. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
+| `fillFields` | Fill up to 32 distinct form controls and report exactly which refs retained their values. One round checks every field, one small round writes each field, one verifies them all, and the page settles once. `submitRef` clicks a submit control, and `submit: true` presses Enter in the last text field, but only after every field was filled and verified, with the approval a click on that control needs, judged on its label and form as they read after the writes; a control that changes after that is not clicked. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
 | `inspectControl` | Read control state and paginate dropdown options. Reports `sensitive`, `type`, `filled`, and `value: "(hidden)"` on sensitive fields, plus anonymized `vaultHint` on login forms. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
@@ -303,8 +303,8 @@ latest. A failed action leaves the client's observation as it is.
 
 **Fewer rounds.** The digest after an action is kept for the tab. The next action starts from it when the page reports the
 same document, observation and change count (DOM mutations other than the ring, input, focus and scroll, also in shadow
-roots and frames it has walked), the tab's page is the same, and its credential protection did not change; otherwise the
-page is digested again. A ref's validation and readiness check (actionable and not moving, two samples) is one round to the
+roots and frames it has walked, a resize, a colour-scheme change), the tab's page is the same, and its credential protection
+did not change; a development call (viewport, device, media, reload, reset) drops it. Otherwise the page is digested again. A ref's validation and readiness check (actionable and not moving, two samples) is one round to the
 page. The highlight ring still shows on a page the user sees, but an MCP action does not wait for it, and a background
 tab is not announced with a pause at all.
 
@@ -321,16 +321,20 @@ time returns the tab with `status: "loading"`; a dialog returns `status: "dialog
 `pressKey`, `waitForPage`, `scroll` and `hover` (or the full tool names). Each step is that tool's call on the same tab, with
 every rule it has, so its arguments leave out `tabID`. The run stops at the first step that fails (including a refusal, a
 declined approval or a protected secret), and before the next step when a dialog opened, the page left its website, the
-connection lost the tab or the user took it over, or the call was cancelled. The reply has `completedSteps`, a summary per
+connection lost the tab or the user took it over, or the call was cancelled. A step with `settle` none or fast that started a
+navigation is followed to its load before the next step. Step summaries are cleaned of typed secrets before they are shortened. The reply has `completedSteps`, a summary per
 step, `failedStepIndex` and `error` when one failed, and the last step's result with its `observationID`.
 
 ### Parallel calls
 
 Calls on different tabs run side by side, from one connection or several. Calls on one tab run one at a time in the order
-they arrived; at most 4 may wait for a tab, and a fifth is refused at once ("4 calls already wait for this tab"). Calls that
+they arrived; at most 4 may wait for a tab (or for the global turn), and a fifth is refused at once. `listTabs` takes no turn
+and always answers. A Playwright name acts on the tab that was current when the call was queued. Calls that
 can show a sheet or change what the user sees (`requestAccess`, `requestUserLogin`, `newTab`, `navigate`, `switchTab`,
 `closeTab`, `openComparison`, `compareTabs` and the matching Playwright names) also take one global turn. Taking over a tab,
 stopping a connection or its window, or disconnecting cancels the running calls and ends the waiting ones without running them.
+Through `WSurf --mcp`, a client's cancellation of one request (`notifications/cancelled`) is passed on for that request only;
+the connection, its access and the calls beside it continue.
 
 ### Background pointer and keyboard input
 
@@ -344,9 +348,14 @@ editing command a Mac renderer needs for each key that moves the caret or edits 
 Before a click is sent the page hit-tests the point (through open shadow roots) and applies a ref click's rules to what is
 there: a frame, a file input or a label for one, and a disabled control are refused; a password reveal toggle (a control
 named like one, or an icon-only button next to a password field) is refused while the document holds a filled secret or
-is `credentialTainted`; a consequential label asks for approval. The element is checked again right before the press. For
-6 seconds after input WSurf sent for an agent, and on any page the user cannot see, a file chooser the page opens without a
-planned `chooseFilesOnPage` selection, and Chromium's context menu, are refused, so neither appears in front of the user.
+is `credentialTainted`; a consequential label asks for approval; Option on a link (a download) is refused. The pointer moves
+there first, so the page's own move handlers run, and only then is every check made again: the same element, with the label
+and context the approval was for, before each press (also between the two presses of a double click). An element the page
+swaps in or relabels on hover is never pressed. A link clicked with Shift, Command or Command+Shift opens at most a background
+tab: no Peek, no tab in front of the user, and WSurf is not activated. Focus emulation ends once no connection drives the tab. For
+6 seconds after input WSurf sent for an agent, a file chooser the page opens without a planned `chooseFilesOnPage`
+selection, and Chromium's context menu, are refused, so neither appears in front of the user; an unplanned file chooser is
+also refused on any page the user cannot see.
 
 A background WebKit tab refuses pointer and keyboard input with a message naming `switchTab` and `setTabEngine`. A visible
 WebKit tab takes a left click at a point as native events through its window; right and middle clicks need Chromium.

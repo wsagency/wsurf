@@ -61,13 +61,13 @@ final class BrowserPage: NSView {
 
     /// True while the page waits off screen on its window's parking shelf. It still renders, but it must never take keyboard
     /// focus: the person may be typing in the page the window shows.
-    /// Until when input WSurf dispatched for an agent counts as recent: longer than an engine's transient user activation, so a
-    /// page cannot use that input to open a file chooser or menu in front of the person later (`markAutomatedInput`).
-    var automatedInputUntil: ContinuousClock.Instant?
-
     var isParked: Bool {
         superview is WebViewParkingShelf
     }
+
+    /// Until when input WSurf dispatched for an agent counts as recent: longer than an engine's transient user activation, so a
+    /// page cannot use that input to open a file chooser or menu in front of the person later (`markAutomatedInput`).
+    var automatedInputUntil: ContinuousClock.Instant?
 
     /// Whether the page is hidden while it waits on the shelf. The shelf is in the window and no part of it is hidden, so both
     /// engines count a parked page shown: it reports `visible` and runs animation frames at the display rate. A hidden page

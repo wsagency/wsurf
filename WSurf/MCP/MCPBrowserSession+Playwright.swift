@@ -20,11 +20,25 @@ extension MCPBrowserSession {
 
     nonisolated static let noPlaywrightTab = "No tab is shared with this connection. Call requestAccess first, then retry."
 
+    /// The tab a Playwright call acts on, as `BrowserMCPServer` resolved it when the call was queued: the call then runs on the tab
+    /// whose lane it holds, even if `browser_tabs` chose another tab while it waited. Unset for a call that bypasses the server.
+    struct PlaywrightPin: Sendable {
+        let tab: UUID?
+    }
+    @TaskLocal static var playwrightPin: PlaywrightPin?
+
+    /// The current tab of the Playwright names: the one browser_tabs chose or opened, else the shared tab on screen, else the
+    /// first shared tab.
+    func currentPlaywrightTab() -> UUID? {
+        let tabs = browser.tabs.filter { sharedTab($0.id) != nil }
+        return (tabs.first { $0.id == playwrightTab } ?? tabs.first { onScreen($0) } ?? tabs.first)?.id
+    }
+
     func callPlaywright(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async throws -> CallTool.Result {
         try entry.validate(arguments)
-        // The current tab: the one browser_tabs chose or opened, else the shared tab on screen, else the first shared tab.
         let tabs = browser.tabs.filter { sharedTab($0.id) != nil }
-        let current = tabs.first { $0.id == playwrightTab } ?? tabs.first { onScreen($0) } ?? tabs.first
+        let currentID = Self.playwrightPin.map(\.tab) ?? currentPlaywrightTab()
+        let current = tabs.first { $0.id == currentID }
         let hasOpenedTab = current.map { openedTabs.contains($0.id) } ?? false
         let dialogID = entry.name == "browser_handle_dialog" ? current?.dialogs.pending(for: id).first?.id : nil
         switch Self.playwrightStep(

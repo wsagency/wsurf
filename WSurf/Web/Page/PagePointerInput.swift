@@ -61,11 +61,17 @@ extension PageDriver {
     }
 
     /// The control at `ref`'s centre, or whatever is at `point` (viewport CSS pixels), with every refusal the page can decide.
-    static func pointerTarget(ref: Int?, point: CGPoint?, in view: BrowserPage) async -> Result<PointerTarget, TargetFailure> {
+    ///
+    /// - Parameters:
+    ///   - option: The click holds Option, which turns a link click into a download: refused on a link.
+    ///   - verifying: Asked again just before a press: the element must be the one the first hit test found.
+    static func pointerTarget(
+        ref: Int?, point: CGPoint?, option: Bool = false, verifying: Bool = false, in view: BrowserPage
+    ) async -> Result<PointerTarget, TargetFailure> {
         let x = point.map { Double($0.x) } ?? -1, y = point.map { Double($0.y) } ?? -1
         let script = scripted(
             """
-            const ref = \(ref ?? 0), protectedDoc = \(protectedCredentials);
+            const ref = \(ref ?? 0), protectedDoc = \(protectedCredentials), option = \(option), verifying = \(verifying);
             const up = n => n.parentElement || n.getRootNode?.()?.host || null;
             let el = null, x = \(x), y = \(y);
             if (ref > 0) {
@@ -93,6 +99,12 @@ extension PageDriver {
             }
             let target = el || hit;
             if (!el) for (let n = hit; n; n = up(n)) if (R.kindOf(n)) { target = n; break; }
+            if (verifying && target !== window.__wsurfPointerTarget) {
+              return JSON.stringify({ error: 'The page put another element under the pointer. Nothing was clicked. Read the page again.' });
+            }
+            if (option && hit.closest?.('a[href],area[href]')) {
+              return JSON.stringify({ error: 'Option-click on a link downloads it, so it is never sent. Click without option.' });
+            }
             const isFile = n => n?.tagName === 'INPUT' && (n.type || '').toLowerCase() === 'file';
             const label = hit.closest?.('label');
             if ([hit, target, label?.control].some(isFile)) {
@@ -146,22 +158,19 @@ extension PageDriver {
             PointerTarget(point: CGPoint(x: px, y: py), label: object["label"] as? String ?? "", context: object["context"] as? String ?? ""))
     }
 
-    /// Whether the element `pointerTarget` found is still the one at `point`, asked right before the press is sent.
-    private static func pointerTargetHolds(_ point: CGPoint, in view: BrowserPage) async -> Bool {
-        let held = await evaluateJSON(
-            scripted(
-                """
-                const target = window.__wsurfPointerTarget;
-                let hit = document.elementFromPoint(\(Double(point.x)), \(Double(point.y)));
-                while (hit?.shadowRoot) {
-                  const inner = hit.shadowRoot.elementFromPoint(\(Double(point.x)), \(Double(point.y)));
-                  if (!inner || inner === hit) break;
-                  hit = inner;
-                }
-                for (let n = hit; n; n = n.parentElement || n.getRootNode?.()?.host) if (n === target) return JSON.stringify({ holds: true });
-                return JSON.stringify({ holds: false });
-                """), in: view)
-        return held?["holds"] as? Bool == true
+    /// Every check of the first hit test, asked again right before a press (after the move reached the page, and between the two
+    /// presses of a double click): the same element, still no file input or reveal toggle, and the label and context the
+    /// approval was given for. Throws `TargetFailure` to stop the click.
+    private static func confirmPointerTarget(_ target: PointerTarget, option: Bool, in view: BrowserPage) async throws {
+        guard PageAutomationGuard.allowsExecution else { throw TargetFailure(message: staleMessage) }
+        switch await pointerTarget(ref: nil, point: target.point, option: option, verifying: true, in: view) {
+        case .failure(let failed):
+            throw failed
+        case .success(let now) where now.label != target.label || now.context != target.context:
+            throw TargetFailure(message: "The control changed under the pointer before it was pressed. Nothing was clicked. Read the page again.")
+        case .success:
+            return
+        }
     }
 
     /// The approval a click on `target` needs, as `click` asks it. Nil when it may go on.
@@ -191,8 +200,9 @@ extension PageDriver {
             guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
             await announce(ref: ref, in: view, pause: true)
         }
+        let option = modifiers.contains(.option)
         let target: PointerTarget
-        switch await pointerTarget(ref: ref, point: point, in: view) {
+        switch await pointerTarget(ref: ref, point: point, option: option, in: view) {
         case .success(let found):
             target = found
         case .failure(let failed):
@@ -202,12 +212,12 @@ extension PageDriver {
             return refusal
         }
         let documentURL = view.url
+        let confirm: @MainActor () async throws -> Void = { try await confirmPointerTarget(target, option: option, in: view) }
         do {
             if let chromium = view.chromium {
                 try await installComputerReceipt(button.receipt(clickCount: clickCount), in: view)
-                guard await pointerTargetHolds(target.point, in: view) else { throw PageComputerFailure.stale }
                 try await chromium.dispatchPointerClick(
-                    at: target.point, button: button, clickCount: clickCount, modifiers: modifiers,
+                    at: target.point, button: button, clickCount: clickCount, modifiers: modifiers, confirm: confirm,
                     allowed: { PageAutomationGuard.allowsExecution })
             } else {
                 guard let window = view.window, !view.isParked, window.isVisible, window.attachedSheet == nil else {
@@ -216,15 +226,19 @@ extension PageDriver {
                 // WebKit would open its own context menu, in front of the person, for a native right or middle click.
                 guard button == .left else { return "Right and middle clicks need a Chromium tab (setTabEngine)." }
                 try await installComputerReceipt(button.receipt(clickCount: clickCount), in: view)
-                guard await pointerTargetHolds(target.point, in: view) else { throw PageComputerFailure.stale }
                 let native = CGPoint(x: target.point.x * view.pageZoom, y: target.point.y * view.pageZoom)
-                let name = button == .middle ? "wheel" : button.rawValue
+                // The move first, so the page's own move handlers have run before the target is checked and pressed.
+                try? computerMouse(point: native, button: "left", phase: "move", modifiers: modifiers.eventFlags, in: view, window: window)
                 for count in 1...clickCount {
-                    try computerMouse(point: native, button: name, phase: "down", count: count, modifiers: modifiers.eventFlags, in: view, window: window)
-                    try computerMouse(point: native, button: name, phase: "up", count: count, modifiers: modifiers.eventFlags, in: view, window: window)
+                    try await confirm()
+                    try computerMouse(point: native, button: "left", phase: "down", count: count, modifiers: modifiers.eventFlags, in: view, window: window)
+                    try computerMouse(point: native, button: "left", phase: "up", count: count, modifiers: modifiers.eventFlags, in: view, window: window)
                 }
             }
             try await awaitComputerReceipt(in: view, documentURL: documentURL)
+        } catch let failed as TargetFailure {
+            _ = await evaluateJSON(scripted("window.__wsurfComputerAck?.dispose(); return JSON.stringify({ ok: true });"), in: view)
+            return failed.message
         } catch PageComputerFailure.unverified {
             return "Sent the click, but the page did not report receiving it. Check the resulting page.\n" + (await settleAndSnippet(view))
         } catch {

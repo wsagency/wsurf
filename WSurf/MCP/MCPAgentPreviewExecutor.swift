@@ -698,6 +698,7 @@ extension MCPAgentWindowRegistry {
                 throw MCPAgentWindowError(.forbidden, "set_appearance requires development access on this page.")
             }
             session.keepInWindow(tab)
+            session.digestCache[tab.id] = nil
             tab.realizeDeferredSession()
             let view = tab.page
             let owner = session.acquireDevelopment(tab, view: view)

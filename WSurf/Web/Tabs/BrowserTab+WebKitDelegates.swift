@@ -71,6 +71,16 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             decisionHandler(.cancel)
             return
         }
+        // A modifier click WSurf sent for an agent is not the person's: no Peek and no tab in front, only a background tab.
+        if let tab, navigationAction.navigationType == .linkActivated,
+           !navigationAction.modifierFlags.isDisjoint(with: [.command, .shift]) || navigationAction.buttonNumber == Self.middleButton,
+           navigationAction.targetFrame?.isMainFrame != false,
+           BrowserPage.from(webView)?.isAutomatedInputRecent == true,
+           let url = navigationAction.request.url {
+            decisionHandler(.cancel)
+            tab.onOpenScriptTab?(url)
+            return
+        }
         // A modifier is the person's only when they clicked: a page's own synthetic Cmd-click is a plain click.
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
            navigationAction.navigationType == .linkActivated,
@@ -273,7 +283,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         view.allowsMagnification = true
 
         let modifiers = navigationAction.modifierFlags
-        let activate = !modifiers.contains(.command) || modifiers.contains(.shift)
+        // A window an agent's input opened never takes the place of the person's tab.
+        let activate = (!modifiers.contains(.command) || modifiers.contains(.shift)) && BrowserPage.from(webView)?.isAutomatedInputRecent != true
         onNewWindow(view, activate)
         (view.navigationDelegate as? TabNavigationDelegate)?.tab?.resolveOpenerSignIn(for: navigationAction.request.url)
         return view

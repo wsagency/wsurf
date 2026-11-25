@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
+import AppKit
 import CoreGraphics
 import Foundation
 import MCP
@@ -360,10 +361,14 @@ extension MCPBrowserSession {
             guard let point else { return nil }
             return await PageDriver.scroll(direction: arguments["direction"]?.stringValue ?? "", at: point, in: view)
         case "hoverOnPage":
-            if view.chromium != nil || point != nil {
+            if view.chromium != nil {
                 return await PageDriver.pointerHover(ref: ref > 0 ? ref : nil, point: point, in: view)
             }
-            return view.isParked ? PageDriver.backgroundWebKitPointer : nil
+            if view.isParked {
+                return PageDriver.backgroundWebKitPointer
+            }
+            // A visible WebKit tab hovers with the real pointer, which needs a control to aim at.
+            return point == nil ? nil : "Hover at x and y needs a Chromium tab (setTabEngine). On WebKit, hover a ref; WSurf must be the active app."
         default:
             return nil
         }

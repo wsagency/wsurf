@@ -31,7 +31,7 @@ final class MCPCallLanes {
     nonisolated enum Admission: Equatable, Sendable {
         case admitted
         /// The lane already has `queueLimit` calls waiting.
-        case full
+        case full(Lane)
         /// The call was cancelled, or its connection ended or lost the tab, while it waited.
         case cancelled
     }
@@ -75,7 +75,7 @@ final class MCPCallLanes {
             busy.insert(lane)
             return .admitted
         }
-        guard queued(lane) < Self.queueLimit else { return .full }
+        guard queued(lane) < Self.queueLimit else { return .full(lane) }
         let id = UUID()
         let admitted = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in

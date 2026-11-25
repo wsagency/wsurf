@@ -143,16 +143,25 @@ extension MCPBrowserSession {
             if let stop = stepInterruption(tab, origin: origin) {
                 return finish(failedAt: index, stop)
             }
+            let documentBefore = tab.isMaterialised ? tab.page.mainDocumentID : nil
+            let urlBefore = tab.isMaterialised ? tab.page.url : nil
             let result = await execute(entry, arguments: stepArguments)
             last = result
-            let text = Self.text(of: result)
+            let line = Self.stepSummary(result) ?? Self.text(of: result)
             summaries.append(
                 .object([
                     "index": .int(index), "tool": .string(tool), "status": .string(result.isError == true ? "failed" : "ok"),
-                    "summary": .string(PageOutputBudget.prefix(Self.stepSummary(result) ?? text, fitting: 300)),
+                    "summary": .string(Self.stepLine(line, limit: 300, scrub: scrubbed)),
                 ]))
             if result.isError == true {
-                return finish(failedAt: index, PageOutputBudget.prefix(Self.stepSummary(result) ?? text, fitting: 600))
+                return finish(failedAt: index, Self.stepLine(line, limit: 600, scrub: scrubbed))
+            }
+            // A step that did not wait for the page (settle none or fast) may have started a navigation the next step would race.
+            if index + 1 < steps.count, ["none", "fast"].contains(stepArguments["settle"]?.stringValue ?? ""), tab.isMaterialised {
+                let view = tab.page
+                if await PageSettle.pageWasLeft(view, document: documentBefore, url: urlBefore) {
+                    await PageSettle.untilIdle(view, timeout: Self.waitAndReadTimeout)
+                }
             }
             // A step that opened a dialog reports success with dialogOpened: the page is blocked until it is answered.
             if result.structuredContent?.objectValue?["status"]?.stringValue == "dialogOpened" || tab.dialogs.hasOpenDialog {
@@ -181,6 +190,12 @@ extension MCPBrowserSession {
             return "The page left its website. Read the new page before acting on it."
         }
         return nil
+    }
+
+    /// `text` cleaned of every secret this connection typed, and only then cut to `limit` bytes: a cut made first could leave
+    /// the start of a secret that the scrubber no longer recognises.
+    nonisolated static func stepLine(_ text: String, limit: Int, scrub: (String) -> String) -> String {
+        PageOutputBudget.prefix(scrub(text), fitting: limit)
     }
 
     /// The status line of a step's reply: the delta's own status and action, without the page text.

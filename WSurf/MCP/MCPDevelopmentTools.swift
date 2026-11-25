@@ -180,6 +180,11 @@ extension MCPBrowserSession {
         }
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
+        // A viewport, device, media or appearance change, a reload or a reset can change what the next digest sees without a
+        // DOM change, so the next action digests the page again.
+        if !["getDevelopmentInfo", "readConsole", "readNetwork"].contains(name) {
+            digestCache[tab.id] = nil
+        }
         tab.realizeDeferredSession()
         let view = tab.page
         // Identity and generation of the view this call was started on; checked again after every suspension.

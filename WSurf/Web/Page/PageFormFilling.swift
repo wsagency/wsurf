@@ -211,18 +211,15 @@ extension PageDriver {
         let list = refs.map(String.init).joined(separator: ",")
         guard let object = await evaluateJSON(scripted("""
             \(batchStateFunction)
+            \(controlWordingFunction)
             const out = {};
             for (const ref of [\(list)]) {
               const el = window.__wsurfRefs[ref - 1];
               if (!el?.isConnected || !R.matchesRef(ref)) { out[ref] = { stale: true }; continue; }
               const kind = R.kindOf(el);
-              const form = el.form || el.closest?.('form');
               out[ref] = { kind, type: (el.type || '').toLowerCase(), sensitive: R.isSensitiveSecret(el),
                 unavailable: R.disabled(el) || !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
-                checked: el.checked ?? (el.getAttribute('aria-checked') === 'true'), label: R.labelOf(el, kind || 'button'),
-                context: R.norm([el.getAttribute('aria-label'), el.title, el.name, el.getAttribute('data-action'), el.getAttribute('formaction'),
-                  el.getAttribute('onclick'), form?.getAttribute('action'), form?.getAttribute('aria-label'), form?.innerText]
-                  .filter(Boolean).join(' ')).slice(0, 800) };
+                checked: el.checked ?? (el.getAttribute('aria-checked') === 'true'), ...controlWording(el) };
             }
             window.__wsurfBatch = batchState();
             return JSON.stringify({ fields: out });
@@ -367,16 +364,27 @@ extension PageDriver {
         submitRef: Int?, lastField: FieldValue?, inspected: [Int: [String: Any]], complete: Bool, in webView: BrowserPage
     ) async -> String {
         guard complete else { return "Not submitted: not every field was filled and verified." }
-        guard let ref = submitRef ?? lastField?.ref, let control = inspected[ref], control["stale"] == nil,
+        guard let ref = submitRef ?? lastField?.ref, inspected[ref]?["stale"] == nil,
             batchMayContinue(in: webView), await validateObservation(in: webView, ref: ref)
         else { return "Not submitted: " + staleMessage }
-        let label = control["label"] as? String ?? ""
-        if let category = SensitiveAction.category(of: label, context: control["context"] as? String ?? "") {
+        // The writes may have relabelled the control ("Continue" to "Pay €49"): it is classified as it reads now, and the click
+        // below refuses a control whose label or context changed after that.
+        guard let live = await controlWording(ref: ref, in: webView), batchMayContinue(in: webView) else {
+            return "Not submitted: " + staleMessage
+        }
+        let label = live.label
+        if let category = SensitiveAction.category(of: label, context: live.context) {
             let permitted = await AgentActionConsent.permit(
                 label: label, category: category, host: (selectedFrame?.url ?? webView.url)?.host(),
                 authoredByAI: true, policy: webView.context.actionPolicy)
             guard permitted else { return "Not submitted: " + SensitiveAction.declined(label, category: category) }
             guard batchMayContinue(in: webView) else { return "Not submitted: " + staleMessage }
+            if category == .publication {
+                AgentAuthoredText.clear(in: webView)
+            }
+        }
+        guard let expectedLabel = jsonString(live.label), let expectedContext = jsonString(live.context) else {
+            return "Not submitted: " + staleMessage
         }
         let action = submitRef != nil
             ? """
@@ -388,8 +396,11 @@ extension PageDriver {
               """
             : "R.pressEnter(el);"
         let script = scripted("""
+            \(controlWordingFunction)
             const el = window.__wsurfRefs[\(ref) - 1];
             if (!el?.isConnected || !R.matchesRef(\(ref))) return JSON.stringify({ stale: true });
+            const now = controlWording(el);
+            if (now.label !== \(expectedLabel) || now.context !== \(expectedContext)) return JSON.stringify({ changed: true });
             \(action)
             return JSON.stringify({ ok: true });
             """)
@@ -397,9 +408,34 @@ extension PageDriver {
         if let error = answer["error"] as? String {
             return "Not submitted: " + error
         }
+        if answer["changed"] as? Bool == true {
+            return "Not submitted: the control changed after it was checked. Read the page again."
+        }
         guard answer["ok"] as? Bool == true else { return "Not submitted: " + staleMessage }
         await PageSettle.afterInteraction(webView)
         return submitRef != nil ? "Submitted with “\(label)”." : "Submitted the form of “\(label)” (Enter)."
+    }
+
+    /// The label and context (what `SensitiveAction` classifies) of a control, as `resolve` reads them.
+    private static let controlWordingFunction = """
+        const controlWording = el => {
+          const kind = R.kindOf(el) || 'button';
+          const form = el.form || el.closest?.('form');
+          return { label: R.labelOf(el, kind), context: R.norm([el.getAttribute('aria-label'), el.title, el.name,
+            el.getAttribute('data-action'), el.getAttribute('formaction'), el.getAttribute('onclick'), form?.getAttribute('action'),
+            form?.getAttribute('aria-label'), form?.innerText].filter(Boolean).join(' ')).slice(0, 800) };
+        };
+        """
+
+    private static func controlWording(ref: Int, in webView: BrowserPage) async -> (label: String, context: String)? {
+        let answer = await evaluateJSON(scripted("""
+            \(controlWordingFunction)
+            const el = window.__wsurfRefs[\(ref) - 1];
+            if (!el?.isConnected || !R.matchesRef(\(ref))) return JSON.stringify({ stale: true });
+            return JSON.stringify(controlWording(el));
+            """), in: webView)
+        guard let label = answer?["label"] as? String, let context = answer?["context"] as? String else { return nil }
+        return (label, context)
     }
 
     /// The page after a batch, unless the connection gets a change report instead or the page or access changed meanwhile.

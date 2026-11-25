@@ -14,6 +14,7 @@ extension ChromiumPage {
     func dragPointer(path: [CGPoint], allowed: @escaping @MainActor @Sendable () -> Bool) async throws {
         guard let first = path.first, let last = path.last, path.count >= 2 else { throw ChromiumError.unavailable("A drag needs two points.") }
         try await ensureReady()
+        markAutomatedInput()
         let guarded: @MainActor @Sendable () throws -> Void = {
             guard allowed() else {
                 throw ChromiumError.staleFrame
@@ -54,7 +55,13 @@ extension ChromiumPage {
     /// person cannot see the page, or input WSurf dispatched for an agent is recent. Neither may put a native panel or menu
     /// in front of the person.
     var refusesUnplannedPanels: Bool {
-        !isShownToPerson || owner?.isAutomatedInputRecent == true
+        !isShownToPerson || refusesContextMenu
+    }
+
+    /// Whether the engine's context menu must be refused: only right after input WSurf sent for an agent. A person can only
+    /// right-click a page they see, so a page out of sight needs no other rule.
+    var refusesContextMenu: Bool {
+        owner?.isAutomatedInputRecent == true
     }
 
     private func markAutomatedInput() {
@@ -87,9 +94,11 @@ extension ChromiumPage {
 
     /// A trusted click: move, then press and release `clickCount` times with the click count each press would have. Once a
     /// button is down a release is always sent, whatever `allowed` says.
+    /// The move reaches the page first, so its `mousemove` and `pointerover` handlers run before anything is pressed; `confirm`
+    /// is then asked before each press (the page may have put another element under the pointer) and throws to stop the click.
     func dispatchPointerClick(
         at point: CGPoint, button: PageDriver.PointerButton, clickCount: Int, modifiers: PageKeyChord.Modifiers,
-        allowed: @escaping @MainActor @Sendable () -> Bool
+        confirm: @MainActor () async throws -> Void, allowed: @escaping @MainActor @Sendable () -> Bool
     ) async throws {
         guard (1...2).contains(clickCount) else { throw ChromiumError.unavailable("A click is single or double.") }
         try await ensureReady()
@@ -97,6 +106,7 @@ extension ChromiumPage {
         let base: [String: Any] = ["x": Double(point.x), "y": Double(point.y), "modifiers": Self.cdpModifiers(modifiers)]
         try await sendMouse(base.merging(["type": "mouseMoved", "button": "none", "buttons": 0]) { $1 }, allowed: allowed)
         for count in 1...clickCount {
+            try await confirm()
             try await sendMouse(
                 base.merging(["type": "mousePressed", "button": button.rawValue, "buttons": bit, "clickCount": count]) { $1 }, allowed: allowed)
             try await sendMouse(base.merging(["type": "mouseReleased", "button": button.rawValue, "buttons": 0, "clickCount": count]) { $1 }, allowed: nil)
@@ -119,9 +129,8 @@ extension ChromiumPage {
     func dispatchKey(chord: PageKeyChord, allowed: @escaping @MainActor @Sendable () -> Bool) async throws {
         try await ensureReady()
         guard let key = Self.cdpKey(chord) else { throw ChromiumError.unavailable("This key has no DevTools form.") }
-        if !isShownToPerson {
-            // ponytail: emulation stays on for the page's life; it only makes an agent-held background page report focus.
-            _ = try? await devTools.command("Emulation.setFocusEmulationEnabled", params: ["enabled": true])
+        if !isShownToPerson, !agentFocusEmulated {
+            agentFocusEmulated = (try? await devTools.command("Emulation.setFocusEmulationEnabled", params: ["enabled": true])) != nil
         }
         var down: [String: Any] = [
             "type": key.text == nil ? "rawKeyDown" : "keyDown", "key": key.key, "code": key.code,
@@ -146,6 +155,13 @@ extension ChromiumPage {
         up["unmodifiedText"] = nil
         up["commands"] = nil
         _ = try await devTools.command("Input.dispatchKeyEvent", params: up)
+    }
+
+    /// Ends the focus emulation `dispatchKey` turned on, once no agent drives the page.
+    func endAgentFocusEmulation() {
+        guard agentFocusEmulated else { return }
+        agentFocusEmulated = false
+        Task { _ = try? await devTools.command("Emulation.setFocusEmulationEnabled", params: ["enabled": false]) }
     }
 
     nonisolated struct CDPKey: Equatable {
