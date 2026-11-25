@@ -86,6 +86,12 @@ damaged or from a newer version, pairing is unavailable and says so. Setup then
 works as before, nothing authenticates, and WSurf never overwrites an item it
 could not read. Every app asks for approval each time it connects.
 
+### Tool profiles
+
+`WSurf --mcp --tools=core` lists and accepts only WSurf's own tools, `--tools=playwright` only the Playwright MCP aliases,
+and `--tools=all` (the default) both. A call to a tool outside the profile is refused as an unknown tool. An unknown profile
+name stops the relay with an error. A smaller catalog saves a client's context; the tools behave the same in every profile.
+
 ## Automatic client setup
 
 WSurf detects the standard macOS app, command-line tool, and configuration
@@ -167,18 +173,18 @@ revoke it immediately.
 | `requestAccess` | Ask to share the webpages currently on screen. One sheet per connection; later calls only add tabs that a paired app's standing grant covers. `development: true` also asks for development access and `developer: true` for Developer access; the user may grant less. |
 | `listTabs` | List only tabs shared with this connection. |
 | `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. Sensitive fields show type and state (`(password, sensitive) = (empty)` / `(filled, hidden)`), never values. On login forms, includes anonymized `vaultHint: { hasSavedLogin, requiresUserApproval: true }`. |
-| `clickOnPage` | Click a numbered control. Returns what the click changed (see Action results). |
+| `clickOnPage` | Click a numbered control, or with `x` and `y` (viewport CSS pixels) whatever is at that point. A ref is clicked with a DOM click by default; `pointer: true`, a point, `button` (`left`, `right`, `middle`), `clickCount: 2` or `modifiers` (`shift`, `option`, `command`) send trusted pointer input instead (see Background pointer and keyboard input). Returns what the click changed (see Action results). |
 | `typeOnPage` | Fill a field, optionally submitting it. Under Control (when password entry is allowed in Settings › Connected apps) or Developer access, writes into password and OTP fields work directly without `secret: true` and are automatically scrubbed and screenshot-masked; `secret: true` remains optional for non-password secret fields. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct form controls without submitting; report exactly which refs retained their values. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
+| `fillFields` | Fill up to 32 distinct form controls and report exactly which refs retained their values. One round checks every field, one small round writes each field, one verifies them all, and the page settles once. `submitRef` clicks a submit control, and `submit: true` presses Enter in the last text field, but only after every field was filled and verified, with the approval a click on that control needs, judged on its label and form as they read after the writes; a control that changes after that is not clicked. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
 | `inspectControl` | Read control state and paginate dropdown options. Reports `sensitive`, `type`, `filled`, and `value: "(hidden)"` on sensitive fields, plus anonymized `vaultHint` on login forms. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
-| `pressKey` | Send a key or a key chord to a control in a visible tab: a named key (`Enter`, `Tab`, `Escape`, `Space`, the arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`) or one printable ASCII character, with optional `modifiers` (`shift`, `option`, `command`). The key goes to the page only; see Key chords below for what is refused. Name the control with `ref` or `selector`. |
-| `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
-| `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below). Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
-| `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
+| `screenshotPage` | `includeSnapshot` adds the viewport's text and controls; it defaults to false when the connection holds the page's current observation (the reply then names that `observationID`) and to true otherwise. Masking and every refusal below apply either way. Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
+| `pressKey` | Send a key or a key chord to a control in a visible tab, or in a background Chromium tab through DevTools (a background WebKit tab refuses and names `switchTab`): a named key (`Enter`, `Tab`, `Escape`, `Space`, the arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`) or one printable ASCII character, with optional `modifiers` (`shift`, `option`, `command`). The key goes to the page only; see Key chords below for what is refused. Name the control with `ref` or `selector`. |
+| `hoverOnPage` | Move the pointer to a referenced element or to `x` and `y`, so CSS `:hover` and pointer/mouse handlers run. On Chromium the pointer is a DevTools pointer: it works in the background and WSurf need not be active, and the user's cursor does not move. On WebKit it moves the real pointer and needs WSurf to be the active app with a key window and the tab on screen (a background WebKit tab answers that it is unsupported, naming `switchTab` and Chromium); it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
+| `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below); on Chromium it works in a background tab. Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
+| `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities, including `backgroundPointer` and `backgroundKeyboard` (`supported` on Chromium; `unsupported` on WebKit, with `backgroundInputReason`). Works with any grant. |
 | `findElements` | Development. Elements matching a safe CSS selector (the Developer tier may test any attribute except `value`) in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
 | `inspectElement` | Development. Bounded attributes, geometry, box model, allowlisted computed styles and ancestors of one found element. No field values and no raw HTML. With `full: true` (Developer tier) it also returns all attributes (up to 128), computed properties (all, or the up to 32 named in `properties`; about 8 KiB) and an `outerHTML` excerpt of at most 8 KiB with field values blanked, under the rule in Scripts and DOM edits. The result is kept under the same delivered-bytes budget by dropping ancestors, then attributes, then styles, and says which (`ancestorsTruncated`, `attributesTruncated`, `truncated`). |
 | `setViewport` | Development. Lay the page out at an exact CSS-pixel viewport (64–4,096 per axis). The result is the size measured inside the page. A tab in the background keeps its size, which the result reports. |
@@ -193,10 +199,11 @@ revoke it immediately.
 | `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
 | `evaluateScript` | Developer tier. Run one JavaScript expression in the page and return its value, bounded and with sensitive values hidden. Denied (`status: "denied"`, `code: "protectedSecretPresent"`) while the document is `credentialTainted` (WSurf Vault filled credentials into it) or holds a live filled sensitive secret field not explicitly approved for inspection. See Scripts and DOM edits. |
 | `editDOM` | Developer tier. Set or remove an attribute, set text or an inline style, remove an element, or insert a new one. See Scripts and DOM edits. |
-| `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
+| `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container, or with `x` and `y` whatever is under that point (a trusted wheel turn through DevTools on Chromium, a scroll of the container under the point on WebKit). |
+| `runSteps` | Control. Run up to 10 actions on one tab in a single call; see Fewer turns. |
 | `goBack` | Go back within the shared website. |
-| `navigate` | Navigate a shared tab. Tabs opened by this connection navigate in place. User-owned tabs shared via `requestAccess` open the destination in a new background tab by default (returning the new `tabID`) so the user's tab is untouched, unless `inPlace: true` is passed. Another website requires approval, except for a paired app that follows the Website access default (see Website access default). |
-| `newTab` | Open and share a new webpage in the background, behind the user's tab (in a window with no tab it becomes the tab shown). Works even with no prior tab grants: a standing grant or Website access default opens immediately without a sheet; otherwise one consent sheet asks to open and share the URL at Control without touching or sharing the user's active tab. Defaults to Chromium (except WebKit-only origins); `engine` (`webkit` or `chromium`) is selectable under Control to test Safari/WebKit. |
+| `navigate` | Navigate a shared tab. Tabs opened by this connection navigate in place. User-owned tabs shared via `requestAccess` open the destination in a new background tab by default (returning the new `tabID`) so the user's tab is untouched, unless `inPlace: true` is passed. Another website requires approval, except for a paired app that follows the Website access default (see Website access default). With `waitAndRead` (default true) the reply waits for the page and includes its first observation; see Fewer turns. |
+| `newTab` | Open and share a new webpage in the background, behind the user's tab (in a window with no tab it becomes the tab shown). Works even with no prior tab grants: a standing grant or Website access default opens immediately without a sheet; otherwise one consent sheet asks to open and share the URL at Control without touching or sharing the user's active tab. Defaults to Chromium (except WebKit-only origins); `engine` (`webkit` or `chromium`) is selectable under Control to test Safari/WebKit. With `waitAndRead` (default true) the reply waits for the page and includes its first observation; see Fewer turns. |
 | `setTabEngine` | Control. Switch a shared tab between Chromium and WebKit (Safari engine), keeping background tabs parked and reachable. Respects WebKit-only origins. Because switching reloads the tab and clears Back/Forward history, user-owned shared tabs require `inPlace: true` (agent-opened tabs and Agent Micro Window tabs switch directly). |
 | `requestUserLogin` | Control. Ask the user in WSurf to sign in on a shared tab: blind-fill a user-selected saved WSurf Vault login (**Fill** or **Fill & Sign In** — credentials never reach the client and mark the document `credentialTainted`), **Sign In Myself** (`waitingForUser`, omitted in `vaultFill` mode), or **Cancel** (`declined`). Supports `mode`: `vaultOrManual` (default), `vaultFill`, or `manualLogin`. |
 | `openComparison` | Development. Open a page in WebKit and in Chromium, split side by side in the background, and share both tabs; see Comparing engines. |
@@ -217,8 +224,9 @@ the next action needs no new read. `fillFields` accepts positive, distinct refs
 the client was given: text, supported value controls, dropdowns and checked states
 (`true`/`false`). Password/payment controls remain blocked (except an item marked
 `secret` in the Developer tier), disabled/read-only
-controls are skipped, and file pickers cannot be opened by a batch. No batch submits
-a form. Navigation, cancellation or access revocation stops remaining writes.
+controls are skipped, and file pickers cannot be opened by a batch. A batch submits only
+with `submitRef` or `submit`, and only when every field was verified. Navigation, cancellation, access revocation, or a
+change of the page's text or controls between two writes (a validation message) stops remaining writes.
 
 A partial batch can return fresh controls without marking the whole call as an
 error. Check the verified ref list, not just `isError` or the completed count; do
@@ -276,9 +284,13 @@ text added: "Added to cart"
   wait for the page to go quiet.
 - `screenshotOnFailure`: `element` or `viewport` attaches a small JPEG (at most 60 KB and 640 px wide) when the action
   fails: the element first, then the viewport. Refused wherever a screenshot is.
+- `settle`: `auto` (default) waits as described below; `fast` waits for 60 ms of quiet, at most 350 ms; `none` returns
+  as soon as the action was delivered.
 
 **Waiting.** After an action the page is asked once and answers when its DOM and finished resources have been quiet
-for 120 ms (the highlight ring does not count), or at the ceiling. A navigation the action started is followed to its
+for 120 ms, or at the ceiling. The highlight ring does not count, nor does animation noise: a second style or class change
+of the same element, or a change outside the viewport. So a clock, a spinner or a carousel no longer holds every click
+to the ceiling. A navigation the action started is followed to its
 end. A request still running when the page goes quiet is not waited for; use `waitForPage`. A page that never stops
 changing costs the `settleMs` ceiling.
 
@@ -288,6 +300,65 @@ document, or of a control that changed under the client, is refused: a ref keeps
 last saw it listed (in a read or in a report), so a control that changed and was not listed again stays refused until the
 page is read. An `observationID` that is sent must still be the
 latest. A failed action leaves the client's observation as it is.
+
+**Fewer rounds.** The digest after an action is kept for the tab. The next action starts from it when the page reports the
+same document, observation and change count (DOM mutations other than the ring, input, focus and scroll, also in shadow
+roots and frames it has walked, a resize, a colour-scheme change), the tab's page is the same, and its credential protection
+did not change; a development call (viewport, device, media, reload, reset) drops it. Otherwise the page is digested again. A ref's validation and readiness check (actionable and not moving, two samples) is one round to the
+page. The highlight ring still shows on a page the user sees, but an MCP action does not wait for it, and a background
+tab is not announced with a pause at all.
+
+### Fewer turns
+
+`newTab` and `navigate` take `waitAndRead` (default true). The reply waits, up to 10 seconds, for the new document to commit
+and finish loading, then adds the `readPage` result to the tab's fields: `status: "ready"`, `content`, `observationID`, `url`
+and `vaultHint` on a login page. That read is a `readPage` with all its rules: the same scrubbing of typed secrets, and it
+counts as reading page content (afterwards a new website needs a link the connection has seen). A page that does not load in
+time returns the tab with `status: "loading"`; a dialog returns `status: "dialogPending"`; a read that fails returns
+`status: "opened"` and `readError`. The tab is never lost. `waitAndRead: false` answers as soon as navigation starts.
+
+`runSteps {tabID, steps}` runs up to 10 steps, each `{tool, arguments}` with `tool` one of `fillFields`, `click`, `type`,
+`pressKey`, `waitForPage`, `scroll` and `hover` (or the full tool names). Each step is that tool's call on the same tab, with
+every rule it has, so its arguments leave out `tabID`. The run stops at the first step that fails (including a refusal, a
+declined approval or a protected secret), and before the next step when a dialog opened, the page left its website, the
+connection lost the tab or the user took it over, or the call was cancelled. A step with `settle` none or fast that started a
+navigation is followed to its load before the next step. Step summaries are cleaned of typed secrets before they are shortened. The reply has `completedSteps`, a summary per
+step, `failedStepIndex` and `error` when one failed, and the last step's result with its `observationID`.
+
+### Parallel calls
+
+Calls on different tabs run side by side, from one connection or several. Calls on one tab run one at a time in the order
+they arrived; at most 4 may wait for a tab (or for the global turn), and a fifth is refused at once. `listTabs` takes no turn
+and always answers. A Playwright name acts on the tab that was current when the call was queued. Calls that
+can show a sheet or change what the user sees (`requestAccess`, `requestUserLogin`, `newTab`, `navigate`, `switchTab`,
+`closeTab`, `openComparison`, `compareTabs` and the matching Playwright names) also take one global turn. Taking over a tab,
+stopping a connection or its window, or disconnecting cancels the running calls and ends the waiting ones without running them.
+Through `WSurf --mcp`, a client's cancellation of one request (`notifications/cancelled`) is passed on for that request only;
+the connection, its access and the calls beside it continue.
+
+### Background pointer and keyboard input
+
+In a Chromium tab, trusted input goes to the page through DevTools (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`):
+`clickOnPage` with a point or `pointer: true`, `hoverOnPage`, `scrollPage` with a point, `dragOnPage` with `pointer: true`, and
+`pressKey`. The page sees `isTrusted` events. It works with the tab parked out of sight: WSurf is not activated, the user's
+cursor does not move, and the window's first responder does not change. A parked page gets focus emulation once, so it
+treats the key as focused input. Keys go through the same default-deny chord boundary (see Key chords), with the
+editing command a Mac renderer needs for each key that moves the caret or edits text.
+
+Before a click is sent the page hit-tests the point (through open shadow roots) and applies a ref click's rules to what is
+there: a frame, a file input or a label for one, and a disabled control are refused; a password reveal toggle (a control
+named like one, or an icon-only button next to a password field) is refused while the document holds a filled secret or
+is `credentialTainted`; a consequential label asks for approval; Option on a link (a download) is refused. The pointer moves
+there first, so the page's own move handlers run, and only then is every check made again: the same element, with the label
+and context the approval was for, before each press (also between the two presses of a double click). An element the page
+swaps in or relabels on hover is never pressed. A link clicked with Shift, Command or Command+Shift opens at most a background
+tab: no Peek, no tab in front of the user, and WSurf is not activated. Focus emulation ends once no connection drives the tab. For
+6 seconds after input WSurf sent for an agent, a file chooser the page opens without a planned `chooseFilesOnPage`
+selection, and Chromium's context menu, are refused, so neither appears in front of the user; an unplanned file chooser is
+also refused on any page the user cannot see.
+
+A background WebKit tab refuses pointer and keyboard input with a message naming `switchTab` and `setTabEngine`. A visible
+WebKit tab takes a left click at a point as native events through its window; right and middle clicks need Chromium.
 
 ### Development access
 
@@ -746,7 +817,7 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 
 ### Drag
 
-`dragOnPage` has two modes. The default dispatches the DOM events of a drag at the pointer positions along a straight path (five points): `dragstart`, `drag`, `dragenter`, `dragover`, `drop`, `dragend` for a `draggable` source, pointer and mouse events otherwise. They are untrusted (`isTrusted` is false), work with the window in the background on both engines, and are refused when the path crosses a frame, a file input, a disabled control or a sensitive field. `pointer: true` sends trusted pointer input (`isTrusted` is true): on Chromium through DevTools mouse events, with the button held while it moves; on WebKit as native mouse events through the window, which reach it with WSurf in the background (unlike `hoverOnPage`) but do not mark the button as held during the moves. Both need the tab on screen. A source that starts a browser drag session (a `draggable` element, an image, a link, selected text) is refused in pointer mode, because synthetic input cannot complete that session; use the default mode for it. Refs need the observation of the latest read; selector and offset ends need none, but selectors need development access. A consequential label on either end (for example a drop target named Delete) asks for approval, as a click would. Like the other actions, it returns what the drag changed (see Action results); `result: "full"`, `budget` and `screenshotOnFailure` work as they do there.
+`dragOnPage` has two modes. The default dispatches the DOM events of a drag at the pointer positions along a straight path (five points): `dragstart`, `drag`, `dragenter`, `dragover`, `drop`, `dragend` for a `draggable` source, pointer and mouse events otherwise. They are untrusted (`isTrusted` is false), work with the window in the background on both engines, and are refused when the path crosses a frame, a file input, a disabled control or a sensitive field. `pointer: true` sends trusted pointer input (`isTrusted` is true): on Chromium through DevTools mouse events, with the button held while it moves; on WebKit as native mouse events through the window, which reach it with WSurf in the background (unlike `hoverOnPage`) but do not mark the button as held during the moves. WebKit needs the tab on screen; Chromium works in a background tab. A source that starts a browser drag session (a `draggable` element, an image, a link, selected text) is refused in pointer mode, because synthetic input cannot complete that session; use the default mode for it. Refs need the observation of the latest read; selector and offset ends need none, but selectors need development access. A consequential label on either end (for example a drop target named Delete) asks for approval, as a click would. Like the other actions, it returns what the drag changed (see Action results); `result: "full"`, `budget` and `screenshotOnFailure` work as they do there.
 
 ### Comparing engines
 
@@ -949,10 +1020,11 @@ without showing it. `switchTab` is needed only to show a tab to the user.
   soon as a tab is shared and ends when nobody controls it. Chromium does it through a process-wide switch. No script is
   added to the page. The user's own tabs are unchanged. A minimized window, or WSurf hidden with ⌘H, is not supported.
 - Reading, clicking, typing (setter-based), selecting, filling, scrolling, DOM drags, Chromium's trusted pointer drags,
-  waits, screenshots, diagnostics, scripts and DOM edits work in the background.
-- Anything that needs keyboard focus or the real pointer is refused in the background instead of taking them from the
-  user: `pressKey`, the WebKit `pointer: true` drag and `hoverOnPage`. A click on a suggestion uses the page's ordinary
-  click there.
+  waits, screenshots, diagnostics, scripts and DOM edits work in the background. On Chromium so do trusted clicks,
+  hovers, wheel turns and keys (see Background pointer and keyboard input).
+- On WebKit, anything that needs keyboard focus or the real pointer is refused in the background instead of taking them
+  from the user: `pressKey`, pointer clicks, the `pointer: true` drag and `hoverOnPage`. A click on a suggestion uses the
+  page's ordinary click there.
 - A responsive `setViewport` or `emulateDevice` size reaches only a tab on screen; in the background the result reports
   that the page kept its size, and Chromium answers `unsupported`. Call `switchTab` to show the tab, then call it again.
 - A tab a connection holds a grant for is not unloaded to save memory, so its refs stay valid between calls.

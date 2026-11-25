@@ -11,7 +11,7 @@ enum PageSettle {
     static let loadCeiling: Duration = .seconds(12)
     nonisolated static let navigationGrace: Duration = .milliseconds(400)
     /// No DOM change and no finished resource for this long counts as quiet.
-    static let quietWindow: Duration = .milliseconds(120)
+    nonisolated static let quietWindow: Duration = .milliseconds(120)
     @TaskLocal static var interactionObserver: (@MainActor @Sendable () -> Void)?
 
     /// How `untilQuiet` waits. `event` asks the page once and lets it answer when it has been quiet; `polling` samples a
@@ -23,6 +23,23 @@ enum PageSettle {
     nonisolated struct Limits: Sendable {
         var grace: Duration = PageSettle.navigationGrace
         var quietCeiling: Duration = .milliseconds(1500)
+        /// No change for this long counts as quiet.
+        var quietWindow: Duration = PageSettle.quietWindow
+        /// `settle: none`: the action returns without waiting for the page.
+        var skip = false
+    }
+
+    /// The `settle` argument of an action: `none` waits for nothing, `fast` for 60 ms of quiet within 350 ms, and `auto` (or no
+    /// argument) as the budget says.
+    nonisolated static func limits(settle mode: String?, grace: Duration, quietCeiling: Duration) -> Limits {
+        switch mode {
+        case "none":
+            Limits(grace: .zero, quietCeiling: .zero, skip: true)
+        case "fast":
+            Limits(grace: min(grace, .milliseconds(100)), quietCeiling: min(quietCeiling, .milliseconds(350)), quietWindow: .milliseconds(60))
+        default:
+            Limits(grace: grace, quietCeiling: quietCeiling)
+        }
     }
     @TaskLocal static var limits = Limits()
 
@@ -53,6 +70,7 @@ enum PageSettle {
         clock: some Clock<Duration> = ContinuousClock()
     ) async {
         interactionObserver?()
+        guard !limits.skip else { return }
         let navigated = await wait(on: webView, timeout: grace, clock: clock) { $0.isLoading }
         if navigated {
             await untilIdle(webView, clock: clock)
@@ -66,8 +84,10 @@ enum PageSettle {
     }
 
     /// Whether the page is loading, or is no longer on `document` and `url`, within a moment: an action navigated it.
-    static func pageWasLeft(_ webView: BrowserPage, document: String?, url: URL?) async -> Bool {
-        await wait(on: webView, timeout: .milliseconds(500), clock: ContinuousClock()) {
+    static func pageWasLeft(
+        _ webView: BrowserPage, document: String?, url: URL?, within timeout: Duration = .milliseconds(500)
+    ) async -> Bool {
+        await wait(on: webView, timeout: timeout, clock: ContinuousClock()) {
             $0.isLoading || $0.mainDocumentID != document || $0.url != url
         }
     }
@@ -120,7 +140,23 @@ enum PageSettle {
             resolve(reason);
           };
           const ring = n => n.nodeType === 1 && n.classList.contains('__wsurf-ring');
-          const noise = r => ring(r.target) || (r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every(ring));
+          // An animation restyles the same element again and again, and a change off screen is not what the action shows:
+          // neither keeps the page from counting as quiet. An element's first style or class change still counts.
+          const restyled = new WeakMap();
+          const repeated = r => {
+            if (r.type !== 'attributes' || (r.attributeName !== 'style' && r.attributeName !== 'class')) return false;
+            const count = (restyled.get(r.target) || 0) + 1;
+            restyled.set(r.target, count);
+            return count > 1;
+          };
+          const offscreen = n => {
+            const el = n.nodeType === 1 ? n : n.parentElement;
+            if (!el?.getBoundingClientRect) return false;
+            const b = el.getBoundingClientRect();
+            return b.width * b.height > 0 && (b.bottom < 0 || b.top > innerHeight || b.right < 0 || b.left > innerWidth);
+          };
+          const noise = r => ring(r.target) || (r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every(ring))
+            || repeated(r) || offscreen(r.target);
           const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish('quiet'), quiet); };
           const onHide = () => finish('unloading');
           const cap = setTimeout(() => finish('ceiling'), ceiling);
@@ -138,7 +174,7 @@ enum PageSettle {
 
     private static func quiet(_ webView: BrowserPage, ceiling: Duration) async -> Quiet? {
         let body = quietScript
-            .replacingOccurrences(of: "QUIET", with: String(milliseconds(quietWindow)))
+            .replacingOccurrences(of: "QUIET", with: String(milliseconds(limits.quietWindow)))
             .replacingOccurrences(of: "CEILING", with: String(max(1, milliseconds(ceiling))))
         // The page answers by its own ceiling; the host waits a little longer for a page that never does.
         guard let answer = await webView.callAsyncJavaScript(body, within: ceiling + .milliseconds(750), in: PageDriver.selectedFrame?.frame) else {

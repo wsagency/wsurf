@@ -217,14 +217,21 @@ struct MCPBackgroundTabTests {
         }
     }
 
+    /// A parked WebKit tab refuses keyboard input; a parked Chromium tab takes it through DevTools. Neither moves the window's
+    /// first responder.
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func aParkedTabNeverTakesKeyboardFocus(engine: BrowserEngine) async throws {
         try await withRig(engine: engine) { rig in
             let responder = rig.window.firstResponder
             let read = try await call(rig, "readPage", rig.shared)
             let pressed = try await call(rig, "pressKey", rig.shared, ["observationID": .string(try observation(read)), "ref": 1, "key": "Enter"])
-            #expect(pressed.isError == true)
-            #expect(text(pressed).contains("visible tab"), "\(engine): \(text(pressed))")
+            if engine == .chromium {
+                #expect(pressed.isError == false, "\(text(pressed))")
+                #expect(await waitUntil { (try? await rig.shared.page.evaluateJavaScript("document.title")) as? String == "Clicked" })
+            } else {
+                #expect(pressed.isError == true)
+                #expect(text(pressed).contains("visible tab"), "\(engine): \(text(pressed))")
+            }
             #expect(rig.window.firstResponder === responder, "\(engine): the window's first responder is unchanged")
             #expect(!pageResponder(of: rig.shared, in: rig.window))
             #expect(!PageDriver.focusForKeyboard(rig.shared.page, in: rig.window), "the shared helper refuses a parked page")

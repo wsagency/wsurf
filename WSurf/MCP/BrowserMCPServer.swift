@@ -40,7 +40,10 @@ final class BrowserMCPServer {
     @ObservationIgnored private var listener: LocalMCPListener?
     @ObservationIgnored private var connections: [UUID: Connection] = [:]
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private var activeCall: (id: UUID, sessionID: UUID, task: Task<CallTool.Result, any Error>)?
+    /// The calls running now, by call ID: the connection, the tabs (lanes) they hold, and their task.
+    @ObservationIgnored private var running: [UUID: (sessionID: UUID, lanes: [MCPCallLanes.Lane], task: Task<CallTool.Result, any Error>)] = [:]
+    /// Per-tab serialization with a bounded queue, and one global lane for sheets and focus.
+    @ObservationIgnored let lanes = MCPCallLanes()
     /// Registry of detached Agent Micro Windows addressable exclusively via `windowToken`.
     @ObservationIgnored var agentWindowRegistry: MCPAgentWindowRegistry?
     /// External host bridge (`host-bridge.sock`) started and stopped alongside `browser.sock`.
@@ -100,9 +103,10 @@ final class BrowserMCPServer {
     /// each keeps its other tabs. See `MCPBrowserSession.handBack(_:)`.
     func takeOver(_ tab: BrowserTab, in browser: BrowserModel) {
         for session in controllers(of: tab, in: browser) {
-            if activeCall?.sessionID == session.id, tab.processState.isExternalAutomationWorking {
-                activeCall?.task.cancel()
+            for call in running.values where call.sessionID == session.id && call.lanes.contains(.tab(tab.id)) {
+                call.task.cancel()
             }
+            lanes.drain(session: session.id, lane: .tab(tab.id))
             session.handBack(tab)
         }
     }
@@ -216,9 +220,10 @@ final class BrowserMCPServer {
         }
         connection.task.cancel()
         sessions.removeAll { $0.id == id }
-        if activeCall?.sessionID == id {
-            activeCall?.task.cancel()
+        for call in running.values where call.sessionID == id {
+            call.task.cancel()
         }
+        lanes.drain(session: id)
         Task {
             await connection.server.stop()
             await connection.transport.disconnect()
@@ -235,18 +240,24 @@ final class BrowserMCPServer {
         agentWindowRegistry?.revokeClient(client.id)
     }
 
+    /// Cancels every running call, and every call waiting for its turn.
     func cancelActiveCall() {
-        activeCall?.task.cancel()
+        for call in running.values {
+            call.task.cancel()
+        }
+        for id in connections.keys {
+            lanes.drain(session: id)
+        }
     }
 
+    /// Cancels the running and waiting calls of the connections bound to `browser`'s window.
     func cancelActiveCall(in browser: BrowserModel) {
-        guard let active = activeCall,
-              let session = connections[active.sessionID]?.session,
-              session.isBound(to: browser)
-        else {
-            return
+        for session in sessions(in: browser) {
+            for call in running.values where call.sessionID == session.id {
+                call.task.cancel()
+            }
+            lanes.drain(session: session.id)
         }
-        active.task.cancel()
     }
 
     private func retire(_ log: ExternalActivityLog) {
@@ -500,17 +511,34 @@ final class BrowserMCPServer {
         if let client = session.pairedClient {
             trustStore.touch(client.id)
         }
-        guard activeCall == nil else {
-            return CallTool.Result(content: [.text(text: "Another external operation is running. Wait for its result.", annotations: nil, _meta: nil)], isError: true)
+        let arguments = params.arguments ?? [:]
+        let pinned = params.name.hasPrefix("browser_") ? session.currentPlaywrightTab() : nil
+        let held = MCPCallLanes.lanes(tool: params.name, arguments: arguments, playwrightTab: pinned)
+        switch await lanes.acquire(held, session: session.id) {
+        case .admitted:
+            break
+        case .full(let lane):
+            let what = lane == .global ? "for a sheet or tab change" : "for this tab"
+            return CallTool.Result(
+                content: [.text(text: "\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.", annotations: nil, _meta: nil)],
+                isError: true)
+        case .cancelled:
+            throw CancellationError()
+        }
+        defer { lanes.release(held) }
+        // The connection may have ended, or been moved to another window, while the call waited.
+        guard isEnabled, connections[connectionID]?.session === session, session.isConnected, !Task.isCancelled else {
+            throw MCPError.connectionClosed
         }
         let id = UUID()
-        let task = Task { try await session.call(name: params.name, arguments: params.arguments ?? [:]) }
-        activeCall = (id, session.id, task)
-        defer {
-            if activeCall?.id == id {
-                activeCall = nil
+        let pin = params.name.hasPrefix("browser_") ? MCPBrowserSession.PlaywrightPin(tab: pinned) : nil
+        let task = Task {
+            try await MCPBrowserSession.$playwrightPin.withValue(pin) {
+                try await session.call(name: params.name, arguments: arguments)
             }
         }
+        running[id] = (session.id, held, task)
+        defer { running[id] = nil }
         return try await withTaskCancellationHandler {
             try await task.value
         } onCancel: {

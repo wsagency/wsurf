@@ -65,6 +65,10 @@ final class BrowserPage: NSView {
         superview is WebViewParkingShelf
     }
 
+    /// Until when input WSurf dispatched for an agent counts as recent: longer than an engine's transient user activation, so a
+    /// page cannot use that input to open a file chooser or menu in front of the person later (`markAutomatedInput`).
+    var automatedInputUntil: ContinuousClock.Instant?
+
     /// Whether the page is hidden while it waits on the shelf. The shelf is in the window and no part of it is hidden, so both
     /// engines count a parked page shown: it reports `visible` and runs animation frames at the display rate. A hidden page
     /// reports `hidden`, runs none and paints nothing, and still loads and plays. The tab keeps this in step with what it is
@@ -606,6 +610,7 @@ final class BrowserPage: NSView {
     /// True only when the engine's own responder held keyboard focus and was invoked. A key for a page that is not the
     /// first responder is dropped, never reported as delivered.
     func sendKeyEvent(_ event: NSEvent) -> Bool {
+        markAutomatedInput()
         if webKit != nil {
             guard let responder = window?.firstResponder, ownsResponder(responder) else { return false }
             if event.type == .keyUp {

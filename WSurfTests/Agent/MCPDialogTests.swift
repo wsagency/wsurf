@@ -502,7 +502,8 @@ struct MCPDialogTests {
         rig.tab.dialogs.clock = TestClock()
         _ = try await observation(rig)
         let next = try rig.server.url("/next")
-        let leaving = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString)])
+        // The shared tab is the user's own, so it is navigated in place (otherwise navigate opens a new tab).
+        let leaving = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString), "inPlace": true])
         #expect(leaving.isError == false)
         #expect(await waitUntil { rig.tab.page.url == next })
         return next
@@ -648,7 +649,7 @@ struct MCPDialogTests {
         let next = try rig.server.url("/next")
         func leave() async throws -> [String: Value] {
             // Chromium asks about beforeunload a moment after the navigation starts, so the call may already have returned.
-            _ = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString)])
+            _ = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString), "inPlace": true])
             #expect(await waitUntil { rig.tab.dialogs.hasOpenDialog }, "Chromium asked before leaving")
             let report = try await call(rig, "handleDialog", rig.tab)
             return try #require(dialogs(report).first)
@@ -670,7 +671,7 @@ struct MCPDialogTests {
         defer { rig.close() }
         _ = try await observation(rig)
         let next = try rig.server.url("/next")
-        let leaving = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString)])
+        let leaving = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString), "inPlace": true])
         #expect(status(leaving) != "dialogOpened")
         #expect(await waitUntil { rig.tab.page.url == next })
         #expect(!rig.tab.dialogs.hasOpenDialog)

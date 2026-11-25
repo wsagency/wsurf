@@ -626,7 +626,7 @@ extension BrowserTab {
         }
         // Reserved for CEF's browser before its tab can show it: a page shown first would make a browser of its own.
         let popup = ChromiumPage(context: context, popup: url)
-        onNewChromiumPopup(BrowserPage(chromium: popup), click != .backgroundTab)
+        onNewChromiumPopup(BrowserPage(chromium: popup), click != .backgroundTab && !agentInputIsRecent)
         return popup
     }
 
@@ -653,7 +653,7 @@ extension BrowserTab {
     /// A tab for a Chromium window request. A click or menu item is a person's (`onOpenInNewTab`); a script's own `window.open` the
     /// blocker lets through is not, so it never ends a Chromium crash loop (`onOpenScriptTab`).
     private func openTabForChromiumWindow(_ url: URL, userGesture: Bool, click: ChromiumPage.ClickDisposition) {
-        if userGesture {
+        if userGesture, !agentInputIsRecent {
             onOpenInNewTab?(url, click != .backgroundTab)
         } else {
             onOpenScriptTab?(url)
@@ -663,9 +663,16 @@ extension BrowserTab {
     /// Shift-click on a link, which the engine reports as a window: a Peek, as in WebKit (`TabNavigationDelegate`). Only the person's
     /// own click counts, and only where the tab can peek.
     private func peekAtChromiumClick(_ url: URL, userGesture: Bool, click: ChromiumPage.ClickDisposition) -> Bool {
-        guard click == .window, userGesture, let onOpenInPeek, let view = liveView else { return false }
+        guard click == .window, userGesture, !agentInputIsRecent, let onOpenInPeek, let view = liveView else { return false }
         onOpenInPeek(url, TabNavigationDelegate.pointer(in: view))
         return true
+    }
+
+    /// Input WSurf sent for an agent is recent on this tab's page (`BrowserPage.markAutomatedInput`): a click or key behind a new
+    /// window is the agent's, so it opens no Peek and no tab in front of the person, and does not count as theirs.
+    /// ponytail: a person's own modifier click within those 6 s is treated as the agent's (a background tab); fails safe.
+    private var agentInputIsRecent: Bool {
+        liveView?.isAutomatedInputRecent == true
     }
 
     /// The pop-up notice, for a window the blocker refused. A pop-up with no address of its own is refused without one.

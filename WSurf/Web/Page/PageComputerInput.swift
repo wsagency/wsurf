@@ -434,6 +434,8 @@ extension PageDriver {
 
     static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
         guard PageAutomationGuard.allowsExecution, view.window === window else { throw PageComputerFailure.stale }
+        // No chooser or menu nobody planned follows an agent's native mouse input (`BrowserPage.markAutomatedInput`).
+        view.markAutomatedInput()
         let local = CGPoint(x: point.x, y: view.isFlipped ? point.y : view.bounds.height - point.y)
         let type: NSEvent.EventType
         switch (button, phase) {

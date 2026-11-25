@@ -92,6 +92,9 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored var observations: [UUID: PageObservation] = [:]
     @ObservationIgnored var feedback = MCPActionFeedbackState()
+    /// Per tab, the digest after this connection's last action, with what it was taken under. The next action reuses it as its
+    /// `before` while the page reports no change (`PageDriver.digestBefore`).
+    @ObservationIgnored var digestCache: [UUID: DigestCacheEntry] = [:]
     /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
     @ObservationIgnored var developmentTabs: [UUID: (tab: BrowserTab, owner: DevelopmentOwner)] = [:]
     @ObservationIgnored var destinations: Set<String> = []
@@ -109,7 +112,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var closingWasConfirmed = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
     @ObservationIgnored var developerApprovals: [DeveloperApprovalRecord] = []
-    @ObservationIgnored private var busy = false
+    /// The lanes (`MCPCallLanes.lanes`) the calls of this connection hold now: one call per tab, and one sheet or focus call, at a
+    /// time; `listTabs` holds none. `BrowserMCPServer` queues calls on the same lanes before they get here, so this only refuses a
+    /// caller that bypasses it (an Agent Micro Window preview, a test).
+    @ObservationIgnored private var busy: Set<MCPCallLanes.Lane> = []
     /// Every call this connection ran, for Agent Activity. Never holds arguments or results.
     @ObservationIgnored let activity = ExternalActivityLog()
     /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
@@ -191,6 +197,7 @@ final class MCPBrowserSession: Identifiable {
         secretFields = [:]
         credentialTaintedDocuments = [:]
         inspectionApprovedDocuments = [:]
+        digestCache = [:]
     }
 
     func call(name: String, arguments: [String: Value]) async throws -> CallTool.Result {
@@ -214,15 +221,20 @@ final class MCPBrowserSession: Identifiable {
             }
             syncAgentWindowGrants()
         }
-        guard !busy else { return failure("Another operation is running. Wait for its result.") }
-        busy = true
+        let lanes = Set(MCPCallLanes.lanes(tool: name, arguments: arguments, playwrightTab: nil))
+        guard busy.isDisjoint(with: lanes) else {
+            return failure(lanes.contains(.global) && busy.contains(.global)
+                ? "Another operation that can show a sheet is running. Wait for its result."
+                : "Another operation is running on this tab. Wait for its result.")
+        }
+        busy.formUnion(lanes)
         lastTool = name
         let workToken = agentWindowScope?.onBeginWorking()
         defer {
             if let workToken {
                 agentWindowScope?.onEndWorking(workToken)
             }
-            busy = false
+            busy.subtract(lanes)
             completedCalls += 1
         }
         let started = ContinuousClock.now
@@ -248,9 +260,11 @@ final class MCPBrowserSession: Identifiable {
         case "listTabs":
             tabList()
         case "newTab":
-            await openNewTab(
-                arguments["url"]?.stringValue ?? "",
-                engine: arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)))
+            await waitingAndReading(
+                await openNewTab(
+                    arguments["url"]?.stringValue ?? "",
+                    engine: arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:))),
+                arguments: arguments)
         case "openComparison":
             await openComparison(arguments["url"]?.stringValue ?? "")
         case "compareTabs":
@@ -271,7 +285,7 @@ final class MCPBrowserSession: Identifiable {
         }
     }
 
-    private func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {
+    func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {
         releaseUnauthorizedDevelopment()
         let name = entry.name
         if let direct = await executeTabFree(name, arguments: arguments) {
@@ -305,6 +319,9 @@ final class MCPBrowserSession: Identifiable {
         if name == "requestUserLogin" {
             return await requestUserLogin(arguments, tab: tab)
         }
+        if name == "runSteps" {
+            return await runSteps(arguments, tab: tab)
+        }
         // Dialogs the page opens while this call runs come to this connection, and a dialog ends the wait for the call.
         let dialogClaim = controlDialogs(of: tab, capability: capability)
         defer {
@@ -317,7 +334,10 @@ final class MCPBrowserSession: Identifiable {
         if name == "navigate" {
             let url = arguments["url"]?.stringValue ?? ""
             let inPlace = arguments["inPlace"]?.boolValue ?? false
-            return await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant, inPlace: inPlace) } ?? interruptedResult(tab)
+            // waitAndRead waits for a document other than this one.
+            let previous = tab.isMaterialised ? tab.page.mainDocumentID : nil
+            let started = await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant, inPlace: inPlace) } ?? interruptedResult(tab)
+            return await waitingAndReading(started, arguments: arguments, previousDocument: previous)
         }
         if name == "goBack", let refusal = goBackRefusal(tab, grant: grant) { return refusal }
         if name == "goBack" { rotateDiagnosticsKey(on: tab) }

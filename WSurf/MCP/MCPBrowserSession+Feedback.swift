@@ -30,6 +30,20 @@ nonisolated struct FeedbackBudget: Equatable, Sendable {
     }
 }
 
+/// The digest after an action, and what must still hold for the next action to start from it instead of a new walk: the same
+/// page (generation), the same kind of digest, and the same credential protection. Document, snapshot and page changes are
+/// checked by the page itself.
+nonisolated struct DigestCacheEntry: Sendable {
+    struct Key: Equatable, Sendable {
+        let generation: Int
+        let viewportOnly: Bool
+        let tainted: Bool
+    }
+
+    let key: Key
+    let digest: PageDigest
+}
+
 /// What a connection keeps between its screenshots.
 @MainActor
 final class MCPActionFeedbackState {
@@ -141,7 +155,12 @@ extension MCPBrowserSession {
     ) async -> CallTool.Result? {
         let budget = FeedbackBudget(arguments["budget"])
         let viewportOnly = name == "scrollPage" && arguments["ref"] == nil
-        guard let before = await PageDriver.digest(in: view, commit: false, viewportOnly: viewportOnly) else { return nil }
+        let key = DigestCacheEntry.Key(
+            generation: tab.pageGeneration, viewportOnly: viewportOnly,
+            tainted: credentialTaintedDocuments[tab.id].map { $0.commitEpoch == tab.documentCommitEpoch } ?? false)
+        let cached = digestCache[tab.id].flatMap { $0.key == key ? $0.digest : nil }
+        digestCache[tab.id] = nil
+        guard let before = await PageDriver.digestBefore(in: view, viewportOnly: viewportOnly, cached: cached) else { return nil }
         let watch = MCPDiagnosticsWatch(tab: tab, connection: id)
         let tabsBefore = Set(browser.tabs.map(\.id))
         let clock = ContinuousClock()
@@ -149,7 +168,9 @@ extension MCPBrowserSession {
         let meter = PageSettle.Meter()
         // A dialog the action opens blocks the page, so the action cannot return until it is answered.
         let acted = await PageSettle.$meter.withValue(meter) {
-            await PageSettle.$limits.withValue(.init(grace: .zero, quietCeiling: .milliseconds(budget.settleMs))) {
+            await PageSettle.$limits.withValue(
+                PageSettle.limits(settle: arguments["settle"]?.stringValue, grace: .zero, quietCeiling: .milliseconds(budget.settleMs))
+            ) {
                 await PageDriver.$feedbackMode.withValue(.delta) {
                     await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
                 }
@@ -208,6 +229,9 @@ extension MCPBrowserSession {
         }
         PageDriver.adopt(after, listed: reply.refs, in: view)
         observations[tab.id] = PageObservation(id: after.snapshot, snapshot: after.snapshot, documentURL: after.url)
+        if key.generation == tab.pageGeneration {
+            digestCache[tab.id] = DigestCacheEntry(key: key, digest: after)
+        }
         hasReadContent = true
         destinations.formUnion(PageDriver.listedLinks(in: reply.text).map { destinationKey($0.url) })
         for popup in effect.popups {

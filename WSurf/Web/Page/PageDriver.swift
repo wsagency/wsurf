@@ -275,9 +275,10 @@ enum PageDriver {
                    const rect = el.getBoundingClientRect();
                    return JSON.stringify({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
                    """)
-            let suggestion = await evaluateJSON(suggestionScript, in: webView)
-            // A parked page cannot take the native click (it would move the person's focus), so it gets the DOM click below.
-            if selectedFrame == nil, !webView.isParked, suggestion?["x"] is Double, suggestion?["y"] is Double {
+            // A parked page cannot take the native click (it would move the person's focus), so it gets the DOM click below
+            // without asking the page about suggestions first.
+            let suggestion = selectedFrame == nil && !webView.isParked ? await evaluateJSON(suggestionScript, in: webView) : nil
+            if suggestion?["x"] is Double, suggestion?["y"] is Double {
                 guard let capture = try? await computerFrame(in: webView) else {
                     return "Could not inspect “\(found.label)” on the visible page. Capture a new screenshot before trying again."
                 }
@@ -471,7 +472,7 @@ enum PageDriver {
 
     /// A secret goes into the page's own document only: a frame (or a selected frame) could belong to another origin than the
     /// developer site the grant covers.
-    private static let secretInFrameMessage = "A secret can only be typed into the page itself, not into a frame."
+    static let secretInFrameMessage = "A secret can only be typed into the page itself, not into a frame."
     private static let secretFieldGuard = """
         if (el.ownerDocument !== document) {
           return JSON.stringify({ error: '\(secretInFrameMessage)' });
@@ -610,9 +611,14 @@ enum PageDriver {
             """)
         _ = try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)
         if pause {
-            await pauseSleeper(announcePause)
+            // Nobody watches a parked page, and an MCP call shows the ring without waiting for it (`announceDuration`).
+            await pauseSleeper(webView.isParked ? .zero : announceDuration ?? announcePause)
         }
     }
+
+    /// How long an announced action waits after the ring shows. Nil keeps `announcePause`; MCP calls set zero, so the ring
+    /// renders without blocking the action.
+    @TaskLocal static var announceDuration: Duration?
 
     // MARK: - Resolution
 
@@ -720,6 +726,10 @@ enum PageDriver {
 
     /// `userGesture` only for an action the person asked for (click, type): WSurf's reads never count as their activation.
     static func evaluateJSON(_ script: String, userGesture: Bool = false, in webView: BrowserPage) async -> [String: Any]? {
+        if userGesture {
+            // An agent's gesture never opens a chooser or menu nobody planned (`BrowserPage.markAutomatedInput`).
+            webView.markAutomatedInput()
+        }
         guard PageAutomationGuard.allowsExecution,
             await selectedFrameIsLive(in: webView),
             let raw = (try? await webView.evaluateJavaScript(

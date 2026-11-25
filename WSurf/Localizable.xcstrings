@@ -12691,6 +12691,9 @@
     "Run Script" : {
       "comment" : "Activity title when a connected app runs JavaScript in a shared page, which needs Developer access. Shown in Agent Activity and as the Latest action of an external connection. Title Case; a verb phrase."
     },
+    "Run Steps" : {
+      "comment" : "Display title of the MCP runSteps tool, which runs several page actions on one tab in a single call. Shown in Agent Activity and as the Latest action of an external connection. Title Case; a verb phrase."
+    },
     "Same as current" : {
       "comment" : "Small caption at the right of a field’s title row in the History panel when the earlier version’s value equals the current one. Sentence case, narrow space."
     },

@@ -698,6 +698,7 @@ extension MCPAgentWindowRegistry {
                 throw MCPAgentWindowError(.forbidden, "set_appearance requires development access on this page.")
             }
             session.keepInWindow(tab)
+            session.digestCache[tab.id] = nil
             tab.realizeDeferredSession()
             let view = tab.page
             let owner = session.acquireDevelopment(tab, view: view)
@@ -835,6 +836,19 @@ extension MCPAgentWindowRegistry {
 
         switch action {
         case "click":
+            applyPoint(from: opParams, into: &args)
+            if let button = opParams["button"] as? String {
+                args["button"] = .string(button)
+            }
+            if let count = opParams["clickCount"] as? Int {
+                args["clickCount"] = .int(count)
+            }
+            if let modifiers = parseModifiers(opParams["modifiers"]) {
+                args["modifiers"] = .string(modifiers)
+            }
+            if let pointer = opParams["pointer"] as? Bool {
+                args["pointer"] = .bool(pointer)
+            }
             return ("clickOnPage", args)
         case "type":
             guard let text = opParams["text"] as? String else {
@@ -846,6 +860,7 @@ extension MCPAgentWindowRegistry {
             }
             return ("typeOnPage", args)
         case "hover":
+            applyPoint(from: opParams, into: &args)
             return ("hoverOnPage", args)
         case "select":
             let option: String? = (opParams["option"] as? String)
@@ -870,6 +885,7 @@ extension MCPAgentWindowRegistry {
         case "scroll":
             let direction = Self.scrollDirection(from: opParams)
             args["direction"] = .string(direction)
+            applyPoint(from: opParams, into: &args)
             return ("scrollPage", args)
         default:
             throw MCPAgentWindowError(.invalidParams, "Unsupported act action: \(action).")
@@ -894,6 +910,15 @@ extension MCPAgentWindowRegistry {
         if let pointer = opParams["pointer"] as? Bool {
             args["pointer"] = .bool(pointer)
         }
+    }
+
+    /// `x` and `y` in viewport CSS pixels, as background pointer input at that point (Chromium through DevTools).
+    private nonisolated static func applyPoint(from params: [String: Any], into args: inout [String: Value]) {
+        guard let x = (params["x"] as? NSNumber)?.doubleValue, let y = (params["y"] as? NSNumber)?.doubleValue,
+            x.isFinite, y.isFinite
+        else { return }
+        args["x"] = .double(x)
+        args["y"] = .double(y)
     }
 
     private nonisolated static func parseModifiers(_ raw: Any?) -> String? {

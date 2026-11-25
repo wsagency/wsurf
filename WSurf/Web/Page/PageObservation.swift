@@ -83,7 +83,56 @@ extension PageDriver {
         return "[\(ref)] was not listed in that observation. Use a ref it listed, or readPage with lookingFor to find the control."
     }
 
+    /// Checks the ref and waits until its control is actionable and still. One round to the page does the validation and both
+    /// samples; a page that cannot answer that way is sampled from here as before.
     static func prepareAction(ref: Int, in view: BrowserPage) async -> String? {
+        let deadline = ContinuousClock.now + .seconds(1)
+        var lastError = "The control did not become stable. Read the page again."
+        repeat {
+            guard let prior = observation(in: view), prior.refs.contains(ref), expectedObservation == nil || expectedObservation == prior.id,
+                PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: view),
+                let document = jsonString(prior.documentID), let snapshot = jsonString(prior.id), let url = jsonString(prior.url)
+            else { return await referenceFailureMessage(ref: ref, in: view) }
+            let script = scriptedAsync(
+                """
+                if ((window.__wsurf?.documentID || '') !== \(document) || (window.__wsurfSnapshot || '') !== \(snapshot)
+                  || location.href !== \(url) || !R.matchesRef(\(ref))) return JSON.stringify({ invalid: true });
+                const el = window.__wsurfRefs[\(ref) - 1];
+                const sample = () => {
+                  const error = R.actionable(el);
+                  const r = el.getBoundingClientRect();
+                  const moving = el.getAnimations().some(animation => animation.playState === 'running'
+                    && animation.effect?.getKeyframes().some(frame => Object.keys(frame).some(key =>
+                      /^(transform|translate|rotate|scale|width|height|left|right|top|bottom|margin|padding)/.test(key))));
+                  return { error, moving, bounds: [r.x, r.y, r.width, r.height] };
+                };
+                const first = sample();
+                if (first.error) return JSON.stringify(first);
+                await new Promise(resolve => setTimeout(resolve, 40));
+                if (!el.isConnected || !R.matchesRef(\(ref))) return JSON.stringify({ invalid: true });
+                const second = sample();
+                const stable = !first.moving && !second.moving && !second.error
+                  && first.bounds.every((value, index) => Math.abs(value - second.bounds[index]) < 0.5);
+                return JSON.stringify({ ...second, stable });
+                """)
+            guard let raw = await view.callAsyncJavaScript(script, within: .milliseconds(1500), in: selectedFrame?.frame),
+                PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: view),
+                let result = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any], result["stale"] == nil
+            else { return await prepareActionBySampling(ref: ref, in: view) }
+            if result["invalid"] as? Bool == true {
+                return await referenceFailureMessage(ref: ref, in: view)
+            }
+            if let error = result["error"] as? String, !error.isEmpty {
+                lastError = error
+                if error.contains("disabled") { return error }
+            } else if result["stable"] as? Bool == true {
+                return nil
+            }
+        } while ContinuousClock.now < deadline
+        return lastError
+    }
+
+    private static func prepareActionBySampling(ref: Int, in view: BrowserPage) async -> String? {
         let deadline = ContinuousClock.now + .seconds(1)
         var previousBounds: [Double]?
         // Cold WebKit IPC can consume the timeout before stability has two samples.

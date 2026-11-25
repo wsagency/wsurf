@@ -17,15 +17,16 @@ nonisolated enum PageRuntime {
       const expectedValues = new WeakMap();
       let lastControlQuery = null;
       window.__wsurfRefs = [];
+      \#(changeScript)
       const parentOf = el => el.parentElement || el.getRootNode()?.host || el.ownerDocument?.defaultView?.frameElement;
 
       function* walk(root) {
         for (const el of root.querySelectorAll('*')) {
           yield el;
-          if (el.shadowRoot) yield* walk(el.shadowRoot);
+          if (el.shadowRoot) { watchRoot(el.shadowRoot); yield* walk(el.shadowRoot); }
           if (el.tagName === 'IFRAME') {
             try {
-              if (el.contentDocument && el.contentDocument.body) yield* walk(el.contentDocument.body);
+              if (el.contentDocument) { watchRoot(el.contentDocument); if (el.contentDocument.body) yield* walk(el.contentDocument.body); }
             } catch (e) {}
           }
         }
@@ -800,7 +801,7 @@ nonisolated enum PageRuntime {
         labelOf, kindOf, visible, highlight, isSensitiveField, isSensitiveForRead, isSensitiveSecret, hasLoginForm,
         hasFilledSensitiveSecret, hasFilledSensitiveField,
         disabled, actionable, observe, acknowledge, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
-        digest, waitFor };
+        digest, waitFor, changes: () => changeCount };
     })());
     """#
 }

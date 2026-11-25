@@ -121,6 +121,19 @@ nonisolated enum MCPDevelopmentTools {
         ])
     }
 
+    /// `capabilities` with whether a tab out of sight takes trusted pointer and keyboard input: Chromium does through DevTools,
+    /// WebKit only when the tab is shown.
+    static func withBackgroundInput(_ capabilities: Value, chromium: Bool) -> Value {
+        guard case .object(var fields) = capabilities else { return capabilities }
+        let support: Value = chromium ? "supported" : "unsupported"
+        fields["backgroundPointer"] = support
+        fields["backgroundKeyboard"] = support
+        if !chromium {
+            fields["backgroundInputReason"] = "WebKit takes trusted pointer and keyboard input only in a visible tab. Use switchTab, or setTabEngine to Chromium."
+        }
+        return .object(fields)
+    }
+
     static func value(_ measured: MeasuredViewport) -> Value {
         .object([
             "innerWidth": .int(measured.width), "innerHeight": .int(measured.height),
@@ -167,6 +180,11 @@ extension MCPBrowserSession {
         }
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
+        // A viewport, device, media or appearance change, a reload or a reset can change what the next digest sees without a
+        // DOM change, so the next action digests the page again.
+        if !["getDevelopmentInfo", "readConsole", "readNetwork"].contains(name) {
+            digestCache[tab.id] = nil
+        }
         tab.realizeDeferredSession()
         let view = tab.page
         // Identity and generation of the view this call was started on; checked again after every suspension.
@@ -292,7 +310,8 @@ extension MCPBrowserSession {
     private func developmentInfo(tab: BrowserTab, view: BrowserPage, generation: Int) async -> CallTool.Result {
         var fields: [String: Value] = [
             "engine": .string(view.developmentCapabilities.engine),
-            "zoom": .double(Double(view.pageZoom)), "capabilities": MCPDevelopmentTools.value(view.developmentCapabilities),
+            "zoom": .double(Double(view.pageZoom)),
+            "capabilities": MCPDevelopmentTools.withBackgroundInput(MCPDevelopmentTools.value(view.developmentCapabilities), chromium: view.chromium != nil),
         ]
         let measured = await view.measureViewport()
         // The page and the connection's current grant are checked after the last await, immediately before returning.

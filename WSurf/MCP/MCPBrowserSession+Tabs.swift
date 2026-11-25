@@ -32,6 +32,7 @@ extension MCPBrowserSession {
     /// and a standing grant does not share the tab again for as long as the connection lasts. Its other tabs are untouched,
     /// and the tab is no longer one it opened, so it never closes it without asking.
     func handBack(_ tab: BrowserTab) {
+        digestCache[tab.id] = nil
         tab.dialogs.handBack(connection: id)
         tab.removeDocumentCommitObserver(id: id)
         if let held = developmentTabs.removeValue(forKey: tab.id) {
@@ -58,6 +59,10 @@ extension MCPBrowserSession {
         for tab in browser.tabs where changed.contains(tab.id) {
             tab.processState.setExternalController(id, holds: grants[tab.id] != nil)
             tab.liveView?.ignoresWindowOcclusion = !tab.processState.externalControllers.isEmpty
+            // Once no connection drives the tab (taken over, revoked, disconnected), its page stops pretending to be focused.
+            if tab.processState.externalControllers.isEmpty {
+                tab.liveView?.chromium?.endAgentFocusEmulation()
+            }
         }
     }
 

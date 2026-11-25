@@ -240,6 +240,57 @@ struct MCPTransportTests {
         try await running.value
     }
 
+    /// Two calls run side by side through the relay; the client cancels one. Only that request is cancelled in WSurf: the socket
+    /// stays up (so the connection keeps its grants and secrets), the other call returns, and the next call uses the same socket.
+    @Test(.timeLimit(.minutes(1))) func relayCancelsOneRequestWithoutClosingTheConnection() async throws {
+        let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let endpoint = directory + "/browser.sock"
+        let probe = CancellableRelayCall()
+        let backend = MCP.Server(name: "Fixture", version: "1", capabilities: .init(tools: .init()))
+        await backend.withMethodHandler(CallTool.self) { params in
+            params.name == "scrollPage" ? await probe.waitForCancel() : await probe.quick()
+        }
+        var connections = 0
+        let listener = try LocalMCPListener(path: endpoint) { connection in
+            connections += 1
+            let transport = LocalMCPTransport(connection: connection)
+            Task {
+                do {
+                    try await backend.start(transport: transport)
+                } catch {
+                    Issue.record(error)
+                    await transport.disconnect()
+                }
+            }
+        }
+        defer {
+            listener.stop()
+            Task { await backend.stop() }
+        }
+        try await listener.start()
+        let pair = await InMemoryTransport.createConnectedPair()
+        try await pair.server.connect()
+        let relay = MCPStdioRelay(socketPath: endpoint)
+        let running = Task { try await relay.run(transport: pair.server) }
+        defer { Task { await pair.client.disconnect() } }
+        let client = MCP.Client(name: "Concurrent calls", version: "1")
+        _ = try await client.connect(transport: pair.client)
+
+        let slow = try await client.send(CallTool.request(.init(name: "scrollPage", arguments: ["tabID": "a", "direction": "down"])))
+        #expect(await waitUntil { await probe.started == 1 })
+        let quick = try await client.send(CallTool.request(.init(name: "listTabs")))
+        try await client.cancelRequest(slow.requestID, reason: "test")
+        #expect(await waitUntil { await probe.cancelled == 1 }, "WSurf cancelled the one request")
+        let answer = try await quick.value
+        #expect(answer.isError != true, "the call beside it returned")
+        let (_, again) = try await client.callTool(name: "listTabs")
+        #expect(again == false, "the next call still reaches WSurf")
+        #expect(connections == 1, "the relay kept its one socket")
+        await client.disconnect()
+        try await running.value
+    }
+
     @Test func enablementSurvivesShutdownAndExplicitDisablePersists() async throws {
         let name = AppDatabase.defaultsSuite("wsurf-mcp-preference-test-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
@@ -577,5 +628,26 @@ private actor SuspendedRelayCall {
     func release() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private actor CancellableRelayCall {
+    private(set) var started = 0
+    private(set) var cancelled = 0
+
+    func waitForCancel() async -> CallTool.Result {
+        started += 1
+        await withTaskCancellationHandler {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        } onCancel: {}
+        cancelled += 1
+        return CallTool.Result(content: [], isError: true)
+    }
+
+    func quick() async -> CallTool.Result {
+        try? await Task.sleep(for: .milliseconds(200))
+        return CallTool.Result(content: [.text(text: "ok", annotations: nil, _meta: nil)], isError: false)
     }
 }
