@@ -333,6 +333,7 @@
    "TabSleepSparesTests",
    "TabSwitchWorkTests",
    "VaultAssetTransferTests",
+   "VaultBackupTests",
    "VaultSyncApplyRecoveryTests",
    "VaultSyncAssetTests",
    "VaultSyncEnrollmentTests"

@@ -306,6 +306,16 @@ struct CredentialImportReviewSheet: View {
                 if let report = review.csvReport {
                     csvReportView(report, entries: review.origin == .legacyPasswords)
                 }
+                if review.backupFiles > 0 {
+                    Text("""
+                        The backup also restores \(review.backupFiles) attached files. Each one joins the entry its backup entry \
+                        is saved as, or the saved entry it matches, unless that entry already holds the same file. Files of an entry \
+                        that matches nothing and is skipped are not imported. \(review.backupFileOnlyEntries) entries that hold only \
+                        files are not listed: each one is added, or its files join the saved entry it matches.
+                        """)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !review.unattachedOmissions.isEmpty {
                     omittedView(review.unattachedOmissions)
                 }

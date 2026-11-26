@@ -752,6 +752,13 @@ final class CredentialManager {
         try await reading { access in try await store.addAttachment(vaultID: vaultID, from: source, using: access) }
     }
 
+    /// Encrypts a backup's file into the vault's folder under a new id; the record is stored by the import's commit.
+    func restoreAttachment(_ contents: Data, as original: CredentialAttachment) async throws -> CredentialAttachment {
+        try await reading { access in
+            try await store.restoreAttachment(vaultID: vaultID, contents: contents, as: original, using: access)
+        }
+    }
+
     /// Decrypts `file` into `destination`: Save Copy…, or a private copy for Quick Look and Open With.
     func readAttachment(_ file: CredentialAttachment, to destination: URL) async throws {
         try await reading { access in try await store.readAttachment(vaultID: vaultID, file, to: destination, using: access) }

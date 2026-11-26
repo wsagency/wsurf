@@ -65,7 +65,7 @@ extension CredentialSettingsModel {
         return saved
     }
 
-    private static func exportMessage(for error: any Error) -> String? {
+    static func exportMessage(for error: any Error) -> String? {
         if case WebsiteAuthenticatorError.notAllowed = error {
             return String(localized: "Authentication didn’t finish. Nothing was exported.")
         }
@@ -73,7 +73,7 @@ extension CredentialSettingsModel {
     }
 
     /// The stamps the selection was made against; after this page's own write, a fresh read of the same revision stands in.
-    private func exportStamps(epoch: UInt64) async throws -> [UUID: AccountStamp] {
+    func exportStamps(epoch: UInt64) async throws -> [UUID: AccountStamp] {
         guard let live, live.epoch == epoch else { throw CredentialTransferFailure(message: .exportSelectionChanged()) }
         if let known = live.knownStamps {
             return known

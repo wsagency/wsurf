@@ -26,6 +26,10 @@ struct CredentialSettings: View {
     @State var selection: CredentialSelection
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
+    /// The backup sheets and the decrypted backup between its password sheet and its review (`CredentialSettings+Backup`).
+    @State var backupExport: VaultBackupExportContext?
+    @State var backupImport: VaultBackupImportRequest?
+    @State var pendingBackup: PendingBackup?
     /// The profile's autofill switches, Input History and the move of the cards and addresses saved on this Mac, which share the page
     /// with the vault. `nil` in the page's tests, which see the vault alone.
     private let context: BrowserProfileContext?
@@ -111,6 +115,9 @@ struct CredentialSettings: View {
             work?.cancel()
             showsCreateWarning = false
             exportContext = nil
+            backupExport = nil
+            backupImport = nil
+            pendingBackup = nil
             model.cancelImport()
             model.close()
             model.legacy.endSession()
@@ -154,10 +161,21 @@ struct CredentialSettings: View {
                 }
             }
         }
+        .sheet(item: $backupExport) { context in
+            VaultBackupExportSheet(model: model, encrypted: context.encrypted) { ids, password in
+                saveBackup(ids, password: password, epoch: context.epoch)
+            }
+        }
+        .sheet(item: $backupImport, onDismiss: stagePendingBackup) { request in
+            VaultBackupPasswordSheet(request: request) { await openBackup(request, password: $0) }
+        }
         // The sheet's revision and epoch are only meaningful for the authorization it was opened under, and a search or filter
         // belongs to the vault it was typed in.
         .onChange(of: model.authorizationEpoch) {
             exportContext = nil
+            backupExport = nil
+            backupImport = nil
+            pendingBackup = nil
             showsTrash = false
             list.reset()
             selection.reset()
@@ -408,12 +426,24 @@ struct CredentialSettings: View {
                 Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
             }
             RowSeparator()
+            DetailRow(title: "Import a WSurf backup (.wsurfvault or .json)") {
+                Button("Import Backup…") {}.buttonStyle(.bordered).disabled(true)
+            }
+            RowSeparator()
             DetailRow(title: "Export to another app") {
                 Button("Export…") {}.buttonStyle(.bordered).disabled(true)
             }
             RowSeparator()
             DetailRow(title: "Export passwords to a CSV file") {
                 Button("Export to CSV…") {}.buttonStyle(.bordered).disabled(true)
+            }
+            RowSeparator()
+            DetailRow(title: "Export everything to an encrypted backup") {
+                Button("Export Encrypted Backup…") {}.buttonStyle(.bordered).disabled(true)
+            }
+            RowSeparator()
+            DetailRow(title: "Export everything to an unencrypted backup (JSON)") {
+                Button("Export Unencrypted Backup…") {}.buttonStyle(.bordered).disabled(true)
             }
         }
     }
@@ -580,7 +610,8 @@ struct CredentialSettings: View {
             symbol: "arrow.up.arrow.down",
             footnote: """
                 A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
-                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
+                A WSurf backup holds every part of the chosen entries, their files included, and imports back into WSurf. \
+                Keep an unencrypted backup as safe as the vault itself.
                 """
         ) {
             if model.spaceVaultID == nil {
@@ -589,6 +620,12 @@ struct CredentialSettings: View {
             AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") { importCSV() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+            }
+            RowSeparator()
+            DetailRow(title: "Import a WSurf backup (.wsurfvault or .json)") {
+                Button("Import Backup…") { importBackup() }
                     .buttonStyle(.bordered)
                     .disabled(model.isBusy)
             }
@@ -603,6 +640,18 @@ struct CredentialSettings: View {
                 Button("Export to CSV…") { openExport(csv: true) }
                     .buttonStyle(.bordered)
                     .disabled(model.isBusy || !model.summaries.contains(where: CredentialCSVExport.isExportable))
+            }
+            RowSeparator()
+            DetailRow(title: "Export everything to an encrypted backup") {
+                Button("Export Encrypted Backup…") { openBackupExport(encrypted: true) }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.isEmpty)
+            }
+            RowSeparator()
+            DetailRow(title: "Export everything to an unencrypted backup (JSON)") {
+                Button("Export Unencrypted Backup…") { openBackupExport(encrypted: false) }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.isEmpty)
             }
         }
         saveSuggestionsCard

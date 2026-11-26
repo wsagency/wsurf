@@ -143,9 +143,8 @@ nonisolated enum CredentialCSV {
 
     /// The file's bytes. Only a regular file is read (a pipe or device could block or never end), its size is checked on the
     /// open descriptor and the read is bounded one byte past the limit, so a file that grows or lies about its size is never
-    /// loaded whole. The file is opened read-only and never changed.
-    static func read(_ url: URL) throws -> Data {
-        let limit = CredentialVaultLimits.payloadBytes
+    /// loaded whole. The file is opened read-only and never changed. `limit` is a CSV file's unless a backup is read.
+    static func read(_ url: URL, limit: Int = CredentialVaultLimits.payloadBytes) throws -> Data {
         let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { throw CredentialCSVError.cannotRead }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)

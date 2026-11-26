@@ -38,6 +38,31 @@ extension ProfileVaultStore {
         }
     }
 
+    /// Encrypts `contents`, the plaintext of `original` from a backup, like `addAttachment`, and returns the record a commit then
+    /// stores: a new id and key, the backup's name, type and date. `contents` must be the file `original` describes. The plaintext
+    /// passes through a private (0600) file in a private (0700) folder of its own, removed before this returns.
+    public func restoreAttachment(
+        vaultID: UUID, contents: Data, as original: CredentialAttachment, using access: VaultAccess
+    ) async throws -> CredentialAttachment {
+        try original.validate()
+        guard Int64(contents.count) == original.size, Data(SHA256.hash(data: contents)) == original.sha256 else {
+            throw VaultFileError.damaged
+        }
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appending(path: "wsurf-restore-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? manager.removeItem(at: folder) }
+        let source = folder.appending(path: "file", directoryHint: .notDirectory)
+        guard manager.createFile(atPath: source.path, contents: contents, attributes: [.posixPermissions: 0o600]) else {
+            throw VaultFileError.unreadable(name: original.name)
+        }
+        var file = try await addAttachment(vaultID: vaultID, from: source, using: access)
+        file.name = original.name
+        file.contentType = original.contentType
+        file.addedAt = original.addedAt
+        return file
+    }
+
     /// Decrypts `file` into `destination`. A lock that lands meanwhile removes what was written: nothing decrypted outlives the lease.
     public func readAttachment(vaultID: UUID, _ file: CredentialAttachment, to destination: URL, using access: VaultAccess) async throws {
         let fileKey = try fileWrappingKey(vaultID: vaultID, using: access)
