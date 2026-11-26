@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld entries of the backup that hold only files were deleted from this vault since, so they are not restored." : {
+
+    },
     "%lld files couldn’t be read from the vault and are not in the backup." : {
 
     },
