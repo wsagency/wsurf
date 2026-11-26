@@ -124,6 +124,10 @@ extension BrowserModel {
             add(item, under: nil)
         }
         for tab in tabs where tab.pinID != nil && !linked.contains(tab.id) {
+            // An unpinned page becomes a Space row under the pin's ID, so the other windows keep their pages for it.
+            if sharesSpaceTabs, tab.spaceTabID == nil {
+                tab.spaceTabID = tab.pinID
+            }
             tab.pinID = nil
         }
         return pins
@@ -202,9 +206,15 @@ extension BrowserModel {
             if let sharedSpace {
                 tab.spaceID = sharedSpace
             }
-            // While Space tabs are shared, the window that unpinned the page publishes it as a Space row, which brings
-            // this window its own copy. Keeping this page as well would show the row twice.
-            if !sharesSpaceTabs, sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
+            // While Space tabs are shared, the window that removed the pin publishes its Space rows next. A page it unpinned
+            // comes back as a row with the pin's ID, which this page then stands for, loaded or not; a page it closed closes.
+            if sharesSpaceTabs {
+                tab.pinnedURL = nil
+                tab.pinnedTitle = ""
+                tab.isFavorite = false
+                pendingPinDemotions[pinID] = tab.id
+                demoted.insert(item)
+            } else if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false

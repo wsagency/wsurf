@@ -19,6 +19,108 @@ extension SharedSpacesTests {
         window.tabs.filter { $0.urlString == address }
     }
 
+    private func sharedRecords(_ kind: SharedSpaceItem.Kind, in cloud: FakeSyncCloud) -> [SharedSpaceItem] {
+        (cloud.records(in: SharedCatalogCategory.spaces.zone) ?? [])
+            .compactMap(SharedSpaceItem.init(record:))
+            .filter { $0.kind == kind && !$0.removed }
+    }
+
+    /// Two Macs with two windows each share two Spaces. A move between them, a folder and a close each reach both windows.
+    @Test func remoteMovesFoldersAndClosesReachEveryWindowThatSharesSpaceTabs() async throws {
+        let cloud = FakeSyncCloud()
+        let studio = Mac(cloud, name: "Studio", sharesSpaceTabs: true)
+        let air = Mac(cloud, name: "Air", sharesSpaceTabs: true)
+        defer { studio.finish(); air.finish() }
+        let home = try #require(studio.store.spaces.first)
+        let work = studio.store.add(name: "Work")
+        let studioSecond = studio.addWindow()
+        for window in studio.windows {
+            window.adoptSpaces(studio.store.spaces.map(\.id))
+        }
+        let page = studio.browser.addPage("https://moving.example.test/")
+        let inner = studioSecond.addPage("https://in-folder.example.test/")
+        studioSecond.scheduleSave()
+        let folder = studioSecond.createFolder(named: "Reading", containing: [inner])
+        studio.browser.scheduleSave()
+        #expect(studio.browser.folder(id: folder.id)?.name == "Reading")
+        try await studio.host.share(home, in: studio.profile)
+        try await studio.host.share(work, in: studio.profile)
+        try await studio.sync()
+        #expect(sharedRecords(.folder, in: cloud).count == 1)
+        #expect(sharedTabs(in: cloud).count == 2)
+
+        try await air.host.enable(.spaces, for: air.profile)
+        let airSecond = air.addWindow()
+        for remote in air.host.availableSpaces(for: air.profile) {
+            try await air.host.join(remote, in: air.profile)
+        }
+        try await air.sync()
+        let joinedWork = try #require(air.host.links[air.profile.id]?.spaces.first { $0.value == studio.host.links[studio.profile.id]?.spaces[work.id] }?.key)
+        for window in [air.browser, airSecond] {
+            let copy = try #require(pages(at: inner.urlString, in: window).first)
+            #expect(window.folder(containing: copy)?.name == "Reading")
+            #expect(window.folders.filter { $0.name == "Reading" }.count == 1)
+            #expect(pages(at: page.urlString, in: window).count == 1)
+        }
+
+        // A move to the other Space on the Studio moves the row in both of the Air's windows.
+        studio.browser.move([.tab(page.id)], toSpace: work.id)
+        try await studio.sync()
+        try await air.sync()
+        for window in [air.browser, airSecond] {
+            #expect(pages(at: page.urlString, in: window).map(\.spaceID) == [joinedWork])
+        }
+
+        // A close in the Studio's second window closes the row in both of the Air's windows.
+        let closing = try #require(pages(at: page.urlString, in: studioSecond).first)
+        studioSecond.close(closing)
+        try await studio.sync()
+        try await air.sync()
+        for window in [air.browser, airSecond] {
+            #expect(pages(at: page.urlString, in: window).isEmpty)
+        }
+        try await air.sync()
+        #expect(sharedTabs(in: cloud).count == 1)
+        #expect(sharedRecords(.folder, in: cloud).count == 1)
+    }
+
+    /// The page goes to a micro window from a window that is not the one iCloud follows, and back. Nothing is uploaded again.
+    @Test func aMicroWindowRoundTripFromAnotherWindowKeepsTheSharedRow() async throws {
+        let cloud = FakeSyncCloud()
+        let studio = Mac(cloud, name: "Studio", sharesSpaceTabs: true)
+        defer { studio.finish() }
+        let home = try #require(studio.store.spaces.first)
+        let studioSecond = studio.addWindow()
+        let page = studio.browser.addPage("https://round-trip.example.test/")
+        studio.browser.scheduleSave()
+        try await studio.host.share(home, in: studio.profile)
+        try await studio.sync()
+        let record = try #require(sharedTabs(in: cloud).first)
+        let owner = try #require(studio.host.spaceTabsOwner(of: studio.profile))
+        let window = owner === studio.browser ? studioSecond : studio.browser
+        let tab = try #require(pages(at: page.urlString, in: window).first)
+
+        let micro = BrowserModel(context: window.context, windowID: UUID(), database: window.database)
+        micro.windowKind = .micro
+        let row = window.insertMicroPlaceholder(for: tab)
+        try #require(micro.adoptTab(tab, from: window, activate: true))
+        #expect(!micro.sharesSpaceTabs)
+        try await studio.sync()
+        #expect(sharedTabs(in: cloud).map(\.id) == [record.id])
+        #expect(owner.tabs.filter { $0.spaceTabID == row.spaceTabID }.count == 1)
+
+        try #require(window.adoptTab(tab, from: micro, activate: true))
+        window.settle(tab, into: row)
+        window.scheduleSave()
+        try await studio.sync()
+        #expect(sharedTabs(in: cloud).map(\.id) == [record.id])
+        for model in [studio.browser, studioSecond] {
+            #expect(pages(at: page.urlString, in: model).count == 1)
+        }
+        #expect(window.tab(id: tab.id) === tab && tab.spaceTabID != nil)
+        micro.closeAllTabs(saving: false)
+    }
+
     /// The first launch after the update: each window's own shared tabs become every window's, and iCloud keeps one record
     /// for each, even though the second window restores before the app lists it.
     @Test func windowsThatStartSharingSpaceTabsKeepOneCloudRecordPerTab() async throws {

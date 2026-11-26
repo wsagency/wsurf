@@ -81,7 +81,10 @@ struct SharedSpacesSettingsView: View {
     }
 
     var body: some View {
-        SettingsSection(title: "Shared Spaces", symbol: "square.grid.2x2", footnote: "Gather Tabs is available when a shared Space’s tabs are in more than one window on this Mac.") {
+        SettingsSection(
+            title: "Shared Spaces", symbol: "square.grid.2x2",
+            footnote: "Gather Tabs is available when Same tabs in every window is off and a shared Space’s tabs are in more than one window on this Mac."
+        ) {
             SharedCatalogControl(
                 host: host, category: .spaces, title: "Sync Shared Spaces on This Mac", profile: profile, change: change,
                 scope: "Open, move or close tabs in a joined Space and the change reaches the other Macs using that Space."

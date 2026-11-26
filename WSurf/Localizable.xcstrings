@@ -554,12 +554,12 @@
         }
       }
     },
-    "Gather Tabs is available when a shared Space’s tabs are in more than one window on this Mac." : {
+    "Gather Tabs is available when Same tabs in every window is off and a shared Space’s tabs are in more than one window on this Mac." : {
       "localizations" : {
         "hr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Okupljanje kartica dostupno je kad su kartice dijeljenog prostora u više prozora na ovom Macu."
+            "value" : "Okupljanje kartica dostupno je kad je isključeno Iste kartice u svim prozorima, a kartice dijeljenog prostora su u više prozora na ovom Macu."
           }
         }
       }

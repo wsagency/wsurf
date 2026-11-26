@@ -3,6 +3,19 @@
 
 import Foundation
 
+/// Where a row sits in the profile's tree. Two sets with the same shapes differ only in titles, addresses and looks.
+struct SpaceRowShape: Equatable {
+    var id: UUID
+    var parentID: UUID?
+    var orderKey: String
+    var kind: SpaceRow.Kind
+    var spaceID: UUID
+
+    init(_ row: SpaceRow) {
+        (id, parentID, orderKey, kind, spaceID) = (row.id, row.parentID, row.orderKey, row.kind, row.spaceID)
+    }
+}
+
 /// What a linked tab last agreed with its row: see `BrowserModel.sharedPage(of:earlier:)`.
 struct SpaceTabSeen: Equatable {
     var url: String
@@ -31,17 +44,34 @@ extension BrowserModel {
     /// window that does not know the profile's Spaces yet sends nothing, so it can never replace the rows with fewer.
     func publishSpaceRows() {
         guard let store = attachedPinStore, store.spaceRowsAvailable, sharesSpaceTabs, sessionClosedAt == nil,
-              !isApplyingProfilePins, !store.isApplying, pendingSpaceStore == nil, !knownSpaceIDs.isEmpty else { return }
+              !isApplyingProfilePins, !store.isApplying else { return }
+        guard pendingSpaceStore == nil, !knownSpaceIDs.isEmpty else {
+            store.closeUnclaimedPinPages(except: self)
+            return
+        }
         // A link the profile never received would read as a row another window closed.
         let links = Dictionary(tabs.map { ($0.id, $0.spaceTabID) }, uniquingKeysWith: { first, _ in first })
         var next = spaceRowProjection(previous: store.spaceRows)
         SpaceRow.assignOrderKeys(&next, previous: store.spaceRows)
-        if store.publishSpaceRows(SpaceRow.depthFirst(next), from: self) {
+        let ordered = SpaceRow.depthFirst(next)
+        if store.publishSpaceRows(ordered, from: self) {
             spaceFolderIDs = Set(next.filter { $0.kind == .folder }.map(\.id))
+            spaceRowShape = ordered.map(SpaceRowShape.init)
         } else {
             for tab in tabs where tab.spaceTabID != links[tab.id].flatMap({ $0 }) {
                 tab.spaceTabID = links[tab.id].flatMap { $0 }
             }
+        }
+    }
+
+    /// Publishes after a short wait. A page whose title keeps changing (an unread count, a timer) would otherwise rewrite
+    /// the rows on every change. A change of the sidebar still publishes at once, from `scheduleSave`.
+    func scheduleSpaceRowsPublish() {
+        guard sharesSpaceTabs, attachedPinStore != nil, spaceRowsPublishTask == nil else { return }
+        spaceRowsPublishTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            self?.spaceRowsPublishTask = nil
+            self?.publishSpaceRows()
         }
     }
 
@@ -66,13 +96,16 @@ extension BrowserModel {
         var rows: [SpaceRow] = []
         var used: Set<UUID> = []
         var linked: Set<UUID> = []
+        let pending = Set(pendingPinDemotions.values)
 
         func add(_ item: SidebarItem, under parent: UUID?, space: UUID) {
             switch item {
             case .tab(let id):
                 // A folder's rows go with it, blank or not; at the top level only a page of its own joins.
                 guard let tab = liveTabs[id], tab.extensionBaseURL == nil, !tab.isPrivate, tab.pinID == nil, tab.pinnedURL == nil,
-                      tab.spaceTabID != nil || Self.isOwnPage(tab) || (parent != nil && tab.microTabID == nil) else { return }
+                      !pending.contains(id),
+                      tab.spaceTabID != nil || (Self.isOwnPage(tab) && !tab.staysInItsWindow) || (parent != nil && tab.microTabID == nil)
+                else { return }
                 var link = tab.spaceTabID ?? tab.id
                 if !used.insert(link).inserted {
                     link = UUID()
@@ -114,7 +147,7 @@ extension BrowserModel {
             guard let space, knownSpaceIDs.contains(space) || Self.isLinked(item, tabs: liveTabs, folders: spaceFolderIDs) else { continue }
             add(item, under: nil, space: space)
         }
-        for tab in tabs where tab.spaceTabID != nil && !linked.contains(tab.id) {
+        for tab in tabs where tab.spaceTabID != nil && !linked.contains(tab.id) && !pending.contains(tab.id) {
             tab.spaceTabID = nil
         }
         return rows
@@ -153,6 +186,14 @@ extension BrowserModel {
         guard sharesSpaceTabs, attachedPinStore != nil else { return }
         isApplyingProfilePins = true
         defer { isApplyingProfilePins = false }
+        let shape = rows.map(SpaceRowShape.init)
+        let pages = Set(tabs.compactMap(\.spaceTabID))
+        if pendingPinDemotions.isEmpty, shape == spaceRowShape,
+           rows.allSatisfy({ $0.kind == .folder ? foldersByID[$0.id] != nil : pages.contains($0.id) }) {
+            // Only titles, addresses or looks changed: the sidebar keeps its places.
+            _ = upsertSpaceItems(rows)
+            return
+        }
         sidebarDidChange()
 
         let wanted = Set(rows.map(\.id))
@@ -194,6 +235,8 @@ extension BrowserModel {
         }
         storedTree = SidebarTree(root: merged(tree.root, with: root), children: nested)
         spaceFolderIDs = Set(rows.filter { $0.kind == .folder }.map(\.id))
+        spaceRowShape = shape
+        closeUnclaimedPinPages()
         syncTabOrder()
         // Another window can carry the selected row to a Space this window does not show.
         if let active = activeTab, !isShown(active) {
@@ -210,6 +253,20 @@ extension BrowserModel {
             } else {
                 tab.spaceTabID = nil
             }
+        }
+        // A row a window started has that window's tab ID. A session saved before its link (a crash between the two
+        // writes) still holds that tab, so it takes the row instead of a second page. A page whose pin another window turned
+        // into this row keeps its loaded state the same way.
+        let tabRows = Set(rows.lazy.filter { $0.kind == .tab }.map(\.id))
+        for tab in tabs where tab.spaceTabID == nil && pages[tab.id] == nil && tabRows.contains(tab.id) && Self.canTakeRow(tab) {
+            tab.spaceTabID = tab.id
+            pages[tab.id] = tab
+        }
+        for (pin, id) in pendingPinDemotions where tabRows.contains(pin) && pages[pin] == nil {
+            guard let tab = tabs.first(where: { $0.id == id }), tab.spaceTabID == nil else { continue }
+            tab.spaceTabID = pin
+            pages[pin] = tab
+            pendingPinDemotions[pin] = nil
         }
         var liveFolders = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var items: [UUID: SidebarItem] = [:]
@@ -255,6 +312,25 @@ extension BrowserModel {
             }
         }
         return items
+    }
+
+    private static func canTakeRow(_ tab: BrowserTab) -> Bool {
+        tab.pinID == nil && tab.pinnedURL == nil && tab.microTabID == nil && tab.extensionBaseURL == nil && !tab.isPrivate
+    }
+
+    /// The window that removed a pin has published its rows. A page no row took was a pin it closed, so it closes here too.
+    func closeUnclaimedPinPages() {
+        let unclaimed = pendingPinDemotions.values
+        pendingPinDemotions = [:]
+        // Closing what the profile already removed records nothing for iCloud and publishes nothing.
+        let applying = isApplyingProfilePins
+        isApplyingProfilePins = true
+        defer { isApplyingProfilePins = applying }
+        for id in unclaimed {
+            if let tab = tab(id: id) {
+                close(tab, recordForReopening: false)
+            }
+        }
     }
 
     // MARK: - Turning sharing on and off

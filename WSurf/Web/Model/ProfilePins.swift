@@ -154,6 +154,13 @@ final class ProfilePinStore {
         isPublishing
     }
 
+    /// The window that removed a pin had no row to add: what the other windows kept for it was a pin it closed.
+    func closeUnclaimedPinPages(except source: BrowserModel?) {
+        for model in attachedWindows where model !== source && !model.pendingPinDemotions.isEmpty {
+            model.closeUnclaimedPinPages()
+        }
+    }
+
     /// The attached windows of the store, which see every change to its rows.
     var attachedWindows: [BrowserModel] {
         subscribers.allObjects.filter { $0.attachedPinStore === self }
@@ -164,12 +171,20 @@ final class ProfilePinStore {
     @discardableResult
     func publishSpaceRows(_ next: [SpaceRow], from source: BrowserModel? = nil) -> Bool {
         guard spaceRowsAvailable, !isPublishing else { return false }
-        guard next != spaceRows else { return true }
+        guard next != spaceRows else {
+            closeUnclaimedPinPages(except: source)
+            return true
+        }
+        // Only the rows that changed: a title that changes writes one row. `next` is depth first, so a parent comes first.
+        let previous = Dictionary(spaceRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = Set(next.map(\.id))
         do {
             try database.writer.write { db in
-                try SpaceRow.deleteAll(db)
-                for row in next {
-                    try row.insert(db)
+                for row in spaceRows where !kept.contains(row.id) {
+                    try SpaceRow.deleteOne(db, key: row.id)
+                }
+                for row in next where previous[row.id] != row {
+                    try row.save(db)
                 }
             }
         } catch {

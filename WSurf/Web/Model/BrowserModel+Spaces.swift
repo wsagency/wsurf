@@ -260,6 +260,9 @@ extension BrowserModel {
         let wasActive = activeTabID.map { carried.contains(.tab($0)) } ?? false
         for item in carried {
             assignSpace(id, to: item)
+            if case .tab(let tabID) = item {
+                tabsByID[tabID]?.staysInItsWindow = false
+            }
         }
         let boundary = tree.root.first { !carried.contains($0) && spaceID(ofItem: $0) == id }
         place(moved, in: nil, before: boundary)

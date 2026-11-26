@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurf
@@ -291,6 +292,96 @@ struct SpaceTabWindowTests {
                 expectOneCopyPerRow(window)
             }
             settings.sharesSpaceTabsAcrossWindows = true
+        }
+    }
+
+    /// A crash between writing the rows and the window's session leaves the tab saved without its link.
+    @Test func aSessionSavedBeforeItsLinkKeepsOnePagePerRow() async throws {
+        try await withProfile { profile in
+            let defaults = InMemoryUserDefaults(inheriting: .standard)
+            let app = run(defaults)
+            let first = app.newWindow(profile: profile, show: false)
+            let page = first.browser.addPage("https://lost-link.example/")
+            first.browser.scheduleSave()
+            first.browser.saveBlocking()
+            #expect(page.spaceTabID == page.id)
+            let windowID = first.windowID
+            try await first.browser.database.writer.write { db in
+                try db.execute(sql: "UPDATE sessionTab SET spaceTabID = NULL WHERE windowID = ?", arguments: [windowID])
+            }
+            await app.closeTabsForTermination()
+            app.finishTermination()
+            for coordinator in app.windows {
+                coordinator.nativeWindow?.close()
+            }
+
+            let next = run(defaults)
+            defer { finish(next) }
+            next.restoreWindows(of: [profile], show: false)
+            let window = try #require(next.windows.first)
+            let restored = try #require(window.browser.tab(id: page.id))
+            #expect(restored.spaceTabID == page.id)
+            #expect(window.browser.tabs.filter { $0.urlString == page.urlString }.count == 1)
+            window.browser.scheduleSave()
+            #expect(window.browser.pinStore.spaceRows.filter { $0.url == page.urlString }.map(\.id) == [page.id])
+            let second = next.newWindow(profile: profile, show: false)
+            #expect(second.browser.tabs.filter { $0.urlString == page.urlString }.count == 1)
+            expectOneCopyPerRow(window)
+            expectOneCopyPerRow(second)
+        }
+    }
+
+    @Test func unpinningKeepsAnotherWindowsLoadedPageAndClosingAPinClosesIt() async throws {
+        try await withProfile { profile in
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            defer { finish(app) }
+            let first = app.newWindow(profile: profile, show: false)
+            let second = app.newWindow(profile: profile, show: false)
+            let pinned = first.browser.pinned("https://unpinned.example/")
+            let doomed = first.browser.pinned("https://closed.example/")
+            let loaded = try #require(second.browser.page(for: pinned.pinID))
+            loaded.realizeDeferredSession()
+            #expect(loaded.isMaterialised && !loaded.isDeferred)
+
+            first.browser.unpin(pinned)
+
+            // The same page, still loaded, now stands for the Space row.
+            #expect(second.browser.tab(id: loaded.id) === loaded)
+            #expect(loaded.pinID == nil && loaded.pinnedURL == nil)
+            #expect(loaded.spaceTabID != nil && loaded.spaceTabID == pinned.spaceTabID)
+            #expect(loaded.isMaterialised && !loaded.isDeferred)
+            #expect(second.browser.tabs.filter { $0.urlString == "https://unpinned.example/" }.count == 1)
+            expectOneCopyPerRow(first)
+            expectOneCopyPerRow(second)
+
+            let doomedPage = try #require(second.browser.page(for: doomed.pinID))
+            first.browser.close([.tab(doomed.id)])
+            #expect(second.browser.tab(id: doomedPage.id) == nil)
+            #expect(second.browser.pendingPinDemotions.isEmpty)
+            expectOneCopyPerRow(second)
+        }
+    }
+
+    /// `closeTab` closes a tab an MCP client opened without asking, so that tab never reaches the person's other windows.
+    @Test func aTabAnAgentOpensStaysInItsWindowUntilThePersonMovesIt() async throws {
+        try await withProfile { profile in
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            defer { finish(app) }
+            let first = app.newWindow(profile: profile, show: false)
+            let second = app.newWindow(profile: profile, show: false)
+            let opened = first.browser.newTab(url: URL(string: "https://agent.example/"), activate: false, transition: .agent)
+            first.browser.scheduleSave()
+            #expect(opened.staysInItsWindow && opened.spaceTabID == nil)
+            #expect(second.browser.page(at: "https://agent.example/") == nil)
+
+            first.browser.close(opened)
+            #expect(second.browser.tabs.allSatisfy { $0.spaceTabID == nil || $0.urlString != "https://agent.example/" })
+
+            let kept = first.browser.newTab(url: URL(string: "https://kept.example/"), activate: false, transition: .agent)
+            let other = try #require(first.createSpace(name: "Elsewhere", symbol: "star"))
+            first.browser.move([.tab(kept.id)], toSpace: other.id)
+            #expect(!kept.staysInItsWindow && kept.spaceTabID != nil)
+            #expect(second.browser.tabs.contains { $0.spaceTabID == kept.spaceTabID })
         }
     }
 
