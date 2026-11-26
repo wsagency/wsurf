@@ -21,6 +21,8 @@ struct VaultBackupExportContext: Identifiable {
 struct VaultBackupImportRequest: Identifiable {
     let id = UUID()
     let url: URL
+    /// The encrypted file as read once (`CredentialSettingsModel.readBackup`).
+    let container: Data
     let epoch: UInt64
 }
 
@@ -63,12 +65,12 @@ extension CredentialSettings {
         panel.message = String(localized: "Choose a WSurf backup: an encrypted .wsurfvault file or an unencrypted .json file.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         run {
-            switch await model.readBackup(from: url, password: nil) {
+            switch await model.readBackup(from: url, epoch: epoch) {
             case let .backup(backup):
                 await model.beginBackupImport(backup, epoch: epoch)
-            case .needsPassword, .wrongPassword:
-                backupImport = VaultBackupImportRequest(url: url, epoch: epoch)
-            case .failed:
+            case let .needsPassword(container):
+                backupImport = VaultBackupImportRequest(url: url, container: container, epoch: epoch)
+            case .wrongPassword, .failed:
                 break
             }
         }
@@ -77,8 +79,10 @@ extension CredentialSettings {
     /// Decrypts the requested backup with `password`. Returns false to keep the sheet open for another try. The review is staged
     /// only once the sheet is gone (`stagePendingBackup`), so the two sheets never overlap.
     func openBackup(_ request: VaultBackupImportRequest, password: String) async -> Bool {
-        switch await model.readBackup(from: request.url, password: password) {
+        switch await model.openBackup(request.container, password: password, epoch: request.epoch) {
         case let .backup(backup):
+            // The model checked the epoch after the key derivation; this page's own state may have moved on since.
+            guard model.authorizationEpoch == request.epoch else { return true }
             pendingBackup = PendingBackup(backup: backup, epoch: request.epoch)
             return true
         case .needsPassword, .wrongPassword:
@@ -91,6 +95,7 @@ extension CredentialSettings {
     func stagePendingBackup() {
         guard let pending = pendingBackup else { return }
         pendingBackup = nil
+        guard model.authorizationEpoch == pending.epoch else { return }
         run { await model.beginBackupImport(pending.backup, epoch: pending.epoch) }
     }
 }

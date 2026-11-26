@@ -66,6 +66,7 @@ public nonisolated enum VaultBackupCodec {
 
     /// The backup of `accounts`, with the plaintext of their files from `files` (by attachment id). A file whose bytes are not in
     /// `files` is left out of its entry, and an entry left with nothing is left out: the backup never names a file it cannot restore.
+    /// Each file's wrapped key is the vault's own key-wrapping material, so it is zeroed: a restore stores every file under a new key.
     public static func backup(
         of accounts: [CredentialAccount], files: [UUID: Data], vaultName: String?, exportedAt: Date
     ) throws -> (backup: VaultBackup, omitted: Omitted) {
@@ -75,7 +76,11 @@ public nonisolated enum VaultBackupCodec {
         var total: Int64 = 0
         for var account in accounts {
             let all = account.attachments ?? []
-            let readable = all.filter { files[$0.id] != nil }
+            let readable = all.filter { files[$0.id] != nil }.map { file in
+                var copy = file
+                copy.wrappedKey = Data(count: CredentialAttachment.wrappedKeyBytes)
+                return copy
+            }
             omitted.files += all.count - readable.count
             account.attachments = readable.isEmpty ? nil : readable
             guard account.holdsContent else {
@@ -171,9 +176,33 @@ public nonisolated enum VaultBackupCodec {
         data.prefix(magic.count) == magic
     }
 
-    /// Seals `plaintext` under `password`. Off every actor: the key derivation takes a moment by design.
+    /// Seals `plaintext` under `password` with `defaultIterations` rounds: no caller can write a weaker file. Off every actor: the key
+    /// derivation takes a moment by design.
     @concurrent
-    public static func seal(_ plaintext: Data, password: String, iterations: UInt32 = defaultIterations) async throws -> Data {
+    public static func seal(_ plaintext: Data, password: String) async throws -> Data {
+        try await seal(plaintext, password: password, iterations: defaultIterations)
+    }
+
+    /// Opens a `.wsurfvault` container that asks for at least `defaultIterations` rounds.
+    @concurrent
+    public static func open(_ container: Data, password: String) async throws -> Data {
+        try await open(container, password: password, minimumIterations: defaultIterations)
+    }
+
+    /// Whether `container` is a `.wsurfvault` file WSurf can try a password on: its header is whole, of a version and key derivation
+    /// this build reads, and asks for a number of rounds `open` accepts. A file that fails this is damaged or from a newer build, and
+    /// no password opens it, so the import says so instead of asking for one.
+    public static func isOpenable(_ container: Data, minimumIterations: UInt32 = defaultIterations) -> Bool {
+        guard container.count >= headerBytes + 16, container.count <= fileSizeLimit else { return false }
+        let bytes = container.prefix(headerBytes).map { $0 }
+        guard Data(bytes[0..<8]) == magic, bytes[8] == containerVersion, bytes[9] == pbkdf2SHA256 else { return false }
+        let iterations = bytes[10..<14].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        return iterations >= minimumIterations && iterations <= maximumIterations
+    }
+
+    /// `seal` with another number of rounds, for tests that cannot spend the default work factor on every case.
+    @concurrent
+    static func seal(_ plaintext: Data, password: String, iterations: UInt32) async throws -> Data {
         guard !password.isEmpty else { throw VaultBackupError.emptyPassword }
         guard iterations > 0, iterations <= maximumIterations else { throw VaultBackupError.invalidContent }
         guard plaintext.count + headerBytes + 16 <= fileSizeLimit else { throw VaultBackupError.tooLarge }
@@ -190,10 +219,10 @@ public nonisolated enum VaultBackupCodec {
         return header + sealed.ciphertext + sealed.tag
     }
 
-    /// Opens a `.wsurfvault` container. Every way it can fail but a too-weak or too-costly header is `wrongPasswordOrCorrupted`.
-    /// `minimumIterations` refuses a file that asks for fewer rounds than WSurf writes; tests lower it to stay fast.
+    /// Opens a `.wsurfvault` container. Every way it can fail is `wrongPasswordOrCorrupted`. `minimumIterations` refuses a file that
+    /// asks for fewer rounds than WSurf writes; tests lower it to stay fast.
     @concurrent
-    public static func open(_ container: Data, password: String, minimumIterations: UInt32 = defaultIterations) async throws -> Data {
+    static func open(_ container: Data, password: String, minimumIterations: UInt32) async throws -> Data {
         guard container.count <= fileSizeLimit else { throw VaultBackupError.tooLarge }
         guard !password.isEmpty else { throw VaultBackupError.emptyPassword }
         let bytes = [UInt8](container)
@@ -259,6 +288,9 @@ nonisolated extension VaultBackupCodec {
         public let fileOnly: [CredentialAccount]
         /// The plaintext of every file the candidates name, by the id the backup gave it.
         public let files: [UUID: Data]
+        /// File-only entries the vault deleted since (in its Trash, or purged): they are not restored, as a deleted credential an import
+        /// meets is not, and the review says how many.
+        public var removedFileOnly = 0
 
         /// The files the candidates and the file-only entries name.
         public var fileCount: Int {
@@ -266,7 +298,11 @@ nonisolated extension VaultBackupCodec {
         }
     }
 
-    public static func stage(_ backup: VaultBackup, against base: StoreSnapshot) throws -> Staged {
+    /// `removed` is what the vault deleted (`ProfileVaultStore.removedIdentifiers`); a file-only entry whose item no saved entry holds
+    /// and the vault deleted is left out.
+    public static func stage(
+        _ backup: VaultBackup, against base: StoreSnapshot, removed: RemovedIdentifiers? = nil
+    ) throws -> Staged {
         try CredentialExchangeCodec.validateAccounts(base.accounts, blockedOrigins: base.blockedPasswordOrigins)
         let files = Dictionary(backup.files.map { ($0.id, $0.contents) }, uniquingKeysWith: { first, _ in first })
         var candidates: [CredentialAccount] = []
@@ -301,25 +337,53 @@ nonisolated extension VaultBackupCodec {
             throw VaultBackupError.invalidContent
         }
         let conflicts = try CredentialExchangeCodec.makeConflicts(candidates, against: base.accounts)
-        return Staged(
-            preview: CredentialImportPreview(base: base, candidates: candidates, conflicts: conflicts), fileOnly: fileOnly, files: files
+        let held = try itemHolders(base.accounts)
+        var deleted = Set<CredentialExchangeCodec.ExternalItemID>()
+        for item in removed?.items ?? [] where item.passkeyCredentialID == nil {
+            deleted.insert(CredentialExchangeCodec.ExternalItemID(
+                account: try CredentialExchangeCodec.externalID(item.exchangeAccountID, fallback: item.accountID),
+                item: try CredentialExchangeCodec.externalID(item.exchangeItemID, fallback: item.accountID)
+            ))
+        }
+        let restorable = try fileOnly.filter { entry in
+            let key = try CredentialExchangeCodec.externalItemID(for: entry)
+            return held[key] != nil || !deleted.contains(key)
+        }
+        var staged = Staged(
+            preview: CredentialImportPreview(base: base, candidates: candidates, conflicts: conflicts), fileOnly: restorable, files: files
         )
+        staged.removedFileOnly = fileOnly.count - restorable.count
+        return staged
+    }
+
+    /// The account that holds each item: its own, or one merged into it (`MergedItemLink`), so an item merged away is found in the
+    /// credential it went into and never added again beside it. An account's own item wins over a merged one.
+    static func itemHolders(_ accounts: [CredentialAccount]) throws -> [CredentialExchangeCodec.ExternalItemID: UUID] {
+        var holders: [CredentialExchangeCodec.ExternalItemID: UUID] = [:]
+        for account in accounts {
+            holders[try CredentialExchangeCodec.externalItemID(for: account)] = account.id
+        }
+        for account in accounts {
+            for link in account.mergedFrom ?? [] where holders[link.identity] == nil {
+                holders[link.identity] = account.id
+            }
+        }
+        return holders
     }
 
     /// What the import adds to the plan the review's choices made (`touched`, the accounts it writes) so nothing of the backup is lost:
     /// an entry the import creates gets the dates and events the backup recorded, and the files of each backup entry go where its item
     /// is after the import (the new entry, or the saved one that holds the same item) unless that entry already holds a file with the
-    /// same size and SHA-256. An item the import puts nowhere brings no files. A file-only entry joins the saved entry of its item, or is
-    /// added. The files keep the backup's records: the caller stores each file before the commit and puts the stored record in its place.
+    /// same size and SHA-256. An item merged into another entry since the backup is found in that entry. An item the import puts nowhere
+    /// brings no files. A file-only entry joins the saved entry of its item, or is added. The files keep the backup's records: the caller
+    /// stores each file before the commit and puts the stored record in its place.
     public static func restoring(
         _ staged: Staged, into touched: [CredentialAccount]
     ) throws -> (touched: [CredentialAccount], added: Int, updated: Int) {
         var result = touched
         var position = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var holders: [CredentialExchangeCodec.ExternalItemID: UUID] = [:]
-        for account in staged.preview.base.accounts + result {
-            holders[try CredentialExchangeCodec.externalItemID(for: account)] = account.id
-        }
+        // What the import writes wins over what the vault held: an item the plan placed is where the plan put it.
+        let holders = try itemHolders(staged.preview.base.accounts).merging(try itemHolders(result)) { _, planned in planned }
         let saved = Dictionary(staged.preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var added = 0
         var updated = 0

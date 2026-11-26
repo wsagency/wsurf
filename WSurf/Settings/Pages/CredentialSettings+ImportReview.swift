@@ -316,6 +316,14 @@ struct CredentialImportReviewSheet: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if review.backupRemovedFileOnly > 0 {
+                    Text("""
+                        \(review.backupRemovedFileOnly) entries of the backup that hold only files were deleted from this vault \
+                        since, so they are not restored.
+                        """)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !review.unattachedOmissions.isEmpty {
                     omittedView(review.unattachedOmissions)
                 }

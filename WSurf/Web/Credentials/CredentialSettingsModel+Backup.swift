@@ -10,8 +10,9 @@ extension CredentialSettingsModel {
     /// How reading a backup file for import ended.
     enum BackupRead {
         case backup(VaultBackup)
-        /// The file is encrypted: ask for its password and read it again.
-        case needsPassword
+        /// The file is an encrypted backup WSurf can try a password on: ask for it and call `openBackup` with these bytes. They are
+        /// the encrypted file, so holding them reveals nothing.
+        case needsPassword(Data)
         /// The password is wrong or the file was changed. Nothing was read.
         case wrongPassword
         /// The page says why (`ownMessage`).
@@ -47,23 +48,36 @@ extension CredentialSettingsModel {
         return saved
     }
 
-    /// Reads, and with `password` decrypts, the backup at `url`. The file is only read, never changed. Nothing is staged: the caller
-    /// passes the backup to `beginBackupImport` once the password sheet is gone.
-    func readBackup(from url: URL, password: String?) async -> BackupRead {
+    /// Reads the backup at `url` once, off the main actor: a plain backup is decoded, an encrypted one is handed back for its password.
+    /// The file is only read, never changed. Nothing is staged: the caller passes the backup to `beginBackupImport`. `epoch` is the
+    /// authorization the page had before its open panel; a lock or re-unlock since reads nothing into the page.
+    func readBackup(from url: URL, epoch: UInt64) async -> BackupRead {
         ownMessage = nil
         let data: Data
         do {
-            data = try CredentialCSV.read(url, limit: VaultBackupCodec.fileSizeLimit)
+            data = try await Task.detached { try CredentialCSV.read(url, limit: VaultBackupCodec.fileSizeLimit) }.value
         } catch CredentialCSVError.tooLarge {
             return failing(.backupUnreadable(tooLarge: true))
         } catch {
             return failing(.csvNotOpened())
         }
-        if VaultBackupCodec.isEncrypted(data), password?.isEmpty ?? true {
-            return .needsPassword
-        }
+        guard VaultBackupCodec.isEncrypted(data) else { return await decoding(data, password: nil, epoch: epoch) }
+        // A damaged header, or one from a newer build, opens with no password: say so rather than ask for one again and again.
+        guard VaultBackupCodec.isOpenable(data) else { return failing(.backupUnreadable()) }
+        return .needsPassword(data)
+    }
+
+    /// Decrypts and decodes the encrypted backup `container` (from `.needsPassword`) with `password`.
+    func openBackup(_ container: Data, password: String, epoch: UInt64) async -> BackupRead {
+        await decoding(container, password: password, epoch: epoch)
+    }
+
+    /// The decrypted backup is returned only while the vault is still under `epoch`: a lock or re-unlock while the key was derived
+    /// drops it here, so no plaintext reaches a page that was already cleared.
+    private func decoding(_ data: Data, password: String?, epoch: UInt64) async -> BackupRead {
+        let backup: VaultBackup
         do {
-            return .backup(try await exchange.readBackup(data, password: password))
+            backup = try await exchange.readBackup(data, password: password)
         } catch VaultBackupError.wrongPasswordOrCorrupted {
             return .wrongPassword
         } catch VaultBackupError.tooLarge {
@@ -71,6 +85,10 @@ extension CredentialSettingsModel {
         } catch {
             return failing(.backupUnreadable())
         }
+        guard manager?.authorizationEpoch == epoch else {
+            return failing(.discarded(.csvFile))
+        }
+        return .backup(backup)
     }
 
     /// Stages `backup` for the same review a CSV file gets. `epoch` is the authorization the page had BEFORE its open panel: a lock or

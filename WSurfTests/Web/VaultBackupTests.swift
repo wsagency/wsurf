@@ -114,7 +114,11 @@ struct VaultBackupTests {
         let opened = try await VaultBackupCodec.open(sealed, password: Self.password, minimumIterations: Self.rounds)
         let restored = try VaultBackupCodec.decode(opened)
         #expect(restored == built.backup)
-        #expect(restored.accounts == accounts)
+        // Everything as the vault held it, but the files' wrapped keys, which are the vault's own and stay behind.
+        #expect(restored.accounts.flatMap { $0.attachments ?? [] }.allSatisfy { $0.wrappedKey == Data(count: CredentialAttachment.wrappedKeyBytes) })
+        var expected = accounts
+        expected[expected.count - 1].attachments?[0].wrappedKey = Data(count: CredentialAttachment.wrappedKeyBytes)
+        #expect(restored.accounts == expected)
         #expect(restored.files.first?.contents == contents)
 
         // The restored secrets work: the same codes at the same moments, and a signature the original key's public half accepts.
@@ -266,7 +270,6 @@ struct VaultBackupTests {
     @Test(arguments: [true, false])
     func aBackupRestoresEveryEntryAndFileIntoAnEmptyVault(encrypted: Bool) async throws {
         try await base.withFixture { f in
-            f.coordinator.backupIterations = Self.rounds
             let (source, files) = try await seedEveryKind(f)
             let folder = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: folder) }
@@ -313,7 +316,6 @@ struct VaultBackupTests {
 
     @Test func restoringIntoTheVaultItCameFromChangesNothingAndAChangedPasswordIsAConflict() async throws {
         try await base.withFixture { f in
-            f.coordinator.backupIterations = Self.rounds
             let (source, _) = try await seedEveryKind(f)
             let folder = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: folder) }
@@ -350,7 +352,6 @@ struct VaultBackupTests {
 
     @Test func aLockDropsTheStagedBackupAndAStaleSelectionWritesNoFile() async throws {
         try await base.withFixture { f in
-            f.coordinator.backupIterations = Self.rounds
             let (source, _) = try await seedEveryKind(f)
             let folder = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: folder) }

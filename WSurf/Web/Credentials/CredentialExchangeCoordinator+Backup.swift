@@ -8,7 +8,7 @@ import WSurfVault
 /// protects or sealed under a backup password, and read back into the same import review as any other transfer.
 extension CredentialExchangeCoordinator {
     /// What an exported backup holds, for the message the page shows.
-    struct BackupExport: Equatable {
+    nonisolated struct BackupExport: Equatable, Sendable {
         let entries: Int
         let files: Int
         let omittedFiles: Int
@@ -46,21 +46,21 @@ extension CredentialExchangeCoordinator {
             let vaultName = try await manager.displayNames().vault
             try Task.checkCancellation()
             guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-            let built = try VaultBackupCodec.backup(of: chosen, files: files, vaultName: vaultName, exportedAt: now())
-            let backup = built.backup
-            let iterations = backupIterations
-            let data = try await Task.detached {
-                var json = try VaultBackupCodec.encode(backup)
-                guard let password else { return json }
+            let exportedAt = now()
+            // Off the main actor: checking every file's SHA-256, encoding and sealing take a while for a backup with large files.
+            let (data, result) = try await Task.detached {
+                let built = try VaultBackupCodec.backup(of: chosen, files: files, vaultName: vaultName, exportedAt: exportedAt)
+                let result = BackupExport(
+                    entries: built.backup.accounts.count, files: built.backup.files.count, omittedFiles: built.omitted.files
+                )
+                var json = try VaultBackupCodec.encode(built.backup)
+                guard let password else { return (json, result) }
                 defer { json.resetBytes(in: 0..<json.count) }
-                return try await VaultBackupCodec.seal(json, password: password, iterations: iterations)
+                return (try await VaultBackupCodec.seal(json, password: password), result)
             }.value
             try Task.checkCancellation()
             guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
             try CredentialCSV.save(data, to: url, temporaryName: ".wsurf-backup-\(UUID().uuidString).tmp")
-            let result = BackupExport(
-                entries: backup.accounts.count, files: backup.files.count, omittedFiles: built.omitted.files
-            )
             onMessage?(.backupExported(
                 entries: result.entries, files: result.files, omittedFiles: result.omittedFiles, encrypted: password != nil
             ))
@@ -106,7 +106,7 @@ extension CredentialExchangeCoordinator {
             } catch VaultFileError.missing, VaultFileError.damaged {
                 continue
             }
-            files[file.id] = try Data(contentsOf: destination)
+            files[file.id] = try await Task.detached { try Data(contentsOf: destination) }.value
         }
         return files
     }
@@ -137,13 +137,14 @@ extension CredentialExchangeCoordinator {
     /// The backup in `data`: a `.wsurfvault` file opened with `password`, or a plain JSON backup. Off the main actor: the key
     /// derivation and the decoding take a moment. The decrypted JSON is overwritten once decoded.
     func readBackup(_ data: Data, password: String?) async throws -> VaultBackup {
-        let iterations = backupIterations
-        return try await Task.detached {
+        let backup = try await Task.detached {
             guard VaultBackupCodec.isEncrypted(data) else { return try VaultBackupCodec.decode(data) }
             guard let password else { throw VaultBackupError.emptyPassword }
-            var json = try await VaultBackupCodec.open(data, password: password, minimumIterations: iterations)
+            var json = try await VaultBackupCodec.open(data, password: password)
             defer { json.resetBytes(in: 0..<json.count) }
             return try VaultBackupCodec.decode(json)
         }.value
+        await afterBackupRead?()
+        return backup
     }
 }

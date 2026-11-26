@@ -128,8 +128,8 @@ final class CredentialExchangeCoordinator {
     @ObservationIgnored var afterLastCheck: (@MainActor () async -> Void)?
     /// The clock for the export hand-off stamp and a backup's date.
     @ObservationIgnored var now: @MainActor () -> Date = { Date() }
-    /// The key derivation's rounds for a backup this writes, and the fewest one it opens may ask for. Tests lower it to stay fast.
-    @ObservationIgnored var backupIterations = VaultBackupCodec.defaultIterations
+    /// Test seam: runs after a backup file is decrypted and decoded, before it is handed back (`readBackup`).
+    @ObservationIgnored var afterBackupRead: (@MainActor () async -> Void)?
     /// The refusal of a second token while one is open. It belongs to no window (the token is the system's), so it is the only
     /// ending kept here; every window's own ending lives in that window.
     private(set) var refusal: CredentialTransferMessage?
@@ -295,7 +295,7 @@ final class CredentialExchangeCoordinator {
             case let .backup(file):
                 let staged: VaultBackupCodec.Staged
                 do {
-                    staged = try VaultBackupCodec.stage(file, against: snapshot)
+                    staged = try VaultBackupCodec.stage(file, against: snapshot, removed: removed)
                 } catch {
                     throw end(.backupUnreadable())
                 }
