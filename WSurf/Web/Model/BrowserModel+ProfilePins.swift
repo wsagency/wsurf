@@ -23,6 +23,7 @@ extension BrowserModel {
         // Pages of pinned folders saved before they had a pinned page of their own take the page they show, once.
         settlePinnedPages()
         publishProfilePins()
+        attachSpaceRows()
     }
 
     /// A window that leaves its profile or closes stops publishing, so it can never replace the set with an empty one.
@@ -30,6 +31,8 @@ extension BrowserModel {
         attachedPinStore?.unsubscribe(self)
         attachedPinStore = nil
         profileFolderIDs = []
+        spaceFolderIDs = []
+        spaceTabSeen = [:]
     }
 
     /// Sends this window's version of the set to the profile when it differs. Called before every session save.
@@ -121,6 +124,10 @@ extension BrowserModel {
             add(item, under: nil)
         }
         for tab in tabs where tab.pinID != nil && !linked.contains(tab.id) {
+            // An unpinned page becomes a Space row under the pin's ID, so the other windows keep their pages for it.
+            if sharesSpaceTabs, tab.spaceTabID == nil {
+                tab.spaceTabID = tab.pinID
+            }
             tab.pinID = nil
         }
         return pins
@@ -199,7 +206,24 @@ extension BrowserModel {
             if let sharedSpace {
                 tab.spaceID = sharedSpace
             }
-            if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
+            // While Space tabs are shared, the window that removed the pin publishes its Space rows next. A page it unpinned
+            // comes back as a row with the pin's ID, which this page then stands for, loaded or not; a page it closed closes.
+            if sharesSpaceTabs {
+                tab.pinnedURL = nil
+                tab.pinnedTitle = ""
+                tab.isFavorite = false
+                if sharedSpace != nil, attachedPinStore?.isApplyingRemote == true {
+                    // iCloud already keeps this page as a shared Space tab (an unpin on another Mac). It becomes the row,
+                    // under the pin's ID like a local unpin, so this Mac's other windows keep their pages for it too. A pin
+                    // removed in a window of this Mac waits instead: that window's rows tell an unpin from a close.
+                    if tab.spaceTabID == nil {
+                        tab.spaceTabID = pinID
+                    }
+                } else {
+                    pendingPinDemotions[pinID] = tab.id
+                }
+                demoted.insert(item)
+            } else if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false
@@ -276,7 +300,7 @@ extension BrowserModel {
     }
 
     /// Writes only a change, so a set that is already shown does not redraw the sidebar.
-    private func assign<Object: AnyObject, Value: Equatable>(
+    func assign<Object: AnyObject, Value: Equatable>(
         _ path: ReferenceWritableKeyPath<Object, Value>, to value: Value, on object: Object
     ) {
         if object[keyPath: path] != value {
@@ -286,13 +310,18 @@ extension BrowserModel {
 
     /// An unloaded page at the pin's link, like a tab restored from a saved session.
     private func makePinPage(_ pin: ProfilePin) -> BrowserTab {
-        let url = URL(string: pin.url)
+        makeUnloadedPage(at: pin.url, title: pin.title) { $0.pinID = pin.id }
+    }
+
+    /// An unloaded page at `address`, like a tab restored from a saved session, set up by `link` before it opens.
+    func makeUnloadedPage(at address: String, title: String, link: (BrowserTab) -> Void) -> BrowserTab {
+        let url = URL(string: address)
         let tab = makeTab(for: url, restoring: true)
-        tab.pinID = pin.id
+        link(tab)
         tab.pageTitle = url == nil || SystemPages.isStart(url)
             ? SystemPages.startTitle
-            : (pin.title.isEmpty ? BrowserTab.placeholderTitle : pin.title)
-        tab.urlString = url?.absoluteString ?? pin.url
+            : (title.isEmpty ? BrowserTab.placeholderTitle : title)
+        tab.urlString = url?.absoluteString ?? address
         tab.deferRestore(state: nil, url: url)
         if let host = url?.host() {
             dressRow(tab, fromHost: host)

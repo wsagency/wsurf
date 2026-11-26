@@ -41,7 +41,13 @@ extension CloudSharedSpaces {
                 for model in models where model.knownSpaceIDs != Set(store.spaces.map(\.id)) {
                     model.adoptSpaces(store.spaces.map(\.id))
                 }
-                applyRows(to: models, profile: profile, link: &link, opening: opening)
+                // Windows that share Space tabs show the owner's rows through the profile, never a copy of their own.
+                var rowModels = models
+                if let owner = spaceTabsOwner(of: profile, among: models) {
+                    adoptSpaceTabSlots(into: owner, link: &link)
+                    rowModels = [owner]
+                }
+                applyRows(to: rowModels, profile: profile, link: &link, opening: opening)
                 if links[id] != link {
                     links[id] = link
                     persistLinks()

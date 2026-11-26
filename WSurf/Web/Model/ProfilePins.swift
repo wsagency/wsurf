@@ -121,9 +121,15 @@ final class ProfilePinStore {
     private let database: AppDatabase
     private let subscribers = NSHashTable<BrowserModel>.weakObjects()
     @ObservationIgnored private var isPublishing = false
+    /// True while the windows apply a set that came from iCloud rather than from one of them. See `releaseGonePins`.
+    @ObservationIgnored private(set) var isApplyingRemote = false
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
+    /// The ordinary tabs and folders every window shows while Space tabs are shared, depth first. See `SpaceRow`.
+    private(set) var spaceRows: [SpaceRow]
+    /// False when the stored Space rows could not be read. Nothing may replace them then.
+    let spaceRowsAvailable: Bool
 
     private init(database: AppDatabase) {
         self.database = database
@@ -135,6 +141,69 @@ final class ProfilePinStore {
             pins = []
             isAvailable = false
         }
+        do {
+            spaceRows = try database.writer.read { db in SpaceRow.depthFirst(try SpaceRow.fetchAll(db)) }
+            spaceRowsAvailable = true
+        } catch {
+            Pipeline.log.error("space rows: read failed")
+            spaceRows = []
+            spaceRowsAvailable = false
+        }
+    }
+
+    /// True while a change is being shown in the attached windows, when no window may publish.
+    var isApplying: Bool {
+        isPublishing
+    }
+
+    /// The window that removed a pin had no row to add: what the other windows kept for it was a pin it closed.
+    func closeUnclaimedPinPages(except source: BrowserModel?) {
+        for model in attachedWindows where model !== source && !model.pendingPinDemotions.isEmpty {
+            model.closeUnclaimedPinPages()
+        }
+    }
+
+    /// The attached windows of the store, which see every change to its rows.
+    var attachedWindows: [BrowserModel] {
+        subscribers.allObjects.filter { $0.attachedPinStore === self }
+    }
+
+    /// Replaces the stored Space rows with `next`, which must be depth first, and shows them in every other attached
+    /// window before this returns. Shares the guard of `publish`, so a window that applies one set publishes neither.
+    @discardableResult
+    func publishSpaceRows(_ next: [SpaceRow], from source: BrowserModel? = nil) -> Bool {
+        guard spaceRowsAvailable, !isPublishing else { return false }
+        guard next != spaceRows else {
+            closeUnclaimedPinPages(except: source)
+            return true
+        }
+        // Only the rows that changed: a title that changes writes one row. Saves come first, parents before children (`next`
+        // is depth first), so no row that stays still points to a removed one. Removing a parent cascades to its children,
+        // so the removed rows go last, deepest first, and the cascade can reach only rows that go too.
+        let previous = Dictionary(spaceRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = Set(next.map(\.id))
+        do {
+            try database.writer.write { db in
+                for row in next where previous[row.id] != row {
+                    try row.save(db)
+                }
+                for row in spaceRows.reversed() where !kept.contains(row.id) {
+                    try SpaceRow.deleteOne(db, key: row.id)
+                }
+            }
+        } catch {
+            Pipeline.log.error("space rows: write failed")
+            return false
+        }
+        spaceRows = next
+        isPublishing = true
+        defer { isPublishing = false }
+        // A closed window's saved session catches up when it reopens (`pagesOfCurrentSpaceRows`).
+        for model in attachedWindows where model !== source && model.sharesSpaceTabs && model.sessionClosedAt == nil {
+            model.applySpaceRows(next)
+            model.scheduleSave()
+        }
+        return true
     }
 
     static func store(for database: AppDatabase) -> ProfilePinStore {
@@ -201,10 +270,24 @@ final class ProfilePinStore {
             source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
         }
         isPublishing = true
-        defer { isPublishing = false }
+        isApplyingRemote = source == nil
         for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {
             model.applyProfilePins(next)
             model.scheduleSave()
+        }
+        isPublishing = false
+        isApplyingRemote = false
+        // A window that removes a pin publishes its Space rows next (`scheduleSave`). A set from iCloud has no such window,
+        // so every window publishes now: a page unpinned on another Mac finds its row, and what is left was a pin removed.
+        // A window holding such a new row goes first; one that published before it would remove that row's page.
+        if source == nil {
+            let known = Set(spaceRows.map(\.id))
+            let windows = attachedWindows.filter { $0.sessionClosedAt == nil }
+            let adopting = windows.filter { model in model.tabs.contains { $0.spaceTabID.map { !known.contains($0) } ?? false } }
+            for model in adopting + windows.filter({ model in !adopting.contains { $0 === model } }) {
+                model.publishSpaceRows()
+            }
+            closeUnclaimedPinPages(except: nil)
         }
         return true
     }

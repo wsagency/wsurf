@@ -82,6 +82,8 @@ struct QuitKeepsWindowsTests {
 
     @Test func windowsOpenAtQuitComeBackWithTheirTabsFoldersAndOrder() async throws {
         try await withProfile { profile in
+            // Each window's own tabs: SpaceTabWindowTests covers windows that share them.
+            BrowserProfileContext.shared(for: profile).settings.sharesSpaceTabsAcrossWindows = false
             let defaults = newDefaults()
             let app = run(defaults)
             let first = app.newWindow(profile: profile, show: false)

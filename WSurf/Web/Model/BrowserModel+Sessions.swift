@@ -126,6 +126,8 @@ extension BrowserModel {
         var visitTrail: Int64?
         /// Set on a row that stands for a page in a micro window; see `BrowserTab.microTabID`.
         var microTabID: UUID?
+        /// The shared Space row the tab is this window's page for; see `BrowserTab.spaceTabID`.
+        var spaceTabID: UUID?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -214,6 +216,7 @@ extension BrowserModel {
         guard !isAgentMicro else { return }
         noteCloudTabsChange()
         publishProfilePins()
+        publishSpaceRows()
         sharedSpaceService?.capture(self, renamed: renamed)
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
@@ -294,6 +297,12 @@ extension BrowserModel {
 
     func saveBlocking() {
         guard !isAgentMicro else { return }
+        // A title change waiting to publish would otherwise miss the other windows' unloaded copies at quit.
+        if let waiting = spaceRowsPublishTask {
+            waiting.cancel()
+            spaceRowsPublishTask = nil
+            publishSpaceRows()
+        }
         noteCloudTabsChange()
         cancelPendingSave()
         for tab in tabs {
@@ -348,15 +357,18 @@ extension BrowserModel {
                 requiresSpacePlacement: unplacedSpaceRows.contains(.tab(tab.id)),
                 lastVisit: lastVisitID[tab.id]?.visit,
                 visitTrail: lastVisitID[tab.id]?.trail,
-                microTabID: tab.microTabID
+                microTabID: tab.microTabID,
+                spaceTabID: tab.spaceTabID
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
             persisted.contains { $0.id == id }
         }
 
-        // Profile folders and the places of profile pins are saved with the profile; the window keeps its page.
-        let folderRecords = folders.filter { !profileFolderIDs.contains($0.id) }.enumerated().map { position, folder in
+        // Profile folders, shared Space folders and the places of their tabs are saved with the profile; the window keeps
+        // its page for each tab. A shared folder has the same ID in every window, which `sessionFolder` allows only once.
+        let profileOwned = profileFolderIDs.union(spaceFolderIDs)
+        let folderRecords = folders.filter { !profileOwned.contains($0.id) }.enumerated().map { position, folder in
             FolderRecord(
                 windowID: windowID,
                 id: folder.id,
@@ -374,11 +386,12 @@ extension BrowserModel {
             )
         }
         let known = Set(persisted.map(\.id))
+        // A shared Space tab keeps its place among the window's own rows; the profile still decides its folder.
         let linked = Set(persisted.filter { $0.pinID != nil }.map(\.id))
         let tree = reconciledTree()
         var itemRecords: [ItemRecord] = []
-        func write(_ parent: UUID?) {
-            for item in tree.rows(in: parent) {
+        func write(_ folder: UUID?, as parent: UUID?) {
+            for item in tree.rows(in: folder) {
                 switch item {
                 case .tab(let id):
                     guard known.contains(id), !linked.contains(id) else { continue }
@@ -387,14 +400,19 @@ extension BrowserModel {
                     ))
                 case .folder(let id):
                     guard !profileFolderIDs.contains(id) else { continue }
+                    guard !spaceFolderIDs.contains(id) else {
+                        // The window's own rows in a shared folder are restored at the top level.
+                        write(id, as: nil)
+                        continue
+                    }
                     itemRecords.append(ItemRecord(
                         windowID: windowID, position: itemRecords.count, tabID: nil, folderID: id, parentID: parent
                     ))
-                    write(id)
+                    write(id, as: id)
                 }
             }
         }
-        write(nil)
+        write(nil, as: nil)
 
         let encoder = JSONEncoder()
         let splitRecords = splits.reconciled(against: known).splits.enumerated().compactMap { position, split -> SplitTreeRecord? in
@@ -447,8 +465,9 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, requiresSpacePlacement, lastVisit, visitTrail, microTabID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, requiresSpacePlacement, lastVisit, visitTrail, microTabID,
+                         spaceTabID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -466,13 +485,14 @@ extension BrowserModel {
                         requiresSpacePlacement = excluded.requiresSpacePlacement,
                         lastVisit = excluded.lastVisit,
                         visitTrail = excluded.visitTrail,
-                        microTabID = excluded.microTabID
+                        microTabID = excluded.microTabID,
+                        spaceTabID = excluded.spaceTabID
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
-                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID,
+                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID, tab.spaceTabID,
                 ]
             )
         }
@@ -591,7 +611,7 @@ extension BrowserModel {
         }
         // A page of a pin the profile no longer holds is gone, and so is a second page of one pin.
         let store = pinStore
-        let ordered = pagesOfCurrentPins(inOrder, in: store)
+        let ordered = pagesOfCurrentSpaceRows(pagesOfCurrentPins(inOrder, in: store), in: store)
         unplacedSpaceRows.formUnion(ordered.lazy.filter { $0.requiresSpacePlacement == true }.map { .tab($0.id) })
         let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let profileHoldsPins = store.isAvailable
@@ -622,7 +642,7 @@ extension BrowserModel {
             tab.isFavorite = record.isFavorite
             tab.pinID = record.pinID
             tab.spaceID = record.spaceID
-            tab.microTabID = record.microTabID
+            (tab.microTabID, tab.spaceTabID) = (record.microTabID, record.spaceTabID)
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             lastVisitID[tab.id] = record.lastVisit.map { VisitMemory(visit: $0, trail: record.visitTrail) }
             deferRestore(tab, url: restoredURL)
@@ -751,6 +771,26 @@ extension BrowserModel {
             plain.spaceID = space
             plain.requiresSpacePlacement = space == nil
             return plain
+        }
+    }
+
+    /// While Space tabs are shared, the first record of each row the profile still holds; a page of a row another window
+    /// closed is gone. Once sharing is turned off, the window that kept the rows has them, so another window's saved copies
+    /// go too. When the rows cannot be read, or sharing ended without handing them to a window, each copy stays a tab.
+    private func pagesOfCurrentSpaceRows(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
+        let current = Set(store.spaceRows.lazy.filter { $0.kind == .tab }.map(\.id))
+        let handedOver = store.spaceRowsAvailable && store.spaceRows.isEmpty
+        var claimed: Set<UUID> = []
+        return records.compactMap { record in
+            guard let link = record.spaceTabID else { return record }
+            guard sharesSpaceTabs, store.spaceRowsAvailable else {
+                // A micro window's page is the page itself, never a copy.
+                guard !(handedOver && windowKind == .standard), claimed.insert(link).inserted else { return nil }
+                var plain = record
+                plain.spaceTabID = nil
+                return plain
+            }
+            return current.contains(link) && claimed.insert(link).inserted ? record : nil
         }
     }
 

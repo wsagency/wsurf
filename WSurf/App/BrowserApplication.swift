@@ -916,8 +916,8 @@ final class BrowserApplication {
         let coordinator = newWindow(
             profile: privately ? .privateBrowsing() : owner, settingsOwner: owner, show: focused
         )
-        // The profile's pins fill every new window. Closing one would remove it from all of them.
-        let initialTabs = coordinator.browser.tabs.filter { $0.pinID == nil }
+        // The profile's pins and shared Space rows fill every new window. Closing one would remove it from all of them.
+        let initialTabs = coordinator.browser.tabs.filter { $0.pinID == nil && $0.spaceTabID == nil }
         var hasRequestedTab = !urls.isEmpty
         for url in urls.reversed() {
             // An extension's window is not a person's action: it must not end a Chromium crash loop (`ChromiumPage.holdsForRecovery`).

@@ -226,7 +226,7 @@ struct WindowSessionTests {
         let before = try old.read { try Self.rows(in: $0, columns: columns) }
         let unrelatedSchemaSQL = """
             SELECT type, name, tbl_name, sql FROM sqlite_master
-            WHERE tbl_name NOT LIKE 'session%' AND tbl_name NOT IN ('profilePin', 'archivedTab', 'assistantFact', 'historyVisit') AND name NOT LIKE 'sqlite_%'
+            WHERE tbl_name NOT LIKE 'session%' AND tbl_name NOT IN ('profilePin', 'spaceRow', 'archivedTab', 'assistantFact', 'historyVisit') AND name NOT LIKE 'sqlite_%'
                 AND NOT (type = 'table' AND name = 'agentTrace') AND name != '__historyPage_ft_au'
             ORDER BY type, name
             """

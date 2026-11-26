@@ -39,6 +39,7 @@ extension SharedSpacesTests {
         air.browser.closeAllTabs(saving: false)
 
         let restored = BrowserModel(context: air.browser.context, windowID: air.browser.windowID, database: air.browser.database)
+        restored.sharesSpaceTabsOverride = false
         defer { restored.closeAllTabs(saving: false) }
         let host = CloudSharedSpaces(
             stateFile: air.dir.appending(path: "shared.json"), profiles: [air.profile], windows: { [weak restored] in [restored].compactMap { $0 } },

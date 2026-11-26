@@ -216,6 +216,11 @@ final class BrowserTab: Identifiable {
     var pinnedTitle = ""
     /// The profile pin this tab is the window's page for. Nil when the tab is not part of the profile's pins.
     var pinID: UUID?
+    /// The shared Space row (`SpaceRow`) this tab is the window's page for. Nil for a tab only this window shows.
+    var spaceTabID: UUID?
+    /// Set on a tab an assistant or MCP client opened in the background. It stays in its window, out of the other windows'
+    /// sidebars, until the person moves it into a folder or another Space.
+    var staysInItsWindow = false
     /// The space of the window this tab belongs to. Nil while it is a pin or inside a pinned folder, which every space
     /// shows, and for a tab that has not joined a space yet.
     var spaceID: UUID? {

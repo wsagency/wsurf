@@ -432,6 +432,7 @@ final class BrowserModel {
             guard let tab else { return }
             self?.noteTitleChange(of: tab)
             if let self {
+                scheduleSpaceRowsPublish()
                 sharedSpaceService?.capture(self)
             }
         }
@@ -554,6 +555,10 @@ final class BrowserModel {
     ) -> BrowserTab {
         if !tab.isMaterialised {
             tab.engine = tab.preferredEngine(for: url)
+        }
+        // An assistant or MCP client may close the tab it opened without asking, so it stays out of the other windows.
+        if transition == .agent {
+            tab.staysInItsWindow = true
         }
         insert(tab, after: opener)
         // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
@@ -769,6 +774,19 @@ final class BrowserModel {
     /// Folders of this window that are profile pins. They are saved with the profile, not with the window.
     @ObservationIgnored var profileFolderIDs: Set<UUID> = []
     @ObservationIgnored var isApplyingProfilePins = false
+    /// Folders of this window that are shared Space rows. They are saved with the profile, not with the window.
+    @ObservationIgnored var spaceFolderIDs: Set<UUID> = []
+    /// The address and title each linked tab last agreed with its `SpaceRow`. See `sharedPage(of:earlier:)`.
+    @ObservationIgnored var spaceTabSeen: [UUID: SpaceTabSeen] = [:]
+    /// Pages of pins another window removed, by pin ID, until that window's Space rows show whether it unpinned the page
+    /// (the row takes the pin's ID) or closed it. See `releaseGonePins(keeping:)`.
+    @ObservationIgnored var pendingPinDemotions: [UUID: UUID] = [:]
+    /// The places of the Space rows this window last showed, so a change of titles alone skips rebuilding the sidebar.
+    @ObservationIgnored var spaceRowShape: [SpaceRowShape] = []
+    /// A publish that waits for a page's title to settle. See `scheduleSpaceRowsPublish()`.
+    @ObservationIgnored var spaceRowsPublishTask: Task<Void, Never>?
+    /// Replaces the profile's `sharesSpaceTabsAcrossWindows` for this window. Tests that share one profile set it.
+    @ObservationIgnored var sharesSpaceTabsOverride: Bool?
 
     @ObservationIgnored var saveDebounce: Duration = .seconds(2)
 

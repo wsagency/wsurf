@@ -68,6 +68,9 @@ extension BrowserModel {
         row.pinnedURL = tab.pinnedURL
         row.pinnedTitle = tab.pinnedTitle
         row.isFavorite = tab.isFavorite
+        // The row keeps the page's place in every window that shares the Space. The page keeps the link too, which the
+        // micro window ignores, so a window that takes the page back without this row still finds its copy.
+        row.spaceTabID = tab.spaceTabID
         copySpace(from: tab, to: row)
         row.lastActiveAt = tab.lastActiveAt
         row.deferRestore(state: tab.sessionState, url: url)
@@ -90,10 +93,13 @@ extension BrowserModel {
         tab.isFavorite = row.isFavorite
         copySpace(from: row, to: tab)
         let pinID = row.pinID
+        let spaceRow = row.spaceTabID
         // Unlinked first, so closing the row is closing a row and nothing it stood for.
         row.microTabID = nil
         row.pinID = nil
+        row.spaceTabID = nil
         tab.pinID = pinID
+        tab.spaceTabID = spaceRow ?? tab.spaceTabID
         close(row, recordForReopening: false)
         syncTabOrder()
         followSpace(of: tab)

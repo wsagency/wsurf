@@ -25,6 +25,7 @@ extension BrowserModel {
         onTabTransferredIn?(tab, source, oldIndex)
         if activate {
             activeTabID = tab.id
+            followSpace(of: tab)
         }
         return true
     }
@@ -62,6 +63,19 @@ extension BrowserModel {
             tab.pinnedURL = nil
             tab.pinnedTitle = ""
             tab.isFavorite = false
+        }
+        // A shared Space row stays one row: the page takes the place of this window's copy, and the source gets a new
+        // unloaded copy below. A micro window shares nothing, so the link it carries only finds the row on the way back.
+        let spaceRow = tab.spaceTabID
+        if spaceRow != nil, windowKind != .micro, !sharesSpaceTabs {
+            tab.spaceTabID = nil
+        }
+        // The row a micro window's page left behind is not a copy: `settle(_:into:)` hands its place to the page.
+        if let spaceRow, tab.spaceTabID != nil, sharesSpaceTabs,
+           let copy = tabs.first(where: { $0.spaceTabID == spaceRow && $0.microTabID == nil }) {
+            isApplyingProfilePins = true
+            close(copy, recordForReopening: false)
+            isApplyingProfilePins = false
         }
         if source.unplacedSpaceRows.remove(.tab(tab.id)) != nil {
             unplacedSpaceRows.insert(.tab(tab.id))
@@ -110,6 +124,9 @@ extension BrowserModel {
         if wasPin, let store = source.attachedPinStore {
             source.applyProfilePins(store.pins)
         }
+        if spaceRow != nil, let store = source.attachedPinStore {
+            source.applySpaceRows(store.spaceRows)
+        }
         if wasActive {
             source.activeTabID = survivor?.id
         }
@@ -118,12 +135,15 @@ extension BrowserModel {
             page.removeFromSuperview()
         }
         bindCallbacks(to: tab)
-        if !preservingSpace {
+        if !preservingSpace, tab.spaceTabID == nil {
             tab.spaceID = nil
         }
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil
+        if let row = tab.spaceTabID, let store = attachedPinStore, store.spaceRows.contains(where: { $0.id == row }) {
+            applySpaceRows(store.spaceRows)
+        }
     }
 
     /// Transfer a sidebar folder and its whole local subtree in one session write, including device-only pages.

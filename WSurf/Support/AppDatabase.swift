@@ -211,6 +211,9 @@ struct AppDatabase: Sendable {
         migrator.registerMigration("v5-pin-space-placement", foreignKeyChecks: .immediate) { db in
             try defineSchema(in: db)
         }
+        migrator.registerMigration("v6-space-tabs", foreignKeyChecks: .immediate) { db in
+            try defineSchema(in: db)
+        }
         return migrator
     }
 
@@ -373,6 +376,7 @@ struct AppDatabase: Sendable {
 
         try defineWindowSessions(in: db)
         try defineProfilePins(in: db)
+        try defineSpaceRows(in: db)
         try defineTabArchive(in: db)
         try defineAssistantFacts(in: db)
     }
@@ -467,6 +471,33 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "profilePin").contains(where: { $0.name == "symbol" }) {
             try db.alter(table: "profilePin") { t in
                 t.add(column: "symbol", .text)
+            }
+        }
+    }
+
+    /// The tabs and folders of each Space, which every regular window of the profile shows. A window's tab row keeps a
+    /// `spaceTabID` for the row it stands for; a Space folder keeps the row's own ID and has no `sessionFolder` row.
+    private nonisolated static func defineSpaceRows(in db: Database) throws {
+        try db.create(table: "spaceRow", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("parentID", .blob).references("spaceRow", onDelete: .cascade)
+            t.column("orderKey", .text).notNull()
+            t.column("kind", .text).notNull()
+            t.column("spaceID", .blob).notNull()
+            t.column("url", .text).notNull().defaults(to: "")
+            t.column("title", .text).notNull().defaults(to: "")
+            t.column("customTitle", .text)
+            t.column("color", .text)
+            t.column("isExpanded", .boolean).notNull().defaults(to: true)
+            t.column("sizeFactor", .double)
+            t.column("tintsIcons", .boolean)
+            t.column("customColor", .text)
+            t.column("symbol", .text)
+        }
+        try db.create(index: "spaceRow_parentID", on: "spaceRow", columns: ["parentID"], options: .ifNotExists)
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "spaceTabID" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "spaceTabID", .blob)
             }
         }
     }

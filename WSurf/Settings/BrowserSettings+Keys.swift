@@ -54,6 +54,7 @@ extension BrowserSettings {
         static let customSearchTemplate = "search.custom.template"
         static let suggestions = "search.suggestions"
         static let agentOnlyInput = "search.agentOnly"
+        static let sharesSpaceTabs = "tabs.sharesSpaceTabsAcrossWindows"
         static let historyRetention = "privacy.historyRetention"
         static let clearOnQuit = "privacy.clearOnQuit"
         static let certificateExceptions = "privacy.certificateExceptions"
