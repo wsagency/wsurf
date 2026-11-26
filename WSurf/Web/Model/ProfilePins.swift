@@ -175,16 +175,18 @@ final class ProfilePinStore {
             closeUnclaimedPinPages(except: source)
             return true
         }
-        // Only the rows that changed: a title that changes writes one row. `next` is depth first, so a parent comes first.
+        // Only the rows that changed: a title that changes writes one row. Saves come first, parents before children (`next`
+        // is depth first), so no row that stays still points to a removed one. Removing a parent cascades to its children,
+        // so the removed rows go last, deepest first, and the cascade can reach only rows that go too.
         let previous = Dictionary(spaceRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let kept = Set(next.map(\.id))
         do {
             try database.writer.write { db in
-                for row in spaceRows where !kept.contains(row.id) {
-                    try SpaceRow.deleteOne(db, key: row.id)
-                }
                 for row in next where previous[row.id] != row {
                     try row.save(db)
+                }
+                for row in spaceRows.reversed() where !kept.contains(row.id) {
+                    try SpaceRow.deleteOne(db, key: row.id)
                 }
             }
         } catch {
@@ -266,10 +268,18 @@ final class ProfilePinStore {
             source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
         }
         isPublishing = true
-        defer { isPublishing = false }
         for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {
             model.applyProfilePins(next)
             model.scheduleSave()
+        }
+        isPublishing = false
+        // A window that removes a pin publishes its Space rows next (`scheduleSave`). A set from iCloud has no such window,
+        // so every window publishes now: a page unpinned on another Mac finds its row, and what is left was a pin removed.
+        if source == nil {
+            for model in attachedWindows where model.sessionClosedAt == nil {
+                model.publishSpaceRows()
+            }
+            closeUnclaimedPinPages(except: nil)
         }
         return true
     }

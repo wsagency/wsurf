@@ -46,6 +46,8 @@ extension BrowserModel {
         guard let store = attachedPinStore, store.spaceRowsAvailable, sharesSpaceTabs, sessionClosedAt == nil,
               !isApplyingProfilePins, !store.isApplying else { return }
         guard pendingSpaceStore == nil, !knownSpaceIDs.isEmpty else {
+            // This window has no rows to add, so a pin it removed was closed, not unpinned: close what the other windows
+            // kept for it, as they did before windows shared their tabs.
             store.closeUnclaimedPinPages(except: self)
             return
         }
@@ -297,7 +299,8 @@ extension BrowserModel {
                 pages[row.id] = tab
                 assign(\.spaceID, to: row.spaceID, on: tab)
                 assign(\.customTitle, to: row.customTitle ?? "", on: tab)
-                if tab.isDeferred || !tab.isMaterialised {
+                // A micro window's row shows what that window's page shows (`AppCoordinator.mirror`), not the row's copy.
+                if tab.microTabID == nil, tab.isDeferred || !tab.isMaterialised {
                     if tab.urlString != row.url, let url = URL(string: row.url), !row.url.isEmpty {
                         tab.applySharedURL(url)
                         if let host = url.host() {

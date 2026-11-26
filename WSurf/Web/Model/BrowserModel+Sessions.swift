@@ -297,6 +297,12 @@ extension BrowserModel {
 
     func saveBlocking() {
         guard !isAgentMicro else { return }
+        // A title change waiting to publish would otherwise miss the other windows' unloaded copies at quit.
+        if let waiting = spaceRowsPublishTask {
+            waiting.cancel()
+            spaceRowsPublishTask = nil
+            publishSpaceRows()
+        }
         noteCloudTabsChange()
         cancelPendingSave()
         for tab in tabs {

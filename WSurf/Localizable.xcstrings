@@ -559,7 +559,7 @@
         "hr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Okupljanje kartica dostupno je kad je isključeno Iste kartice u svim prozorima, a kartice dijeljenog prostora su u više prozora na ovom Macu."
+            "value" : "Okupljanje kartica dostupno je kad je isključena postavka „Iste kartice u svim prozorima”, a kartice dijeljenog prostora nalaze se u više prozora na ovom Macu."
           }
         }
       }

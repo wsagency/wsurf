@@ -295,6 +295,46 @@ struct SpaceTabWindowTests {
         }
     }
 
+    /// Removing a folder writes the rows it held before it goes, so the cascade from its row reaches nothing that stays.
+    @Test func dissolvingANestedFolderKeepsWhatItHeldOnDisk() async throws {
+        try await withProfile { profile in
+            let defaults = InMemoryUserDefaults(inheriting: .standard)
+            let app = run(defaults)
+            let first = app.newWindow(profile: profile, show: false)
+            let browser = first.browser
+            let deep = browser.addPage("https://deep.example/")
+            let child = browser.createFolder(named: "Child", containing: [deep])
+            let parent = browser.createFolder(named: "Parent")
+            browser.move([.folder(child.id)], into: parent)
+            browser.scheduleSave()
+            let link = try #require(deep.spaceTabID)
+            let writer = browser.database.writer
+            func stored() throws -> [UUID: SpaceRow] {
+                let rows = try writer.read { try SpaceRow.fetchAll($0) }
+                return Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+            }
+            #expect(try stored()[child.id]?.parentID == parent.id)
+            #expect(try stored()[link]?.parentID == child.id)
+
+            browser.deleteFolder(parent)
+
+            let rows = try stored()
+            #expect(rows[parent.id] == nil)
+            #expect(rows[child.id] != nil && rows[child.id]?.parentID == nil)
+            #expect(rows[link]?.parentID == child.id)
+            #expect(Set(rows.keys) == Set(browser.pinStore.spaceRows.map(\.id)))
+
+            try await quit(app)
+            let next = run(defaults)
+            defer { finish(next) }
+            next.restoreWindows(of: [profile], show: false)
+            let window = try #require(next.windows.first)
+            #expect(window.browser.spaceOutline == "Child[https://deep.example/]")
+            let reopened = next.newWindow(profile: profile, show: false)
+            #expect(reopened.browser.spaceOutline == "Child[https://deep.example/]")
+        }
+    }
+
     /// A crash between writing the rows and the window's session leaves the tab saved without its link.
     @Test func aSessionSavedBeforeItsLinkKeepsOnePagePerRow() async throws {
         try await withProfile { profile in
@@ -376,6 +416,16 @@ struct SpaceTabWindowTests {
 
             first.browser.close(opened)
             #expect(second.browser.tabs.allSatisfy { $0.spaceTabID == nil || $0.urlString != "https://agent.example/" })
+
+            // Moved into a folder, it is the person's row in every window: MCP must ask before it closes it.
+            let session = MCPBrowserSession(browser: first.browser, available: { true }, consent: { _, _, _ in .control })
+            let filed = first.browser.newTab(url: URL(string: "https://filed.example/"), activate: false, transition: .agent)
+            session.openedTabs.insert(filed.id)
+            #expect(session.closesWithoutAsking(filed))
+            let folder = first.browser.createFolder(named: "Filed", containing: [filed])
+            first.browser.scheduleSave()
+            #expect(filed.spaceTabID != nil && second.browser.folder(id: folder.id) != nil)
+            #expect(!session.closesWithoutAsking(filed))
 
             let kept = first.browser.newTab(url: URL(string: "https://kept.example/"), activate: false, transition: .agent)
             let other = try #require(first.createSpace(name: "Elsewhere", symbol: "star"))

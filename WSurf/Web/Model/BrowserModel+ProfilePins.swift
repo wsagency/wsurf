@@ -212,7 +212,15 @@ extension BrowserModel {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false
-                pendingPinDemotions[pinID] = tab.id
+                if sharedSpace != nil {
+                    // iCloud already keeps this page as a shared Space tab (an unpin on another Mac). It becomes the row,
+                    // under the pin's ID like a local unpin, so this Mac's other windows keep their pages for it too.
+                    if tab.spaceTabID == nil {
+                        tab.spaceTabID = pinID
+                    }
+                } else {
+                    pendingPinDemotions[pinID] = tab.id
+                }
                 demoted.insert(item)
             } else if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil

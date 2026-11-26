@@ -172,8 +172,11 @@ extension MCPBrowserSession {
     /// Whether this connection may close `tab` without the person being asked. Never from the profile's own Assistant
     /// settings, which a process with a shell can edit: only what this connection did itself, or the Keychain-backed trust
     /// store, which holds Developer access (a paired app, a developer site and the Developer profile).
-    private func closesWithoutAsking(_ tab: BrowserTab) -> Bool {
-        agentWindowScope != nil || openedTabs.contains(tab.id) || closingWasConfirmed || permits(tab, capability: .developer)
+    /// A tab this connection opened stops being its own once the person moves it into a folder or another Space: it is then a
+    /// shared row that every window of the profile shows, and closing it would close it there too.
+    func closesWithoutAsking(_ tab: BrowserTab) -> Bool {
+        agentWindowScope != nil || (openedTabs.contains(tab.id) && tab.spaceTabID == nil) || closingWasConfirmed
+            || permits(tab, capability: .developer)
     }
 
     /// The refusal for a `goBack` that would leave the granted website, or nil when the previous page may be loaded.

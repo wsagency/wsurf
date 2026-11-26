@@ -84,6 +84,65 @@ extension SharedSpacesTests {
         #expect(sharedRecords(.folder, in: cloud).count == 1)
     }
 
+    enum RemotePinChange: String, CaseIterable, Sendable {
+        case deleteInOneWindow, deleteInTwoWindows, unpinInTwoWindows
+    }
+
+    /// A pin removed on another Mac leaves no page behind; one unpinned there is one shared Space tab in every window here.
+    @Test(arguments: RemotePinChange.allCases)
+    func aPinRemovedOnAnotherMacLeavesEveryWindowConsistent(change: RemotePinChange) async throws {
+        let cloud = FakeSyncCloud()
+        let studio = Mac(cloud, name: "Studio", sharesSpaceTabs: true)
+        let air = Mac(cloud, name: "Air", sharesSpaceTabs: true)
+        defer { studio.finish(); air.finish() }
+        let address = "https://remote-pin.example.test/"
+        let pin = studio.browser.pinned(address)
+        let pinID = try #require(pin.pinID)
+        _ = try await studio.host.publishProfile(studio.profile)
+        try await studio.host.share(try #require(studio.store.spaces.first), in: studio.profile)
+        try await studio.sync()
+        try await air.host.enable(.profiles, for: air.profile)
+        try await air.host.joinProfile(try #require(air.host.available(.profiles, for: air.profile).first), in: air.profile)
+        // The Space too: an unpinned tab joins the shared Space it is in, which a profile alone does not bring.
+        try await air.host.enable(.spaces, for: air.profile)
+        try await air.host.join(try #require(air.host.availableSpaces(for: air.profile).first), in: air.profile)
+        try await air.sync()
+        var windows = [air.browser]
+        if change != .deleteInOneWindow {
+            windows.append(air.addWindow())
+        }
+        for window in windows {
+            #expect(window.page(for: pinID) != nil)
+        }
+
+        if change == .unpinInTwoWindows {
+            studio.browser.unpin(pin)
+        } else {
+            studio.browser.close([.tab(pin.id)])
+        }
+        try await studio.sync()
+        try await air.sync()
+        try await studio.sync()
+        try await air.sync()
+
+        #expect(!air.browser.pinStore.pins.contains { $0.id == pinID })
+        let links = Set(windows.flatMap { window in window.tabs.filter { $0.urlString == address }.map(\.spaceTabID) })
+        for window in windows {
+            let pages = window.tabs.filter { $0.urlString == address }
+            #expect(window.pendingPinDemotions.isEmpty)
+            #expect(pages.allSatisfy { $0.pinID == nil && $0.pinnedURL == nil })
+            if change == .unpinInTwoWindows {
+                #expect(pages.count == 1 && pages.first?.spaceTabID != nil)
+            } else {
+                #expect(pages.isEmpty)
+            }
+        }
+        if change == .unpinInTwoWindows {
+            #expect(links.count == 1)
+            #expect(sharedTabs(in: cloud).filter { $0.url == address }.count == 1)
+        }
+    }
+
     /// The page goes to a micro window from a window that is not the one iCloud follows, and back. Nothing is uploaded again.
     @Test func aMicroWindowRoundTripFromAnotherWindowKeepsTheSharedRow() async throws {
         let cloud = FakeSyncCloud()
