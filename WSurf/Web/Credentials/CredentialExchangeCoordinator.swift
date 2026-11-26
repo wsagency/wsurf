@@ -42,12 +42,14 @@ final class CredentialExchangeCoordinator {
         case csv(Data)
         /// The passwords saved before Credential Manager.
         case legacy([SavedPassword])
+        /// A WSurf backup file, already decrypted and checked (`VaultBackupCodec.decode`).
+        case backup(VaultBackup)
 
         var origin: CredentialTransferMessage.Origin {
             switch self {
             case .system:
                 .system
-            case .csv:
+            case .csv, .backup:
                 .csvFile
             case .legacy:
                 .legacyPasswords
@@ -61,7 +63,7 @@ final class CredentialExchangeCoordinator {
                 try CredentialCSVImport.stage(data, against: snapshot, memory: memory)
             case let .legacy(records):
                 try CredentialCSVImport.stage(legacy: records, against: snapshot, memory: memory)
-            case .system:
+            case .system, .backup:
                 throw CredentialCSVError.missingColumns
             }
         }
@@ -83,6 +85,8 @@ final class CredentialExchangeCoordinator {
         var traces: [UUID: CredentialCSVImport.RowTrace] = [:]
         /// The saved credential each item that was merged away into it before now stands beside, by candidate.
         var mergedInto: [UUID: UUID] = [:]
+        /// A backup's entries with only files, and the plaintext of its files (`VaultBackupCodec.restoring`). Dropped with the session.
+        var backup: VaultBackupCodec.Staged?
     }
 
     /// The staged import. Internal for `CredentialExchangeCoordinator+Review`, which keeps its choices and its review in step.
@@ -122,8 +126,10 @@ final class CredentialExchangeCoordinator {
     @ObservationIgnored var onMessage: (@MainActor (CredentialTransferMessage) -> Void)?
     /// Test seam: runs after the pre-commit re-check and before `commitAccounts`.
     @ObservationIgnored var afterLastCheck: (@MainActor () async -> Void)?
-    /// The clock for the export hand-off stamp.
+    /// The clock for the export hand-off stamp and a backup's date.
     @ObservationIgnored var now: @MainActor () -> Date = { Date() }
+    /// Test seam: runs after a backup file is decrypted and decoded, before it is handed back (`readBackup`).
+    @ObservationIgnored var afterBackupRead: (@MainActor () async -> Void)?
     /// The refusal of a second token while one is open. It belongs to no window (the token is the system's), so it is the only
     /// ending kept here; every window's own ending lives in that window.
     private(set) var refusal: CredentialTransferMessage?
@@ -213,6 +219,12 @@ final class CredentialExchangeCoordinator {
         try await begin(.csv(data), into: manager, owner: owner, onEnding: onEnding)
     }
 
+    /// Stages a WSurf backup the user picked and the caller decoded (and decrypted), by the same one-import-at-a-time rule as a CSV
+    /// file. Nothing is written; its files are stored only by Import.
+    func beginBackupImport(_ backup: VaultBackup, into manager: CredentialManager, owner: UUID, onEnding: @escaping Ending) async throws {
+        try await begin(.backup(backup), into: manager, owner: owner, onEnding: onEnding)
+    }
+
     /// Stages the passwords saved before Credential Manager for the same review, by the same rules as a CSV file: no token, one
     /// import at a time, bound to the manager's current authorization. Nothing is written, and the old list is never touched.
     func beginLegacyImport(_ records: [SavedPassword], into manager: CredentialManager, owner: UUID, onEnding: @escaping Ending) async throws {
@@ -270,12 +282,27 @@ final class CredentialExchangeCoordinator {
         var keptChanges: [CredentialImportReview.KeptChange] = []
         var traces: [UUID: CredentialCSVImport.RowTrace] = [:]
         var mergedInto: [UUID: UUID] = [:]
+        var backup: VaultBackupCodec.Staged?
         switch source {
-        case let .system(data):
-            do {
-                preview = try CredentialExchangeCodec.preview(data, against: snapshot)
-            } catch let error as CredentialExchangeError {
-                throw end(.malformed(error))
+        case .system, .backup:
+            switch source {
+            case let .system(data):
+                do {
+                    preview = try CredentialExchangeCodec.preview(data, against: snapshot)
+                } catch let error as CredentialExchangeError {
+                    throw end(.malformed(error))
+                }
+            case let .backup(file):
+                let staged: VaultBackupCodec.Staged
+                do {
+                    staged = try VaultBackupCodec.stage(file, against: snapshot, removed: removed)
+                } catch {
+                    throw end(.backupUnreadable())
+                }
+                backup = staged
+                preview = staged.preview
+            case .csv, .legacy:
+                throw CredentialExchangeCoordinatorError.wrongTarget
             }
             let destination = ImportDestinationView(accounts: snapshot.accounts, removed: removed)
             for candidate in preview.candidates {
@@ -308,7 +335,8 @@ final class CredentialExchangeCoordinator {
         }
         let context = ReviewContext(
             classes: classes, profileName: names.profile, vaultName: names.vault, csvReport: csvReport, origin: source.origin,
-            needsChoice: needsChoice, csvLines: csvLines, keptChanges: keptChanges, traces: traces, mergedInto: mergedInto
+            needsChoice: needsChoice, csvLines: csvLines, keptChanges: keptChanges, traces: traces, mergedInto: mergedInto,
+            backup: backup
         )
         generation += 1
         let index = ReviewIndex(preview, context)
@@ -372,7 +400,7 @@ final class CredentialExchangeCoordinator {
     private func applyImport(
         _ touched: [CredentialAccount], removing removals: [UUID], outcome: CredentialImportOutcome, staged: Session
     ) async throws -> VaultCommitReceipt {
-        let writes: [AccountWrite]
+        var writes: [AccountWrite]
         var removing: [UUID: AccountStamp] = [:]
         do {
             try Task.checkCancellation()
@@ -396,11 +424,35 @@ final class CredentialExchangeCoordinator {
         } catch {
             throw end(Self.messageBeforeWrite(error, operation: String(localized: "Checking the vault before saving"), staged.context.origin))
         }
+        // A backup's files are stored only now, once nothing but the commit is left. Whatever the commit does not refer to in the end is
+        // swept: a sweep never removes a file a saved entry names.
+        var stored: Set<UUID> = []
+        func discardStored() async {
+            if !stored.isEmpty {
+                try? await staged.manager.discardAttachments(stored)
+            }
+        }
+        if let backup = staged.context.backup {
+            do {
+                let restored = try await Self.storingFiles(of: backup, in: touched, base: staged.preview.base, manager: staged.manager, stored: &stored)
+                // The same expectations as the check above: only the files' records changed.
+                writes = restored.map { account in
+                    let expected = staged.preview.base.stamps[account.id].map(AccountExpectation.stamp) ?? .absent
+                    return AccountWrite(accountID: account.id, expected: expected, replacement: account)
+                }
+                try Task.checkCancellation()
+                guard staged.manager.authorizationEpoch == staged.epoch else { throw CredentialVaultError.unauthorized }
+            } catch {
+                await discardStored()
+                throw end(Self.messageBeforeWrite(error, operation: String(localized: "Restoring the backup’s files"), staged.context.origin))
+            }
+        }
         let receipt: VaultCommitReceipt
         do {
             // The cause lets the History panel and the import report tell an import's earlier versions from an edit made here.
             receipt = try await staged.manager.commitAccounts(writes, removing: removing, authorizedEpoch: staged.epoch, cause: CredentialChangeCause.import)
         } catch {
+            await discardStored()
             throw end(Self.messageAfterWriteStarted(error, staged.context.origin))
         }
         onMessage?(.succeeded(outcome, receipt: receipt, origin: staged.context.origin))
@@ -718,7 +770,7 @@ final class CredentialExchangeCoordinator {
     }
 
     /// Delivers `message` once and returns the error that carries it to the window that owns the operation.
-    private func end(_ message: CredentialTransferMessage) -> CredentialTransferFailure {
+    func end(_ message: CredentialTransferMessage) -> CredentialTransferFailure {
         onMessage?(message)
         return CredentialTransferFailure(message: message)
     }

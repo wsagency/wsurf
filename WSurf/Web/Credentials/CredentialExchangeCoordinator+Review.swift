@@ -177,6 +177,9 @@ extension CredentialExchangeCoordinator {
             review.unattachedOmissions = unattached
             review.keptChanges = context.keptChanges
             review.missing = missing
+            review.backupFiles = context.backup?.fileCount ?? 0
+            review.backupFileOnlyEntries = context.backup?.fileOnly.count ?? 0
+            review.backupRemovedFileOnly = context.backup?.removedFileOnly ?? 0
             return review
         }
 

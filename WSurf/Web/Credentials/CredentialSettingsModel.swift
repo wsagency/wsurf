@@ -95,8 +95,8 @@ final class CredentialSettingsModel {
     @ObservationIgnored let owner = UUID()
     /// The one-time move of the passwords saved before Credential Manager (`CredentialSettingsModel+LegacyPasswords`).
     @ObservationIgnored let legacy: LegacyPasswordImport
-    /// The finished import's per-credential results, bound to the authorization they were produced under.
-    private var importResult: (outcome: CredentialImportOutcome, epoch: UInt64)?
+    /// The finished import's per-credential results, bound to the authorization they were produced under. Internal for `+Backup`.
+    var importResult: (outcome: CredentialImportOutcome, epoch: UInt64)?
     /// What the last import did to each credential (titles and sites, never secret values). Dropped when the vault locks
     /// or re-unlocks, like every other name shown from it; the transfer message keeps only the counts.
     var lastImport: CredentialImportOutcome? {

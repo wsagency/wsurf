@@ -811,7 +811,7 @@ public nonisolated enum CredentialExchangeCodec {
         return nil
     }
 
-    private static func makeConflicts(
+    static func makeConflicts(
         _ candidates: [CredentialAccount],
         against existing: [CredentialAccount]
     ) throws -> [CredentialImportConflict] {

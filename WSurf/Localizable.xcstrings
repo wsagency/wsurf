@@ -1,6 +1,117 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld entries of the backup that hold only files were deleted from this vault since, so they are not restored." : {
+
+    },
+    "%lld files couldn’t be read from the vault and are not in the backup." : {
+
+    },
+    "A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. A WSurf backup holds every part of the chosen entries, their files included, and imports back into WSurf. Keep an unencrypted backup as safe as the vault itself." : {
+
+    },
+    "Backup password" : {
+
+    },
+    "Choose a WSurf backup: an encrypted .wsurfvault file or an unencrypted .json file." : {
+
+    },
+    "Confirm backup password" : {
+
+    },
+    "Enter the backup password of “%@”." : {
+
+    },
+    "Export Encrypted Backup" : {
+
+    },
+    "Export Encrypted Backup…" : {
+
+    },
+    "Export Unencrypted Backup" : {
+
+    },
+    "Export Unencrypted Backup…" : {
+
+    },
+    "Export everything to an encrypted backup" : {
+
+    },
+    "Export everything to an unencrypted backup (JSON)" : {
+
+    },
+    "Import Backup…" : {
+
+    },
+    "Import Encrypted Backup" : {
+
+    },
+    "Import a WSurf backup (.wsurfvault or .json)" : {
+
+    },
+    "Open Backup" : {
+
+    },
+    "Restoring the backup’s files" : {
+
+    },
+    "Saving the file asks for Touch ID or your Mac password first." : {
+
+    },
+    "The backup also restores %lld attached files. Each one joins the entry its backup entry is saved as, or the saved entry it matches, unless that entry already holds the same file. Files of an entry that matches nothing and is skipped are not imported. %lld entries that hold only files are not listed: each one is added, or its files join the saved entry it matches." : {
+
+    },
+    "The backup could not be saved, so nothing was exported. Anything already at that location was left as it was." : {
+
+    },
+    "The backup is larger than WSurf can read at once, so nothing was imported. The file was not changed." : {
+
+    },
+    "The file could not be used as a WSurf backup (it may be damaged, from a newer version of WSurf, or hold entries the vault can’t keep), so nothing was imported. The file was not changed." : {
+
+    },
+    "The file is encrypted with your backup password." : {
+
+    },
+    "The file will not be encrypted. Anyone who can open it can read everything in it." : {
+
+    },
+    "The password is wrong, or the file was changed or damaged. Nothing was imported." : {
+
+    },
+    "The selected entries’ files take more than WSurf can put in one backup (256 MB), so nothing was saved. Select fewer entries with files and try again." : {
+
+    },
+    "The two passwords don’t match." : {
+
+    },
+    "This file is NOT encrypted. It holds every password, passkey, verification code setup, card, note and attached file of the selected entries in plain text: anyone who can open it can read and use all of them. You are responsible for protecting it. Encrypt it or delete it as soon as you no longer need it; WSurf never deletes it for you. To keep a copy safely, choose Export Encrypted Backup instead." : {
+
+    },
+    "This saves every part of the selected entries to one file encrypted with a backup password: passwords, passkeys, verification code setups, notes, cards and other items, and attached files. You can import it into WSurf on any Mac. WSurf can’t recover a forgotten backup password, and without it the file can’t be opened." : {
+
+    },
+    "Use a backup password of at least 8 characters." : {
+
+    },
+    "WSurf Backup.json" : {
+
+    },
+    "WSurf Backup.wsurfvault" : {
+
+    },
+    "WSurf saved %lld entries and %lld files to a backup that is not encrypted. Anyone who can open the file can read every password, passkey, code, card, note and file in it. Delete it or encrypt it yourself." : {
+
+    },
+    "WSurf saved %lld entries and %lld files to an encrypted backup. Only the backup password opens it: WSurf can’t recover a forgotten password." : {
+
+    },
+    "export an encrypted backup of your passwords, passkeys, codes, cards, notes and files" : {
+
+    },
+    "export every password, passkey, code, card, note and file without encryption" : {
+
+    },
     "This passkey couldn’t open the vault. Key check on this Mac: %@" : {
       "localizations" : {
         "hr" : {

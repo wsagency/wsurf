@@ -233,6 +233,47 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
             """))
     }
 
+    // MARK: Backup
+
+    /// The chosen file is not a WSurf backup this version reads, or it fails the vault's checks. Nothing was imported.
+    static func backupUnreadable(tooLarge: Bool = false) -> Self {
+        Self(.csvUnreadable, .none, tooLarge
+            ? String(localized: "The backup is larger than WSurf can read at once, so nothing was imported. The file was not changed.")
+            : String(localized: """
+                The file could not be used as a WSurf backup (it may be damaged, from a newer version of WSurf, or hold entries \
+                the vault can’t keep), so nothing was imported. The file was not changed.
+                """))
+    }
+
+    /// The backup file was written. `encrypted` says whether the backup password protects it.
+    static func backupExported(entries: Int, files: Int, omittedFiles: Int, encrypted: Bool) -> Self {
+        let omitted = omittedFiles == 0 ? "" : " " + String(localized: """
+            \(omittedFiles) files couldn’t be read from the vault and are not in the backup.
+            """)
+        let text = encrypted
+            ? String(localized: """
+                WSurf saved \(entries) entries and \(files) files to an encrypted backup. Only the backup password opens it: \
+                WSurf can’t recover a forgotten password.
+                """)
+            : String(localized: """
+                WSurf saved \(entries) entries and \(files) files to a backup that is not encrypted. Anyone who can open the \
+                file can read every password, passkey, code, card, note and file in it. Delete it or encrypt it yourself.
+                """)
+        return Self(.csvExported, .none, text + omitted)
+    }
+
+    /// The backup could not be written: whatever was already at the chosen location is untouched.
+    static func backupNotSaved(tooLarge: Bool = false) -> Self {
+        Self(.exportNotSent, .none, tooLarge
+            ? String(localized: """
+                The selected entries’ files take more than WSurf can put in one backup (256 MB), so nothing was saved. \
+                Select fewer entries with files and try again.
+                """)
+            : String(localized: """
+                The backup could not be saved, so nothing was exported. Anything already at that location was left as it was.
+                """))
+    }
+
     /// Failed before the destination was changed: whatever was already at the chosen location is untouched.
     static func csvNotSaved() -> Self {
         Self(.exportNotSent, .none, String(localized: """

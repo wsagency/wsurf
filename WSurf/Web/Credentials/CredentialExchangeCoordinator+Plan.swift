@@ -194,6 +194,14 @@ extension CredentialExchangeCoordinator {
             session.preview, choices: session.choices, required: session.index.mustDecide, duplicates: session.index.duplicates,
             inputsValidated: session.inputsValidated, traces: session.context.traces
         )
+        if let backup = session.context.backup {
+            // A backup restores what the parts the review decides don't carry: the dates of the entries it adds, and the files.
+            let restored = try VaultBackupCodec.restoring(backup, into: planned.touched)
+            planned.touched = restored.touched
+            planned.outcome = CredentialImportOutcome(
+                added: planned.outcome.added + restored.added, updated: planned.outcome.updated + restored.updated
+            )
+        }
         let changed = Set(planned.touched.map(\.id))
         planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in
             let action: CredentialImportOutcome.Result.Action
