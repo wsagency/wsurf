@@ -33,6 +33,20 @@ struct GeneralSettings: View {
 
         SettingsSection(title: "Tabs", symbol: "rectangle.on.rectangle") {
             DetailRow(
+                title: "Same tabs in every window",
+                caption: """
+                Every window shows each Space’s pinned and unpinned tabs, and with Shared Spaces on, so does every Mac. \
+                Each window keeps its own selected tab. When this is off, unpinned tabs stay in the window that opened them \
+                and Gather Tabs collects them.
+                """
+            ) {
+                SettingsToggle($settings.sharesSpaceTabsAcrossWindows)
+            }
+            .settingsAnchor("general.spaceTabsInEveryWindow")
+
+            RowSeparator()
+
+            DetailRow(
                 title: "Sleep inactive tabs",
                 caption: "On low memory, unload inactive tabs until you open them."
             ) {

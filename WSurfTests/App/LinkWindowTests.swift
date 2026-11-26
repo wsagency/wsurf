@@ -45,7 +45,8 @@ struct LinkWindowTests {
             #expect(opened.browser.tabs.count == 1)
             #expect(opened.browser.activeTab?.urlString == url.absoluteString)
             #expect(source.browser.activeTab === tab)
-            #expect(source.browser.tabs.count == 1)
+            // The source window may show the new window's page as a shared Space tab, and nothing else of its own.
+            #expect(source.browser.tabs.filter { $0.spaceTabID == nil }.count == 1)
         }
     }
 

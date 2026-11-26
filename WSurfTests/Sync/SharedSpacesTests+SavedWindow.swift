@@ -29,6 +29,10 @@ extension SharedSpacesTests {
         let local = catalog.add(name: "Work")
         let home = Space(id: UUID(), name: "Studio home", symbol: "briefcase", color: .blue)
         let adopted = try catalog.addProfile(forFirstSpace: home)
+        // Gather Tabs and saved split windows exist only while windows keep their own unpinned tabs.
+        for profile in [local, adopted] {
+            BrowserProfileContext.shared(for: profile).settings.sharesSpaceTabsAcrossWindows = false
+        }
         let result: Result<Void, Error>
         do {
             try await reopenStudioTab(on: local, in: adopted, path: path)

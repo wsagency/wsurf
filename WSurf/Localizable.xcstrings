@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Same tabs in every window" : {
+      "comment" : "Title of the switch in Settings > General > Tabs, and the same row in Settings search. On, every window of the profile shows the pinned and unpinned tabs of each Space. On by default. Sentence case.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Iste kartice u svim prozorima"
+          }
+        }
+      }
+    },
+    "Every window shows each Space’s pinned and unpinned tabs, and with Shared Spaces on, so does every Mac. Each window keeps its own selected tab. When this is off, unpinned tabs stay in the window that opened them and Gather Tabs collects them." : {
+      "comment" : "Caption of the Same tabs in every window switch in Settings > General > Tabs, and its description in Settings search. Shared Spaces is the iCloud sync option in Settings > Sync; Gather Tabs is the name of the Gather Tabs in One Window button there.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Svaki prozor prikazuje prikvačene i neprikvačene kartice svakog prostora, a uz uključene dijeljene prostore to vrijedi i za svaki Mac. Svaki prozor zadržava vlastitu odabranu karticu. Kad je ovo isključeno, neprikvačene kartice ostaju u prozoru koji ih je otvorio, a Okupi kartice ih skuplja u jedan prozor."
+          }
+        }
+      }
+    },
     "This passkey couldn’t open the vault. Key check on this Mac: %@" : {
       "localizations" : {
         "hr" : {

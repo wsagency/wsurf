@@ -113,6 +113,7 @@ extension AppCoordinator {
         let placeholder = micro.browser.activeTab
         let row = browser.insertMicroPlaceholder(for: tab)
         guard moveTab(tab, to: micro) else {
+            row.spaceTabID = nil
             row.microTabID = nil
             row.pinID = nil
             browser.close(row, recordForReopening: false)

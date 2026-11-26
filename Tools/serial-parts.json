@@ -531,6 +531,7 @@
    "SpaceProfileTests",
    "SpaceStoreTests",
    "SpaceSwitcherTests",
+   "SpaceTabWindowTests",
    "SpaceTests",
    "SpeechMuteTests",
    "SplitFoldCommitTests",

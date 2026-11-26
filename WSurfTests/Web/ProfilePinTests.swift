@@ -202,6 +202,10 @@ struct ProfilePinTests {
             let first = fixture.window()
             let second = fixture.window()
             let third = fixture.window()
+            // With Space tabs shared, the window that removed the pin decides; see SpaceTabWindowTests.
+            for window in [first, second, third] {
+                window.sharesSpaceTabsOverride = false
+            }
             first.pinned("https://keep.example/")
             let doomed = first.pinned("https://gone.example/")
             let open = try #require(second.page(for: doomed.pinID))

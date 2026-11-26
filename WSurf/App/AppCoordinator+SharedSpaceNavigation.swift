@@ -18,7 +18,9 @@ extension AppCoordinator {
     /// Consolidate the selected Space without closing tabs or switching any other window's profile.
     func canGatherSharedTabs(in entry: SpaceEntry) -> Bool {
         guard let application, !application.isLaunching, !application.isTerminating, application.ownsSession,
-              let host = browser.sharedSpaceService, host.catalog.ready.contains(.spaces), host.isEnabled(.spaces, for: entry.profile) else { return false }
+              let host = browser.sharedSpaceService, host.catalog.ready.contains(.spaces), host.isEnabled(.spaces, for: entry.profile),
+              // Every window already shows every tab of the Space.
+              !BrowserProfileContext.shared(for: entry.profile).settings.sharesSpaceTabsAcrossWindows else { return false }
         let owners = Set(host.tabWindows(in: entry, includingPinned: false).values)
         let available = Set(regularSpaceWindows.filter { $0.context.profile.id == entry.profile.id }.map(\.windowID))
         return owners.count > 1 && application.windows.allSatisfy { !owners.contains($0.windowID) || available.contains($0.windowID) }

@@ -23,6 +23,8 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
         var editedAfterRevision: Int64?
         /// A local transfer reserved in the catalog before committing both SQLite windows.
         var movingFrom: UUID?
+        /// The shared Space row the window's tab stands for, so another window's page for it can take the slot.
+        var spaceTabID: UUID?
     }
 
     var profile: UUID?

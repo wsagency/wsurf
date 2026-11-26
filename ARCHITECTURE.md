@@ -119,6 +119,21 @@ below the line. Unloading a pinned tab returns it to its pinned page. A window d
 publishes an empty set. A private window has an in-memory store of its own and neither
 sees nor changes the profile's pins.
 
+The ordinary tabs and folders of each Space are shared the same way while **Same tabs in
+every window** (`BrowserSettings.sharesSpaceTabsAcrossWindows`, per profile, on by default)
+is on. They are `spaceRow` rows in the same store; each window keeps its own unloaded page
+for a tab, linked by `BrowserTab.spaceTabID`, and a Space folder keeps one ID in every
+window and no `sessionFolder` row. A window keeps its own selected tab and Space, a page
+never moves between windows to be shown, and a loaded copy that another window navigated
+keeps its own address. A blank tab, an internal page and a micro window's row stay the
+window's own until they show a page. Closing a tab closes it in every window; closing a
+window, quitting or switching profile detaches first, so nothing else closes. Private,
+micro and Agent Micro windows never attach. Turning the setting off leaves the rows in one
+window and takes the copies out of the others; turning it on shows each window the union.
+With Shared Spaces on, the window that holds most of the profile's slots alone captures and
+applies the catalog (`CloudSharedSpaces.spaceTabsOwner`), and slots of other windows move to
+its pages, so each row uploads once.
+
 `ChromiumRuntime` initializes CEF only for the first Chromium page and stays
 initialized until quit because CEF cannot be restarted in-process. Its AppKit
 application subclass is installed at startup without loading Chromium.
@@ -380,7 +395,8 @@ there creates a local copy. Publishing or linking a profile and sharing or joini
 Favorites and pinned folders. A profile shared from Studio appears as “Work — Studio” when another Mac looks for it.
 After upgrading an item-by-item link, **Shared Pins and Favorites** lets the owner enable sharing for the whole collection.
 `SharedCatalogSync` tracks edits by stable record ID, so independent pins can share a URL. `CloudSharedSpaces` maps shared
-Space rows to local windows and saves shared closes until session storage catches up.
+Space rows to local windows and saves shared closes until session storage catches up. Gather Tabs applies only while
+windows keep their own unpinned tabs.
 Each Mac keeps its own selected Space and focused tab.
 
 `CloudSettingsSync` reconciles website settings, custom providers and per-profile model choices. Sensitive website

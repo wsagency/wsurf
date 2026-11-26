@@ -97,6 +97,15 @@ enum SettingsIndex {
                       ["autofill", "credit", "debit", "card", "wallet", "payment", "save suggestions", "reset prompts"]),
         SettingsEntry("autofill.applePay", .autofill, "Apple Pay", "Scan a code to pay with iPhone.",
                       ["apple pay", "payment", "wallet", "touch id", "checkout"]),
+        SettingsEntry("general.spaceTabsInEveryWindow", .general, "Same tabs in every window",
+                      """
+                      Every window shows each Space’s pinned and unpinned tabs, and with Shared Spaces on, so does every Mac. \
+                      Each window keeps its own selected tab. When this is off, unpinned tabs stay in the window that opened them \
+                      and Gather Tabs collects them.
+                      """,
+                      ["spaces", "space", "windows", "new window", "shared tabs", "same tabs", "unpinned", "pinned",
+                       "mirror", "sync", "gather", "every window", "all windows",
+                      ]),
         SettingsEntry("general.sleepTabs", .general, "Sleep inactive tabs",
                       "On low memory, unload inactive tabs until you open them.",
                       ["sleep", "sleeping", "discard", "unload", "memory", "ram", "background tabs", "reload",

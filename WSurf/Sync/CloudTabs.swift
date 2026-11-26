@@ -249,7 +249,11 @@ final class CloudTabs {
             running: running && !open.isEmpty,
             favorites: roots.filter { $0.kind == .tab && $0.isFavorite }.compactMap(node),
             pins: roots.filter { !($0.kind == .tab && $0.isFavorite) }.compactMap(node),
-            windows: clearsOnQuit ? [] : open.map { SessionWindow(id: $0.windowID, nodes: $0.cloudTabsNodes()) }
+            // Windows that share Space tabs show the same rows; the first reports them.
+            windows: clearsOnQuit ? [] : open.enumerated().map { index, window in
+                let reported = open.prefix(index).contains { $0.sharesSpaceTabs } && window.sharesSpaceTabs
+                return SessionWindow(id: window.windowID, nodes: window.cloudTabsNodes(includingSpaceRows: !reported))
+            }
         )
     }
 

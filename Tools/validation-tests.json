@@ -73,6 +73,10 @@
       "suites": ["SharedCatalogTests", "SharedProfileLifecycleTests", "SharedSpacesTests", "CloudSyncGateTests", "NeverSyncTests"]
     },
     {
+      "paths": ["WSurf/Web/Model/BrowserModel+SpaceTabs.swift", "WSurf/Web/Model/SpaceRow.swift", "WSurf/Web/Model/ProfilePins.swift", "WSurf/Web/Model/BrowserModel+ProfilePins.swift", "WSurf/Sync/CloudSharedSpaces+SpaceTabs.swift", "WSurfTests/App/SpaceTabWindowTests.swift"],
+      "suites": ["SpaceTabWindowTests", "ProfilePinWindowTests", "SharedSpacesTests"]
+    },
+    {
       "paths": ["WSurf/Sync/MacSetting*", "WSurf/Sync/CloudSettingsSync*", "WSurf/Settings/Pages/MacSyncSettings.swift", "WSurf/Settings/Pages/ProviderKeySyncSection.swift", "WSurf/Agent/Providers/CredentialStore.swift"],
       "suites": ["MacSettingsSyncTests", "MacWebsiteSyncTests", "SettingsNavigatorTests", "SettingsRowMetricsTests", "CredentialStoreTests"]
     },

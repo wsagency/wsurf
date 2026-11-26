@@ -124,6 +124,10 @@ final class ProfilePinStore {
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
+    /// The ordinary tabs and folders every window shows while Space tabs are shared, depth first. See `SpaceRow`.
+    private(set) var spaceRows: [SpaceRow]
+    /// False when the stored Space rows could not be read. Nothing may replace them then.
+    let spaceRowsAvailable: Bool
 
     private init(database: AppDatabase) {
         self.database = database
@@ -135,6 +139,52 @@ final class ProfilePinStore {
             pins = []
             isAvailable = false
         }
+        do {
+            spaceRows = try database.writer.read { db in SpaceRow.depthFirst(try SpaceRow.fetchAll(db)) }
+            spaceRowsAvailable = true
+        } catch {
+            Pipeline.log.error("space rows: read failed")
+            spaceRows = []
+            spaceRowsAvailable = false
+        }
+    }
+
+    /// True while a change is being shown in the attached windows, when no window may publish.
+    var isApplying: Bool {
+        isPublishing
+    }
+
+    /// The attached windows of the store, which see every change to its rows.
+    var attachedWindows: [BrowserModel] {
+        subscribers.allObjects.filter { $0.attachedPinStore === self }
+    }
+
+    /// Replaces the stored Space rows with `next`, which must be depth first, and shows them in every other attached
+    /// window before this returns. Shares the guard of `publish`, so a window that applies one set publishes neither.
+    @discardableResult
+    func publishSpaceRows(_ next: [SpaceRow], from source: BrowserModel? = nil) -> Bool {
+        guard spaceRowsAvailable, !isPublishing else { return false }
+        guard next != spaceRows else { return true }
+        do {
+            try database.writer.write { db in
+                try SpaceRow.deleteAll(db)
+                for row in next {
+                    try row.insert(db)
+                }
+            }
+        } catch {
+            Pipeline.log.error("space rows: write failed")
+            return false
+        }
+        spaceRows = next
+        isPublishing = true
+        defer { isPublishing = false }
+        // A closed window's saved session catches up when it reopens (`pagesOfCurrentSpaceRows`).
+        for model in attachedWindows where model !== source && model.sharesSpaceTabs && model.sessionClosedAt == nil {
+            model.applySpaceRows(next)
+            model.scheduleSave()
+        }
+        return true
     }
 
     static func store(for database: AppDatabase) -> ProfilePinStore {

@@ -361,7 +361,7 @@ extension BrowserModel {
         }
         openerElsewhere[tab.id] = nil
         tabs.removeAll { $0 === tab }
-        sharedSpaceService?.removed(tab.id, in: self)
+        sharedSpaceService?.removed(tab.id, spaceTabID: tab.spaceTabID, in: self)
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
         // The title this tab gave its last visit is written now: nothing renames that visit once the tab is gone.

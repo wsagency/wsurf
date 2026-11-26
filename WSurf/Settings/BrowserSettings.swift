@@ -18,7 +18,7 @@ final class BrowserSettings {
 
     static let sessionKeys: [String] = [
         Key.searchEngine, Key.customSearchName, Key.customSearchTemplate,
-        Key.suggestions, Key.agentOnlyInput,
+        Key.suggestions, Key.agentOnlyInput, Key.sharesSpaceTabs,
         Key.historyRetention, Key.clearOnQuit, Key.certificateExceptions,
         Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.inputHistory, Key.inputHistoryRetention, Key.inputHistoryExcludedSites,
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
@@ -136,6 +136,7 @@ final class BrowserSettings {
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
     @ObservationIgnored var onAutomaticPictureInPictureChanged: ((Bool) -> Void)?
     @ObservationIgnored var onVideoInPlayerChanged: ((Bool) -> Void)?
+    @ObservationIgnored var onSpaceTabSharingChanged: (() -> Void)?
     @ObservationIgnored var sidebarFontCache: Font?
     @ObservationIgnored var sidebarEmphasizedFontCache: Font?
     @ObservationIgnored var sidebarLineHeightCache: CGFloat = 0
@@ -264,6 +265,16 @@ final class BrowserSettings {
 
     var agentOnlyInput: Bool {
         didSet { write(agentOnlyInput, forKey: Key.agentOnlyInput) }
+    }
+
+    /// Every regular window of the profile shows the same pinned and unpinned tabs of each Space. Off, a window's unpinned
+    /// tabs are its own, and Gather Tabs collects a Space's tabs into one window. Per profile, on by default.
+    var sharesSpaceTabsAcrossWindows: Bool {
+        didSet {
+            guard sharesSpaceTabsAcrossWindows != oldValue else { return }
+            write(sharesSpaceTabsAcrossWindows, forKey: Key.sharesSpaceTabs)
+            onSpaceTabSharingChanged?()
+        }
     }
 
     // MARK: - Privacy
@@ -604,6 +615,7 @@ final class BrowserSettings {
         customSearchTemplate = string(Key.customSearchTemplate) ?? ""
         showsSearchSuggestions = object(Key.suggestions) as? Bool ?? true
         agentOnlyInput = bool(Key.agentOnlyInput)
+        sharesSpaceTabsAcrossWindows = object(Key.sharesSpaceTabs) as? Bool ?? true
 
         historyRetention = string(Key.historyRetention)
             .flatMap(HistoryRetention.init(rawValue:)) ?? .forever
@@ -683,6 +695,7 @@ final class BrowserSettings {
         customSearchTemplate = ""
         showsSearchSuggestions = true
         agentOnlyInput = false
+        sharesSpaceTabsAcrossWindows = true
         historyRetention = .forever
         clearsDataOnQuit = false
         allowsCertificateExceptions = false

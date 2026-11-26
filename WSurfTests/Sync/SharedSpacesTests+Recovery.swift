@@ -22,6 +22,7 @@ extension SharedSpacesTests {
             let spaces = SpaceStore(profile: profile, file: directory.appending(path: "Spaces.json"))
             store = spaces
             let model = BrowserModel(windowID: windowID, database: AppDatabase(at: directory.appending(path: "session.sqlite")))
+            model.sharesSpaceTabsOverride = false
             browser = model
             host = CloudSharedSpaces(
                 stateFile: directory.appending(path: "catalog.json"), profiles: [profile],

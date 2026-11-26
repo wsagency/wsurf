@@ -54,6 +54,7 @@ extension SharedSpacesTests {
         #expect(mac.browser.page(at: address) == nil)
         mac.browser.closeAllTabs(saving: false) // System quit after the cloud write and before the delayed session write.
         let next = BrowserModel(context: mac.browser.context, windowID: mac.browser.windowID, database: mac.browser.database)
+        next.sharesSpaceTabsOverride = false
         let host = CloudSharedSpaces(
             stateFile: mac.dir.appending(path: "shared.json"), profiles: [mac.profile], windows: { [weak next] in [next].compactMap { $0 } },
             spaces: { _ in mac.store }, pins: { _ in next.pinStore }

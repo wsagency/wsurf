@@ -32,6 +32,12 @@ extension BrowserModel {
                 && !tab.isFavorite
                 && !tab.isPrivate
                 && sharedSpaceService?.sharesRow(tab.id, in: self) != true
+                // Closing a shared Space row closes it in every window, so every window's page must be unused.
+                && tab.spaceTabID.map { row in
+                    spaceTabCopies(of: row).allSatisfy { copy in
+                        copy.tab.id != copy.model.activeTabID && copy.tab.lastActiveAt < cutoff && copy.model.protectionReason(for: copy.tab) == nil
+                    }
+                } != false
                 && !paired.contains(tab.id)
                 && folder(containing: tab) == nil
                 && protectionReason(for: tab) == nil

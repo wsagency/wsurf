@@ -17,6 +17,10 @@ struct LaunchRestoreTests {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profiles = (0..<count).map { catalog.add(name: "Launch restore \($0)") }
+        // Each window restores its own layout; SpaceTabWindowTests covers windows that share their Space tabs.
+        for profile in profiles {
+            BrowserProfileContext.shared(for: profile).settings.sharesSpaceTabsAcrossWindows = false
+        }
         var failure: (any Error)?
         do {
             try await body(profiles)

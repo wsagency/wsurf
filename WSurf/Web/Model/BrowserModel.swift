@@ -429,6 +429,7 @@ final class BrowserModel {
             guard let tab else { return }
             self?.noteTitleChange(of: tab)
             if let self {
+                publishSpaceRows()
                 sharedSpaceService?.capture(self)
             }
         }
@@ -765,6 +766,12 @@ final class BrowserModel {
     /// Folders of this window that are profile pins. They are saved with the profile, not with the window.
     @ObservationIgnored var profileFolderIDs: Set<UUID> = []
     @ObservationIgnored var isApplyingProfilePins = false
+    /// Folders of this window that are shared Space rows. They are saved with the profile, not with the window.
+    @ObservationIgnored var spaceFolderIDs: Set<UUID> = []
+    /// The address and title each linked tab last agreed with its `SpaceRow`. See `sharedPage(of:earlier:)`.
+    @ObservationIgnored var spaceTabSeen: [UUID: SpaceTabSeen] = [:]
+    /// Replaces the profile's `sharesSpaceTabsAcrossWindows` for this window. Tests that share one profile set it.
+    @ObservationIgnored var sharesSpaceTabsOverride: Bool?
 
     @ObservationIgnored var saveDebounce: Duration = .seconds(2)
 

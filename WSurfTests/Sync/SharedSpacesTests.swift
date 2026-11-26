@@ -27,12 +27,17 @@ struct SharedSpacesTests {
         let engine: FakeSyncEngine
         let dir: URL
 
-        init(_ cloud: FakeSyncCloud, name: String = "Test Mac") {
+        /// `sharesSpaceTabs` false keeps each window's unpinned tabs its own, as they were before windows shared them.
+        let sharesSpaceTabs: Bool
+
+        init(_ cloud: FakeSyncCloud, name: String = "Test Mac", sharesSpaceTabs: Bool = false) {
+            self.sharesSpaceTabs = sharesSpaceTabs
             dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
             let spaceStore = SpaceStore(profile: profile, file: dir.appending(path: "spaces.json"))
             store = spaceStore
             let model = BrowserModel(windowID: UUID(), database: .temporary())
             browser = model
+            model.sharesSpaceTabsOverride = sharesSpaceTabs
             model.adoptSpaces(spaceStore.spaces.map(\.id))
             model.attachProfilePins()
             let windows = openWindows
@@ -49,10 +54,28 @@ struct SharedSpacesTests {
         func addWindow() -> BrowserModel {
             let model = BrowserModel(context: browser.context, windowID: UUID(), database: browser.database)
             model.sharedSpacesHost = host
+            model.sharesSpaceTabsOverride = sharesSpaceTabs
             model.adoptSpaces(store.spaces.map(\.id))
             model.attachProfilePins()
             openWindows.models.append(model)
             return model
+        }
+
+        /// Brings back a saved window the way launch does: it restores before the app lists it as open.
+        func restoreWindow(_ id: UUID, sharesSpaceTabs: Bool) -> BrowserModel {
+            let model = BrowserModel(context: browser.context, windowID: id, database: browser.database)
+            model.sharedSpacesHost = host
+            model.sharesSpaceTabsOverride = sharesSpaceTabs
+            model.adoptSpaces(store.spaces.map(\.id))
+            model.restoreSession()
+            openWindows.models.append(model)
+            return model
+        }
+
+        func removeWindow(_ model: BrowserModel) {
+            model.saveBlocking()
+            model.closeAllTabs(saving: false)
+            openWindows.models.removeAll { $0 === model }
         }
 
         func finish() {
@@ -227,6 +250,7 @@ struct SharedSpacesTests {
         mac.browser.activate(focused)
         mac.browser.saveBlocking()
         let next = BrowserModel(windowID: mac.browser.windowID, database: mac.browser.database)
+        next.sharesSpaceTabsOverride = false
         let resumed = CloudSharedSpaces(
             stateFile: mac.dir.appending(path: "shared.json"), profiles: [mac.profile],
             windows: { [weak next] in [next].compactMap { $0 } }, spaces: { _ in mac.store }, pins: { _ in next.pinStore }
@@ -354,6 +378,7 @@ struct SharedSpacesTests {
         if sharesPins {
             #expect(sameTab.pinID == page.pinID)
             let otherWindow = BrowserModel(windowID: UUID(), database: air.browser.database)
+            otherWindow.sharesSpaceTabsOverride = false
             otherWindow.sharedSpacesHost = air.host
             otherWindow.adoptSpaces(air.store.spaces.map(\.id))
             otherWindow.attachProfilePins()
@@ -362,6 +387,7 @@ struct SharedSpacesTests {
             otherWindow.closeAllTabs(saving: false)
             air.browser.saveBlocking()
             let restored = BrowserModel(windowID: air.browser.windowID, database: air.browser.database)
+            restored.sharesSpaceTabsOverride = false
             restored.sharedSpacesHost = air.host
             restored.adoptSpaces(air.store.spaces.map(\.id))
             restored.restoreSession()

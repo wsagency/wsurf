@@ -21,6 +21,7 @@ extension SharedSpacesTests {
             let database = AppDatabase(at: root.appending(path: "session.sqlite"))
             let store = SpaceStore(profile: profile, file: root.appending(path: "Spaces.json"), database: database)
             let model = BrowserModel(windowID: window, database: database)
+            model.sharesSpaceTabsOverride = false
             spaces = store
             browser = model
             let windows = self.windows
@@ -41,6 +42,7 @@ extension SharedSpacesTests {
 
         func addWindow(_ id: UUID, in space: UUID) -> BrowserModel {
             let window = BrowserModel(context: browser.context, windowID: id, database: browser.database)
+            window.sharesSpaceTabsOverride = false
             windows.add(window)
             window.sharedSpacesHost = host
             window.adoptSpaces(from: spaces)

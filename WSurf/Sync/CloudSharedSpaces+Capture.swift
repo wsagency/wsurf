@@ -48,22 +48,25 @@ extension CloudSharedSpaces {
     }
 
     /// A row gone from an open window is ambiguous during teardown or transfer. Only an individual close supplies a deletion.
-    func removed(_ id: UUID, in browser: BrowserModel) {
+    /// With Space tabs shared across windows, a close in any window records the deletion on the owner's slot.
+    func removed(_ id: UUID, spaceTabID: UUID? = nil, in browser: BrowserModel) {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isApplyingProfilePins, !browser.isReadingSharedSession, isEnabled(.spaces, for: profile),
               !browser.unplacedSpaceRows.contains(.tab(id)), !browser.unplacedSpaceRows.contains(.folder(id)),
-              let entry = links[profile.id]?.slots[id], entry.window == browser.windowID, let prior = entry.last else { return }
-        links[profile.id]?.slots[id]?.closedAfterRevision = browser.sessionRevision
-        links[profile.id]?.slots[id]?.editedAfterRevision = nil
-        links[profile.id]?.slots[id]?.last = prior.tombstone
+              case let (window, local)? = spaceTabsTarget(of: id, link: spaceTabID, in: browser),
+              let entry = links[profile.id]?.slots[local], entry.window == window.windowID, let prior = entry.last else { return }
+        links[profile.id]?.slots[local]?.closedAfterRevision = window.sessionRevision
+        links[profile.id]?.slots[local]?.editedAfterRevision = nil
+        links[profile.id]?.slots[local]?.last = prior.tombstone
         catalog.stage(prior.tombstone, for: profile.id)
         persistLinks()
     }
 
     func sharesRow(_ id: UUID, in browser: BrowserModel) -> Bool {
         let profile = browser.context.profile
-        guard isEnabled(.spaces, for: profile), let slot = links[profile.id]?.slots[id] else { return false }
-        return slot.window == browser.windowID && slot.last?.removed == false
+        guard isEnabled(.spaces, for: profile), case let (window, local)? = spaceTabsTarget(of: id, link: browser.tab(id: id)?.spaceTabID, in: browser),
+              let slot = links[profile.id]?.slots[local] else { return false }
+        return slot.window == window.windowID && slot.last?.removed == false
     }
 
     /// A window's existing slot and catalog record can identify an ordinary SQLite row whose Space is missing.
@@ -207,9 +210,11 @@ extension CloudSharedSpaces {
 
     func capture(_ browser: BrowserModel, renamed: SidebarItem? = nil) {
         let profile = browser.context.profile
-        guard !applying, !browser.opensPrivately, !browser.isReadingSharedSession, browser.sessionClosedAt == nil,
+        // A window that is applying the profile's rows captures the result once it is done.
+        guard !applying, !browser.opensPrivately, !browser.isReadingSharedSession, !browser.isApplyingProfilePins, browser.sessionClosedAt == nil,
               browser.windowKind == .standard, isEnabled(.spaces, for: profile),
-              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile else { return }
+              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile,
+              capturesSpaceTabs(of: browser, link: &link) else { return }
         guard spaces(profile) != nil else {
             if let renamed {
                 captureLinkedRename(renamed, in: browser, link: link)
@@ -269,7 +274,7 @@ extension CloudSharedSpaces {
             groups[item.parentID ?? space, default: []].append(local)
             let edited = previous?.editedAfterRevision.map { previous?.window == browser.windowID ? $0 : browser.sessionRevision }
             link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited,
-                                      movingFrom: previous?.movingFrom)
+                                      movingFrom: previous?.movingFrom, spaceTabID: browser.tab(id: local)?.spaceTabID)
         }
         if restoredMembership {
             browser.sidebarDidChange()

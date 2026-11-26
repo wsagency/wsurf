@@ -316,6 +316,14 @@ extension AppCoordinator {
         settings.onWebPreferencesChanged = {
             targets().forEach { $0.browser.applyWebSettings() }
         }
+        settings.onSpaceTabSharingChanged = {
+            let windows = targets().filter { !$0.isMicro }
+            let models = windows.map(\.browser)
+            // Turning sharing off leaves the rows in the window iCloud follows, else in the window in front.
+            let front = (windows.first { $0.isKeyWindow } ?? windows.first)?.browser
+            let keeper = front.flatMap { $0.sharedSpaceService?.slotOwner(of: $0.context.profile, among: models, fallback: $0) } ?? front
+            BrowserModel.spaceTabSharingChanged(in: models, keeper: keeper)
+        }
         media.isEnabled = settings.showsMediaPlayer
         applyPictureLending()
         sidePanel.setAvailable(settings.showsLyrics, for: .lyrics)
