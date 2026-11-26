@@ -66,8 +66,8 @@ enum SignInCookieHandoff {
         }
     }
 
-    /// `operation`'s result, or nil once `limit` passes first. The operation is then cancelled and must end on cancellation, as a
-    /// DevTools command does.
+    /// `operation`'s result, or nil once `limit` passes first or the caller is cancelled (a newer navigation). The operation is
+    /// then cancelled and must end on cancellation, as a DevTools command does.
     static func result<T: Sendable>(within limit: Duration, of operation: @escaping @MainActor @Sendable () async -> T?) async -> T? {
         let work = Task { @MainActor in await operation() }
         let timer = Task {
@@ -75,7 +75,7 @@ enum SignInCookieHandoff {
             work.cancel()
         }
         defer { timer.cancel() }
-        let value = await work.value
+        let value = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
         return work.isCancelled ? nil : value
     }
 

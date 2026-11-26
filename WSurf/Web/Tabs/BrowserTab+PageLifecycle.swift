@@ -216,6 +216,9 @@ extension BrowserTab {
             inheritedSignInOrigin = nil
             signInEngine = nil
             signInChain = SignInChain()
+        } else if signInChainDeadline != nil, SitePermissions.webKitOnlyOrigins.contains(signInOrigin) {
+            // The provider's callback starts a fresh window, however long the person spent on its pages.
+            signInChainDeadline = signInClock().addingTimeInterval(SignInChain.lifetime)
         }
     }
 

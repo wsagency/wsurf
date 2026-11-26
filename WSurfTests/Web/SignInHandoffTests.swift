@@ -194,6 +194,33 @@ struct SignInHandoffTests {
 
     /// The hold ends `SignInChain.lifetime` after the latest provider page: a link to another chained site then leaves the sign-in
     /// for that site's own engine, while the signed-in app itself keeps it. Before then, the same link stays.
+    /// However long the person spent on the provider's pages, its callback opens a fresh window: the SSO page's link back to the
+    /// app still stays in the sign-in.
+    @Test func theProvidersCallbackStartsAFreshWindow() throws {
+        let app = try #require(URL(string: "https://app.example.com/auth/oidc.callback"))
+        let provider = try #require(URL(string: "https://accounts.google.com/o/oauth2/auth"))
+        let ssoCallback = try #require(URL(string: "https://sso.company.io/callback/?code=c"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: app))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        var now = start
+        let tab = browser.makeTab(for: provider)
+        tab.urlString = provider.absoluteString
+        tab.signInClock = { now }
+        tab.signInChain.note(SitePermissions.origin(for: app), engine: .chromium, now: start)
+        tab.signInChain.note("https://sso.company.io", engine: .chromium, now: start)
+        try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
+        now = start.addingTimeInterval(5 * 60)
+        try #require(tab.heldSignInChainOrigins.isEmpty, "the person stayed on the provider past the window")
+        #expect(tab.permitsEngineNavigation(URLRequest(url: ssoCallback), isMainFrame: true, isRedirect: true))
+        #expect(tab.signInChainDeadline == now.addingTimeInterval(SignInChain.lifetime))
+        tab.urlString = ssoCallback.absoluteString
+        #expect(tab.permitsEngineNavigation(URLRequest(url: app), isMainFrame: true, userLinkFrom: "https://sso.company.io"))
+        #expect(tab.signInEngine == .webKit)
+        #expect(tab.preferredEngine(for: app) == .webKit)
+    }
+
     @Test(.boundedWebViews, arguments: [false, true])
     func theHoldEndsAfterTheLatestProviderPage(expired: Bool) throws {
         let app = try #require(URL(string: "https://app.example.com/home"))
@@ -215,6 +242,8 @@ struct SignInHandoffTests {
         now = start.addingTimeInterval(SignInChain.lifetime - 1)
         try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
         try #require(tab.signInChainDeadline == now.addingTimeInterval(SignInChain.lifetime))
+        // The callback brought the tab back to the app, which the person then used past the window.
+        tab.urlString = app.absoluteString
         now = now.addingTimeInterval(expired ? SignInChain.lifetime + 1 : SignInChain.lifetime - 1)
 
         let appOrigin = SitePermissions.origin(for: app)
@@ -278,6 +307,30 @@ struct SignInHandoffTests {
         #expect(slow == nil && flag.cancelled)
         #expect(clock.now - began < .seconds(30))
         #expect(await SignInCookieHandoff.result(within: .seconds(30)) { 7 } == 7)
+    }
+
+    /// A newer navigation cancels the handoff's task: the read is cancelled at once instead of running to its limit.
+    @Test func cancellingTheCallerCancelsTheRead() async {
+        final class Flag {
+            var cancelled = false
+        }
+        let clock = ContinuousClock()
+        let began = clock.now
+        let flag = Flag()
+        let caller = Task { @MainActor in
+            await SignInCookieHandoff.result(within: .seconds(30)) { () -> Int? in
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    flag.cancelled = true
+                }
+                return 1
+            }
+        }
+        caller.cancel()
+        #expect(await caller.value == nil)
+        #expect(flag.cancelled)
+        #expect(clock.now - began < .seconds(10))
     }
 
     private func chromium(_ name: String, domain: String, extra: [String: Any] = [:]) throws -> SiteCookie {
