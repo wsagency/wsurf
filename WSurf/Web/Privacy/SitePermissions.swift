@@ -354,11 +354,37 @@ final class SitePermissions {
     }
     /// Google sign-in requires WebKit. OpenAI starts its session before redirecting to Google,
     /// so its sign-in origin must use that same engine from the first request.
-    nonisolated static let webKitOnlyOrigins: Set<String> = ["https://accounts.google.com", "https://auth.openai.com"]
+    nonisolated private static let builtInWebKitOnlyOrigins: Set<String> = ["https://accounts.google.com", "https://auth.openai.com"]
+
+    #if DEBUG
+    /// A loopback origin a test adds so a local fixture plays the sign-in provider; the real providers are never loaded in tests.
+    nonisolated private static let testWebKitOnlyOrigins = OSAllocatedUnfairLock(initialState: Set<String>())
+
+    nonisolated private static let builtInWebKitOnlySites: Set<String> = Set(builtInWebKitOnlyOrigins.map(site(for:)))
+
+    nonisolated static var webKitOnlyOrigins: Set<String> {
+        let added = testWebKitOnlyOrigins.withLock { $0 }
+        return added.isEmpty ? builtInWebKitOnlyOrigins : builtInWebKitOnlyOrigins.union(added)
+    }
+
+    nonisolated static var webKitOnlySites: Set<String> {
+        let added = testWebKitOnlyOrigins.withLock { $0 }
+        return added.isEmpty ? builtInWebKitOnlySites : builtInWebKitOnlySites.union(added.map(site(for:)))
+    }
+
+    /// Runs `body` with `origin` treated as a WebKit-only sign-in provider.
+    static func withWebKitOnlyOriginForTesting<T>(_ origin: String, _ body: () async throws -> T) async rethrows -> T {
+        testWebKitOnlyOrigins.withLock { _ = $0.insert(origin) }
+        defer { testWebKitOnlyOrigins.withLock { _ = $0.remove(origin) } }
+        return try await body()
+    }
+    #else
+    nonisolated static let webKitOnlyOrigins: Set<String> = builtInWebKitOnlyOrigins
 
     /// Websites whose sign-in runs only in WebKit. A WebKit page on one of these sites
     /// holds a session Chromium cannot share even without a fresh sign-in redirect in the tab.
     nonisolated static let webKitOnlySites: Set<String> = Set(webKitOnlyOrigins.map(site(for:)))
+    #endif
 
     func engine(for origin: String) -> BrowserEngine {
         let key = normalizeEngineOrigin(origin)

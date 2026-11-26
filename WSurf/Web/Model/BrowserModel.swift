@@ -365,6 +365,9 @@ final class BrowserModel {
             opened.defaultEngineOverride = agentCompanion?.defaultEngine ?? .chromium
         }
         opened.applyOpenerSignIn(openerSignIn, for: url)
+        if let opener {
+            opened.seedSignInChain(from: opener, for: url)
+        }
         return open(opened, url: url, activate: activate, after: opener, transition: transition, byPerson: byPerson, hasAddress: true)
     }
 
@@ -565,7 +568,8 @@ final class BrowserModel {
             activeTabID = tab.id
         }
         if let url {
-            let keepsSession = tab.signInEngine != nil || tab.pendingOpenerSignIn != nil
+            // A seeded chain (`seedSignInChain`) is the opener's sign-in flow, which this load continues.
+            let keepsSession = tab.signInEngine != nil || tab.pendingOpenerSignIn != nil || !tab.signInChain.isEmpty
             tab.load(url, transition: transition, startedByUser: !keepsSession, byPerson: byPerson)
         }
         if transition != .agent {

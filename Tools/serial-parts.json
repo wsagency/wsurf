@@ -328,6 +328,8 @@
    "SharedProfileLifecycleTests",
    "SharedSpacesTests",
    "SidebarListHeightTests",
+   "SignInHandoffLiveTests",
+   "SignInHandoffTests",
    "SiteCookiesTests",
    "TabSleepScheduleTests",
    "TabSleepSparesTests",

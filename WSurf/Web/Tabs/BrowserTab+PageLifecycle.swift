@@ -193,18 +193,32 @@ extension BrowserTab {
 
     /// Keep sign-in in one engine from the first request to the return redirect so every hop uses the same session.
     /// A new visit the user starts ends the hold. Links within the same website and sign-in redirects keep it.
+    /// The provider hop also records the sites the flow came from (`signInChainOrigins`), so its callbacks may return to them.
     func noteNavigation(to url: URL, startedByUser: Bool, submittingWith engine: BrowserEngine? = nil) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
             leavingSignIn = nil
             pendingOpenerSignIn = nil
             inheritedSignInOrigin = nil
             let ongoing = startedByUser ? nil : signInEngine
+            // An address the person opened starts no flow from the sites before it.
+            if startedByUser {
+                signInChain = SignInChain()
+            }
+            let now = signInClock()
+            let flow = startedByUser ? [] : heldSignInChainOrigins.union(signInChain.origins(leadingTo: url, now: now))
             signInEngine = engine ?? ongoing ?? .webKit
+            signInChainOrigins = flow
+            // Each provider page (a second factor, a consent screen) extends the hold, so a slow sign-in keeps its return.
+            signInChainDeadline = flow.isEmpty ? nil : now.addingTimeInterval(SignInChain.lifetime)
         } else if startedByUser {
             leavingSignIn = nil
             pendingOpenerSignIn = nil
             inheritedSignInOrigin = nil
             signInEngine = nil
+            signInChain = SignInChain()
+        } else if signInChainDeadline != nil, SitePermissions.webKitOnlyOrigins.contains(signInOrigin) {
+            // The provider's callback starts a fresh window, however long the person spent on its pages.
+            signInChainDeadline = signInClock().addingTimeInterval(SignInChain.lifetime)
         }
     }
 
@@ -235,6 +249,8 @@ extension BrowserTab {
         noteNavigation(to: url, startedByUser: false, submittingWith: canReissue ? nil : engine)
         let followsDeparture = isRedirect && navigation != nil && leavingSignIn?.navigation === navigation
         let outside = leavesSignIn || followsDeparture
+        // A reissue below records the other engine instead (`load`).
+        signInChain.note(destination, engine: engine, now: signInClock())
         guard canReissue else { return true }
         if preferredEngine(for: url, keepingSignIn: !outside) == engine {
             if leavesSignIn {
@@ -250,8 +266,9 @@ extension BrowserTab {
         return false
     }
 
+    /// A return to a site the held provider flow came from (an SSO service back to its app) stays in the sign-in.
     private func leavesSignIn(from origin: String?, to destination: String) -> Bool {
-        guard let origin, !origin.isEmpty, !destination.isEmpty else { return false }
+        guard let origin, !origin.isEmpty, !destination.isEmpty, !heldSignInChainOrigins.contains(destination) else { return false }
         return !Self.continuesSignIn(from: origin, to: destination)
     }
 
