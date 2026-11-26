@@ -125,6 +125,30 @@ extension BrowserTab {
         inheritedSignInOrigin = SitePermissions.webKitOnlyOrigins.contains(destination) ? nil : destination
     }
 
+    /// The flow's origins and the Chromium page to read their cookies from, when loading `url` in `desired` moves a sign-in from
+    /// Chromium to a WebKit-only provider: this tab's Chromium page, or for a tab with no page yet (a Chromium page's pop-up,
+    /// `seedSignInChain`) any live Chromium page of this profile.
+    func chromiumSignInHandoff(to url: URL, engine desired: BrowserEngine) -> (origins: Set<String>, page: ChromiumPage?)? {
+        guard desired == .webKit, extensionBaseURL == nil,
+              SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return nil }
+        // Only the held flow's sites that Chromium served: a site this flow visited in WebKit has its fresh cookies there already.
+        let origins = signInChain.origins(leadingTo: url, servedBy: .chromium).intersection(signInChainOrigins)
+        guard !origins.isEmpty else { return nil }
+        if let chromium = liveView?.chromium {
+            return (origins, chromium)
+        }
+        return liveView == nil && SiteCookies.livePage(context) != nil ? (origins, nil) : nil
+    }
+
+    /// A tab that a Chromium page opened for a WebKit-only provider continues that page's flow: its chain starts with the
+    /// opener's, so the flow's cookies move to WebKit with it. Only within one profile.
+    func seedSignInChain(from opener: BrowserTab, for url: URL) {
+        guard opener.context === context, opener.loadedEngine == .chromium,
+              SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return }
+        signInChain = opener.signInChain
+        signInChain.note(opener.signInOrigin, engine: .chromium)
+    }
+
     @discardableResult
     func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
         leavingSignIn = nil

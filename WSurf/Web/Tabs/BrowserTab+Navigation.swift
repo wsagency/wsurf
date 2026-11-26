@@ -78,14 +78,23 @@ extension BrowserTab {
         pendingNavigationTask?.cancel()
         pendingTransition = transition
         let desired = preferredEngine(for: url)
+        signInChain.note(SitePermissions.webOrigin(for: url), engine: desired)
         urlString = url.absoluteString
-        if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil {
+        let handoff = chromiumSignInHandoff(to: url, engine: desired)
+        if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil || handoff != nil {
             lastRequestedNavigation = nil
             // A Chromium hop back through restored entries leaves a page that is ahead of the new one: Back must not return there.
             let left = liveView.flatMap { $0.engine != desired && $0.chromium?.hopsBackward != true ? committedURL : nil }
                 .map { (url: $0, state: page.savedInteractionState(keepingWebKitSignIn: sourceSignIn == .webKit)) }
             pendingNavigationTask = Task { [weak self] in
                 guard let self else { return nil }
+                // Read before the Chromium page is retired: it may be the profile's only live one. The cookies are in the store
+                // before WebKit sends its first request to the provider.
+                if let handoff {
+                    _ = await SignInCookieHandoff.copy(
+                        origins: handoff.origins, context: context, preferring: handoff.page, into: dataStore.httpCookieStore
+                    )
+                }
                 // A new address ends this page's work anyway, so unlike a same-page engine switch it is not confirmed.
                 guard !Task.isCancelled, await replaceEngine(with: desired), !Task.isCancelled else { return nil }
                 if let left {

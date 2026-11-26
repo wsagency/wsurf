@@ -248,7 +248,7 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var developmentOwner: DevelopmentOwner?
     let sitePermissions: SitePermissions
     let context: BrowserProfileContext
-    private let dataStore: WKWebsiteDataStore
+    let dataStore: WKWebsiteDataStore
     var engine: BrowserEngine = .webKit
     @ObservationIgnored var pendingNavigationTask: Task<PageNavigation?, Never>?
     @ObservationIgnored var lastRequestedNavigation: PageNavigation?
@@ -287,6 +287,7 @@ final class BrowserTab: Identifiable {
         didSet {
             if signInEngine == nil {
                 inheritedSignInOrigin = nil
+                signInChainOrigins = []
             }
             if signInEngine != oldValue {
                 invalidateSessionState()
@@ -297,6 +298,12 @@ final class BrowserTab: Identifiable {
     /// Keeps automatic redirect and script hops from carrying that session onto unrelated websites,
     /// while staying nil for genuine sign-in provider flows (`webKitOnlyOrigins`) so OAuth callbacks stay in-session.
     @ObservationIgnored var inheritedSignInOrigin: String?
+    /// The main-frame origins this tab passed through recently (`SignInChain`).
+    @ObservationIgnored var signInChain = SignInChain()
+    /// The sites a held provider sign-in belongs to (`SignInChain.origins(leadingTo:)`), such as an app and its SSO service: a
+    /// return to any of them keeps `signInEngine`, and those Chromium served move their cookies to WebKit with the hop. Empty
+    /// without a hold.
+    @ObservationIgnored var signInChainOrigins: Set<String> = []
     struct SignInDeparture {
         let source: PageNavigation?
         let address: URL
@@ -574,6 +581,8 @@ final class BrowserTab: Identifiable {
     func detach() {
         guard !isClosed else { return }
         isClosed = true
+        signInChain = SignInChain()
+        signInChainOrigins = []
         releaseCurrentDevelopment(reason: .tabClosed)
         translation.documentChanged()
         reader.pageChanged()

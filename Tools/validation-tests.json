@@ -47,6 +47,10 @@
       "suites": ["CredentialSettingsTests", "CredentialExchangeCoordinatorTests", "AutofillVaultSaveTests"]
     },
     {"paths": ["WSurf/Settings/Pages/WebsiteDataPage.swift"], "suites": ["WebsiteDataTests"]},
+    {
+      "paths": ["WSurf/Web/Tabs/SignInChain.swift", "WSurf/Web/Tabs/BrowserTab+Engine.swift", "WSurf/Web/Privacy/SignInCookieHandoff.swift", "WSurf/Web/Privacy/SiteCookies.swift"],
+      "suites": ["SignInHandoffTests", "SignInHandoffLiveTests", "EngineRoutingTests", "SiteCookiesTests"]
+    },
     {"paths": ["WSurf/Settings/Pages/CloudVaultRow.swift"], "suites": ["VaultSyncReviewSheetTests", "VaultSyncEdgeTests"]},
     {
       "paths": ["Packages/CefSwift/Sources/CefKit/CefRemote*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*", "WSurf/Web/Engines/ChromiumRemote*.swift", "Tools/check-service-*.py", "Tools/check-service-strings.sh", "Tools/embed-chromium.sh"],
