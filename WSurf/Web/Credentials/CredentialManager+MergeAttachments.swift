@@ -5,6 +5,13 @@ import Foundation
 import WSurfVault
 
 extension CredentialManager {
+    /// Encrypts a backup's file into the vault's folder under a new id; the record is stored by the import's commit.
+    func restoreAttachment(_ contents: Data, as original: CredentialAttachment) async throws -> CredentialAttachment {
+        try await reading { access in
+            try await store.restoreAttachment(vaultID: vaultID, contents: contents, as: original, using: access)
+        }
+    }
+
     func verifyMergeAttachments(_ files: [CredentialAttachment], destinationEpoch: UInt64) async throws {
         try await reading { access in
             guard access.epoch == destinationEpoch else { throw CredentialVaultError.unauthorized }

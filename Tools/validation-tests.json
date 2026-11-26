@@ -40,7 +40,7 @@
     },
     {
       "paths": ["WSurf/Web/Autofill/*", "WSurf/Web/Credentials/*", "WSurf/UI/Passwords/*", "WSurfCredentialExchange/*"],
-      "suites": ["PickCredentialRealMenuTests", "AutofillVaultSaveTests", "AutofillRefusalDiagnosticsTests", "CredentialExchangeCoordinatorTests", "CredentialListLifetimeTests", "CredentialPasswordPrivacyTests"]
+      "suites": ["PickCredentialRealMenuTests", "AutofillVaultSaveTests", "AutofillRefusalDiagnosticsTests", "CredentialExchangeCoordinatorTests", "CredentialListLifetimeTests", "CredentialPasswordPrivacyTests", "VaultBackupTests"]
     },
     {
       "paths": ["WSurf/Settings/Pages/Credential*", "WSurf/Settings/Pages/Autofill*"],

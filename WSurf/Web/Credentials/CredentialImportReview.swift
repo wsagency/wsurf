@@ -320,6 +320,12 @@ nonisolated struct CredentialImportReview: Sendable {
     var keptChanges: [KeptChange] = []
     /// The saved credentials the other app brought earlier and the transfer no longer holds. Each is kept unless the user moves it to Trash.
     var missing: [Missing] = []
+    /// For a WSurf backup: the files it restores with its entries, and how many of its entries hold only files (they are not listed:
+    /// each is added, or joins the saved entry of the same item).
+    var backupFiles = 0
+    var backupFileOnlyEntries = 0
+    /// File-only entries of the backup that the vault deleted since: not restored.
+    var backupRemovedFileOnly = 0
     /// The user's word that the transfer holds everything the other app has: a transfer does not say whether it is whole, so nothing
     /// moves to Trash before this is set.
     var transferIsComplete = false

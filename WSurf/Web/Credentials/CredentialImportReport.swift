@@ -57,9 +57,10 @@ nonisolated extension CredentialImportReview {
         missing.reduce(0) { $0 + ($1.movesToTrash ? 1 : 0) }
     }
 
-    /// How many saved credentials Import writes or moves to Trash: nothing to do when it is zero.
+    /// How many saved credentials Import writes or moves to Trash: nothing to do when it is zero. A backup's files may still land in an
+    /// entry that is otherwise unchanged, so they count too; a commit that finds them all held already says nothing was imported.
     var pendingWrites: Int {
-        tally.writes + trashCount
+        tally.writes + trashCount + backupFiles + backupFileOnlyEntries
     }
 }
 
