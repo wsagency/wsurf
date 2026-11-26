@@ -221,7 +221,7 @@ enum SiteCookies {
 
     // MARK: Chromium
 
-    private static func livePage(_ context: BrowserProfileContext) -> ChromiumPage? {
+    static func livePage(_ context: BrowserProfileContext) -> ChromiumPage? {
         ChromiumRuntime.shared.livePages.first {
             $0.context.contextID == context.contextID && ($0.raw != nil || $0.remote != nil)
         }
@@ -258,7 +258,7 @@ enum SiteCookies {
         return try await ChromiumRuntime.shared.withHiddenPage(context: context, body)
     }
 
-    private static func chromiumCookies(_ page: ChromiumPage) async throws -> [SiteCookie] {
+    static func chromiumCookies(_ page: ChromiumPage) async throws -> [SiteCookie] {
         let answer = try await page.command("Network.getAllCookies")
         return ((answer["cookies"] as? [[String: Any]]) ?? []).compactMap(chromiumCookie)
     }
