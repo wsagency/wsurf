@@ -63,6 +63,10 @@ struct SignInHandoffLiveTests {
             switch request.path {
             case "/app/home":
                 return page("App")
+            case "/app/session":
+                return .html("<!doctype html><title>App</title>", headers: [
+                    "Cache-Control": "no-store", "Set-Cookie": "oauth_csrf=csrf-1; Path=/; HttpOnly; SameSite=Lax",
+                ])
             case "/app/start":
                 return redirect("\(sso)/sso/authorize", setting: "oauth_csrf=csrf-1; Path=/; HttpOnly; SameSite=Lax")
             case "/app/direct":
@@ -134,7 +138,7 @@ struct SignInHandoffLiveTests {
                 if throughSSO {
                     #expect(try #require(stored["authentik_session"]).isHTTPOnly)
                     let none = try #require(stored["sso_none"])
-                    #expect(none.isSecure && none.isHTTPOnly && none.sameSitePolicy == nil)
+                    #expect(none.isSecure && none.isHTTPOnly && SignInHandoffTests.isNone(none.sameSitePolicy))
                     #expect(none.expiresDate?.timeIntervalSince1970.rounded() == expires)
                     let strict = try #require(stored["sso_strict"])
                     #expect(strict.isSessionOnly && strict.sameSitePolicy == .sameSiteStrict)
@@ -142,6 +146,40 @@ struct SignInHandoffLiveTests {
                     // The SSO host was not part of this flow: its Chromium cookies stay there.
                     #expect(stored["sso_none"] == nil && stored["sso_strict"] == nil)
                 }
+            }
+        }
+    }
+
+    /// `window.open` from the app's Chromium page to the provider: the pop-up opens as a WebKit tab, which reads the app's cookie from
+    /// the opener's Chromium page before the provider loads, so the app accepts the callback in the pop-up.
+    @Test(.boundedWebViews)
+    func aChromiumPopupToTheProviderCarriesTheAppsCookie() async throws {
+        let log = Log()
+        try await LiveWindowRig.with(engine: .chromium, respond: Self.respond(log)) { rig in
+            let port = try #require(rig.server.port).rawValue
+            let app = "http://localhost:\(port)"
+            let provider = "http://[::1]:\(port)"
+            rig.browser.sitePermissions.setEngine(.chromium, for: app)
+            try await SitePermissions.withWebKitOnlyOriginForTesting(provider) {
+                let session = try #require(URL(string: "\(app)/app/session"))
+                let opener = rig.browser.newTab(url: session)
+                opener.page.ignoresWindowOcclusion = true
+                try #require(await waitUntil(timeout: .seconds(60)) { opener.page.url == session && !opener.page.isLoading })
+                try #require(opener.loadedEngine == .chromium)
+                let before = rig.browser.tabs.map(ObjectIdentifier.init)
+
+                let signIn = try #require(URL(string: "\(provider)/provider/to-app?redirect_uri=\(Self.encoded("\(app)/app/callback"))"))
+                #expect(opener.openChromiumPopup(signIn, userGesture: true, sourceURL: session, sourceFrame: nil, click: .other) == nil)
+                let popup = try #require(rig.browser.tabs.first { !before.contains(ObjectIdentifier($0)) })
+                let done = try #require(URL(string: "\(app)/app/callback?code=p"))
+                let finished = await waitUntil(timeout: .seconds(60)) {
+                    popup.loadedEngine == .webKit && popup.page.url == done && !popup.page.isLoading
+                }
+                try #require(finished, "requests: \(log.paths)")
+                #expect(try await popup.page.evaluateJavaScript("document.title") as? String == "Signed in", "requests: \(log.paths)")
+                let csrf = await popup.dataStore.httpCookieStore.allCookies().first { $0.name == "oauth_csrf" }
+                #expect(csrf?.domain == "localhost" && csrf?.isHTTPOnly == true)
+                #expect(opener.loadedEngine == .chromium, "the opener stays where it was")
             }
         }
     }

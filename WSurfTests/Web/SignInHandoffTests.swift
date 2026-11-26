@@ -156,7 +156,129 @@ struct SignInHandoffTests {
         #expect(tab.chromiumSignInHandoff(to: pasted, engine: .webKit) == nil)
     }
 
+    // MARK: Expiry
+
+    /// A tab on the app in Chromium, the app noted at `start` and `earlier` at `earlierAt`.
+    private func chainedChromiumTab(
+        _ browser: BrowserModel, app: URL, earlier: String, earlierAt: Date, clock: @escaping () -> Date
+    ) throws -> BrowserTab {
+        let tab = browser.makeTab(for: app)
+        browser.tabs.append(tab)
+        tab.signInClock = clock
+        tab.urlString = app.absoluteString
+        try #require(tab.page.engine == .chromium)
+        tab.signInChain.note(earlier, engine: .chromium, now: earlierAt)
+        tab.signInChain.note(SitePermissions.origin(for: app), engine: .chromium, now: start)
+        return tab
+    }
+
+    /// A Chromium site visited longer than `SignInChain.lifetime` before the provider hop neither joins the sign-in nor moves its
+    /// cookies; one visited within it does both.
+    @Test(.boundedWebViews) func aSiteVisitedBeforeTheWindowJoinsNoSignIn() throws {
+        let app = try #require(URL(string: "https://app.example.com/login"))
+        let provider = try #require(URL(string: "https://accounts.google.com/o/oauth2/auth"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: app))
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let now = start.addingTimeInterval(5)
+        let tab = try chainedChromiumTab(
+            browser, app: app, earlier: "https://old.example", earlierAt: start.addingTimeInterval(-SignInChain.lifetime)
+        ) { now }
+        tab.signInChain.note("https://recent.example", engine: .chromium, now: start)
+        tab.noteNavigation(to: provider, startedByUser: false)
+        #expect(tab.signInChainOrigins == ["https://app.example.com", "https://recent.example"])
+        let handoff = try #require(tab.chromiumSignInHandoff(to: provider, engine: .webKit))
+        #expect(handoff.origins == ["https://app.example.com", "https://recent.example"])
+    }
+
+    /// The hold ends `SignInChain.lifetime` after the latest provider page: a link to another chained site then leaves the sign-in
+    /// for that site's own engine, while the signed-in app itself keeps it. Before then, the same link stays.
+    @Test(.boundedWebViews, arguments: [false, true])
+    func theHoldEndsAfterTheLatestProviderPage(expired: Bool) throws {
+        let app = try #require(URL(string: "https://app.example.com/home"))
+        let provider = try #require(URL(string: "https://accounts.google.com/o/oauth2/auth"))
+        let earlier = try #require(URL(string: "https://earlier.example/article"))
+        let permissions = temporaryPermissions()
+        for site in [app, earlier] {
+            permissions.setEngine(.chromium, for: SitePermissions.origin(for: site))
+        }
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        var now = start
+        let tab = browser.makeTab(for: provider)
+        tab.signInClock = { now }
+        tab.signInChain.note("https://earlier.example", engine: .chromium, now: start)
+        tab.signInChain.note(SitePermissions.origin(for: app), engine: .chromium, now: start)
+        try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
+        // A second provider page (a second factor) extends the hold.
+        now = start.addingTimeInterval(SignInChain.lifetime - 1)
+        try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
+        try #require(tab.signInChainDeadline == now.addingTimeInterval(SignInChain.lifetime))
+        now = now.addingTimeInterval(expired ? SignInChain.lifetime + 1 : SignInChain.lifetime - 1)
+
+        let appOrigin = SitePermissions.origin(for: app)
+        #expect(tab.permitsEngineNavigation(URLRequest(url: app), isMainFrame: true, userLinkFrom: appOrigin))
+        #expect(tab.signInEngine == .webKit, "the signed-in app keeps its sign-in")
+        #expect(tab.heldSignInChainOrigins.isEmpty == expired)
+        if expired {
+            #expect(!tab.permitsEngineNavigation(URLRequest(url: earlier), isMainFrame: true, userLinkFrom: appOrigin))
+            #expect(tab.signInEngine == nil)
+            #expect(tab.preferredEngine(for: earlier) == .chromium)
+        } else {
+            #expect(tab.permitsEngineNavigation(URLRequest(url: earlier), isMainFrame: true, userLinkFrom: appOrigin))
+            #expect(tab.signInEngine == .webKit)
+        }
+    }
+
     // MARK: Cookies
+
+    /// SameSite=None as WebKit reports it: no policy on some macOS versions, the explicit "none" on others. Never Lax or Strict.
+    nonisolated static func isNone(_ policy: HTTPCookieStringPolicy?) -> Bool {
+        policy == nil || policy?.rawValue.lowercased() == "none"
+    }
+
+    @Test func onlyAFresherWebKitDomainCookieIsKept() throws {
+        func cookie(_ domain: String, expires: TimeInterval?, name: String = "sid", path: String = "/") throws -> HTTPCookie {
+            var properties: [HTTPCookiePropertyKey: Any] = [.name: name, .value: "v", .domain: domain, .path: path]
+            if let expires {
+                properties[.expires] = start.addingTimeInterval(expires)
+            }
+            return try #require(HTTPCookie(properties: properties))
+        }
+        let existing = [try cookie(".example.com", expires: 7200), try cookie("app.example.com", expires: 7200)]
+        #expect(SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 3600), in: existing))
+        // A fresher or equally fresh Chromium copy, a session cookie, a host-only cookie, or another name or path is written.
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 9000), in: existing))
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 7200), in: existing))
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: nil), in: existing))
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie("app.example.com", expires: 3600), in: existing))
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 3600, name: "csrf"), in: existing))
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 3600, path: "/x"), in: existing))
+        let sessionOnly = [try cookie(".example.com", expires: nil)]
+        #expect(!SignInCookieHandoff.keepsWebKitCopy(of: try cookie(".example.com", expires: 3600), in: sessionOnly))
+    }
+
+    /// A read that does not answer in time gives up, and the read is cancelled rather than left running.
+    @Test func aWedgedReadGivesUpAtItsLimit() async {
+        final class Flag {
+            var cancelled = false
+        }
+        let clock = ContinuousClock()
+        let began = clock.now
+        let flag = Flag()
+        let slow: Int? = await SignInCookieHandoff.result(within: .milliseconds(50)) {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                flag.cancelled = true
+            }
+            return 1
+        }
+        #expect(slow == nil && flag.cancelled)
+        #expect(clock.now - began < .seconds(30))
+        #expect(await SignInCookieHandoff.result(within: .seconds(30)) { 7 } == 7)
+    }
 
     private func chromium(_ name: String, domain: String, extra: [String: Any] = [:]) throws -> SiteCookie {
         var object: [String: Any] = ["name": name, "value": "v-\(name)", "domain": domain, "path": "/", "expires": -1, "session": true]
@@ -205,12 +327,13 @@ struct SignInHandoffTests {
         let session = try #require(stored["authentik_session"])
         #expect(session.isHTTPOnly && session.isSecure && !session.isSessionOnly && session.path == "/flow")
         #expect(session.expiresDate?.timeIntervalSince1970.rounded() == expires)
-        #expect(session.sameSitePolicy == nil, "SameSite=None is WebKit's unspecified policy")
+        #expect(Self.isNone(session.sameSitePolicy), "SameSite=None stays None")
         let host = try #require(stored["__Host-flow"])
         #expect(host.domain == "auth.wsagency.io" && host.path == "/" && host.isSecure && !host.isHTTPOnly)
         #expect(host.sameSitePolicy == .sameSiteStrict)
         let unspecified = try #require(stored["unspecified"])
-        #expect(unspecified.domain == ".wsagency.io" && unspecified.sameSitePolicy == nil && !unspecified.isSecure)
+        // Chromium applied Lax to it; WebKit's unspecified policy would be looser.
+        #expect(unspecified.domain == ".wsagency.io" && unspecified.sameSitePolicy == .sameSiteLax && !unspecified.isSecure)
         withExtendedLifetime(dataStore) {}
     }
 

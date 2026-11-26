@@ -132,7 +132,7 @@ extension BrowserTab {
         guard desired == .webKit, extensionBaseURL == nil,
               SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return nil }
         // Only the held flow's sites that Chromium served: a site this flow visited in WebKit has its fresh cookies there already.
-        let origins = signInChain.origins(leadingTo: url, servedBy: .chromium).intersection(signInChainOrigins)
+        let origins = signInChain.origins(leadingTo: url, servedBy: .chromium, now: signInClock()).intersection(heldSignInChainOrigins)
         guard !origins.isEmpty else { return nil }
         if let chromium = liveView?.chromium {
             return (origins, chromium)
@@ -146,7 +146,7 @@ extension BrowserTab {
         guard opener.context === context, opener.loadedEngine == .chromium,
               SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return }
         signInChain = opener.signInChain
-        signInChain.note(opener.signInOrigin, engine: .chromium)
+        signInChain.note(opener.signInOrigin, engine: .chromium, now: signInClock())
     }
 
     @discardableResult

@@ -204,9 +204,12 @@ extension BrowserTab {
             if startedByUser {
                 signInChain = SignInChain()
             }
-            let flow = startedByUser ? [] : signInChainOrigins.union(signInChain.origins(leadingTo: url))
+            let now = signInClock()
+            let flow = startedByUser ? [] : heldSignInChainOrigins.union(signInChain.origins(leadingTo: url, now: now))
             signInEngine = engine ?? ongoing ?? .webKit
             signInChainOrigins = flow
+            // Each provider page (a second factor, a consent screen) extends the hold, so a slow sign-in keeps its return.
+            signInChainDeadline = flow.isEmpty ? nil : now.addingTimeInterval(SignInChain.lifetime)
         } else if startedByUser {
             leavingSignIn = nil
             pendingOpenerSignIn = nil
@@ -244,7 +247,7 @@ extension BrowserTab {
         let followsDeparture = isRedirect && navigation != nil && leavingSignIn?.navigation === navigation
         let outside = leavesSignIn || followsDeparture
         // A reissue below records the other engine instead (`load`).
-        signInChain.note(destination, engine: engine)
+        signInChain.note(destination, engine: engine, now: signInClock())
         guard canReissue else { return true }
         if preferredEngine(for: url, keepingSignIn: !outside) == engine {
             if leavesSignIn {
@@ -262,7 +265,7 @@ extension BrowserTab {
 
     /// A return to a site the held provider flow came from (an SSO service back to its app) stays in the sign-in.
     private func leavesSignIn(from origin: String?, to destination: String) -> Bool {
-        guard let origin, !origin.isEmpty, !destination.isEmpty, !signInChainOrigins.contains(destination) else { return false }
+        guard let origin, !origin.isEmpty, !destination.isEmpty, !heldSignInChainOrigins.contains(destination) else { return false }
         return !Self.continuesSignIn(from: origin, to: destination)
     }
 

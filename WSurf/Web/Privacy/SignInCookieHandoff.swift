@@ -27,8 +27,8 @@ enum SignInCookieHandoff {
     }
 
     /// `cookie` as WebKit stores it, with every attribute it had in Chromium. A host-only cookie keeps its bare domain (which is what
-    /// keeps a `__Host-` cookie valid), a session cookie gets no expiry. An unspecified SameSite stays unspecified, as WebKit would
-    /// have stored it had the site set it there.
+    /// keeps a `__Host-` cookie valid), a session cookie gets no expiry. An unspecified SameSite becomes Lax, the policy Chromium
+    /// applied to it, rather than WebKit's looser default; `None` is WebKit's unspecified policy.
     nonisolated static func httpCookie(_ cookie: SiteCookie) -> HTTPCookie? {
         var properties: [HTTPCookiePropertyKey: Any] = [
             .name: cookie.name, .value: cookie.value, .domain: cookie.domain, .path: cookie.path,
@@ -47,31 +47,63 @@ enum SignInCookieHandoff {
             properties[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteLax
         case "strict":
             properties[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteStrict
-        default:
+        case "none":
             break
+        default:
+            properties[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteLax
         }
         return HTTPCookie(properties: properties)
+    }
+
+    /// Whether WebKit's own copy of `incoming` is fresher and stays: only for a domain cookie (`.example.com`, which a sibling site
+    /// may have renewed in WebKit) that WebKit holds with the same name, domain and path and a strictly later expiry. A host-only
+    /// or session cookie of the flow is always written: it is the state the provider's callback needs.
+    nonisolated static func keepsWebKitCopy(of incoming: HTTPCookie, in existing: [HTTPCookie]) -> Bool {
+        guard incoming.domain.hasPrefix("."), let expires = incoming.expiresDate else { return false }
+        return existing.contains {
+            $0.name == incoming.name && $0.domain == incoming.domain && $0.path == incoming.path
+                && ($0.expiresDate.map { $0 > expires } ?? false)
+        }
+    }
+
+    /// `operation`'s result, or nil once `limit` passes first. The operation is then cancelled and must end on cancellation, as a
+    /// DevTools command does.
+    static func result<T: Sendable>(within limit: Duration, of operation: @escaping @MainActor @Sendable () async -> T?) async -> T? {
+        let work = Task { @MainActor in await operation() }
+        let timer = Task {
+            try? await Task.sleep(for: limit)
+            work.cancel()
+        }
+        defer { timer.cancel() }
+        let value = await work.value
+        return work.isCancelled ? nil : value
     }
 
     /// Copies the Chromium cookies of `origins` into `store`. Reads `page` when it is a live page of `context`, else any live
     /// Chromium page of `context`; it never starts Chromium. Returns how many cookies were copied: none when Chromium cannot be
     /// read, the private session ended, or the task was cancelled (an abandoned navigation writes nothing).
+    /// A wedged Chromium must not hold the provider's page for DevTools' own 15-second limit: past `readLimit` the sign-in goes on
+    /// without the cookies.
     static func copy(
-        origins: Set<String>, context: BrowserProfileContext, preferring page: ChromiumPage?, into store: WKHTTPCookieStore
+        origins: Set<String>, context: BrowserProfileContext, preferring page: ChromiumPage?, into store: WKHTTPCookieStore,
+        readLimit: Duration = .seconds(3)
     ) async -> Int {
         guard !origins.isEmpty, !context.privateSessionEnded else { return 0 }
         let source = page.flatMap { $0.context.contextID == context.contextID && !$0.isClosed && ($0.raw != nil || $0.remote != nil) ? $0 : nil }
             ?? SiteCookies.livePage(context)
         guard let source else { return 0 }
-        let all: [SiteCookie]
-        do {
-            all = try await SiteCookies.chromiumCookies(source)
-        } catch {
-            log.error("Could not read Chromium cookies for a sign-in: \(error.localizedDescription, privacy: .public)")
-            return 0
+        let read = await result(within: readLimit) { () -> [SiteCookie]? in
+            do {
+                return try await SiteCookies.chromiumCookies(source)
+            } catch {
+                log.error("Could not read Chromium cookies for a sign-in: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
         }
+        guard let all = read else { return 0 }
+        let existing = await store.allCookies()
         var copied = 0
-        for cookie in cookies(all, for: origins).compactMap(httpCookie) {
+        for cookie in cookies(all, for: origins).compactMap(httpCookie) where !keepsWebKitCopy(of: cookie, in: existing) {
             guard !Task.isCancelled, !context.privateSessionEnded else { break }
             await store.setCookie(cookie)
             copied += 1

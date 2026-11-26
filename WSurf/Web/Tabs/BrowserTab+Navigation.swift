@@ -78,7 +78,7 @@ extension BrowserTab {
         pendingNavigationTask?.cancel()
         pendingTransition = transition
         let desired = preferredEngine(for: url)
-        signInChain.note(SitePermissions.webOrigin(for: url), engine: desired)
+        signInChain.note(SitePermissions.webOrigin(for: url), engine: desired, now: signInClock())
         urlString = url.absoluteString
         let handoff = chromiumSignInHandoff(to: url, engine: desired)
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil || handoff != nil {

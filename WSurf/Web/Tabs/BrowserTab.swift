@@ -288,6 +288,7 @@ final class BrowserTab: Identifiable {
             if signInEngine == nil {
                 inheritedSignInOrigin = nil
                 signInChainOrigins = []
+                signInChainDeadline = nil
             }
             if signInEngine != oldValue {
                 invalidateSessionState()
@@ -304,6 +305,16 @@ final class BrowserTab: Identifiable {
     /// return to any of them keeps `signInEngine`, and those Chromium served move their cookies to WebKit with the hop. Empty
     /// without a hold.
     @ObservationIgnored var signInChainOrigins: Set<String> = []
+    /// When the hold on `signInChainOrigins` ends: `SignInChain.lifetime` after the latest provider page. An earlier site that only
+    /// happened to be in the chain does not stay in the sign-in once the flow is over.
+    @ObservationIgnored var signInChainDeadline: Date?
+    /// The sign-in chain's clock; tests replace it.
+    @ObservationIgnored var signInClock: () -> Date = Date.init
+    /// `signInChainOrigins` while the hold lasts, else none.
+    var heldSignInChainOrigins: Set<String> {
+        guard let signInChainDeadline, signInClock() < signInChainDeadline else { return [] }
+        return signInChainOrigins
+    }
     struct SignInDeparture {
         let source: PageNavigation?
         let address: URL
@@ -583,6 +594,7 @@ final class BrowserTab: Identifiable {
         isClosed = true
         signInChain = SignInChain()
         signInChainOrigins = []
+        signInChainDeadline = nil
         releaseCurrentDevelopment(reason: .tabClosed)
         translation.documentChanged()
         reader.pageChanged()
