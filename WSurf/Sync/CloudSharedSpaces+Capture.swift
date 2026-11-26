@@ -49,11 +49,11 @@ extension CloudSharedSpaces {
 
     /// A row gone from an open window is ambiguous during teardown or transfer. Only an individual close supplies a deletion.
     /// With Space tabs shared across windows, a close in any window records the deletion on the owner's slot.
-    func removed(_ id: UUID, spaceTabID: UUID? = nil, in browser: BrowserModel) {
+    func removed(_ id: UUID, spaceTabID: UUID? = nil, pinID: UUID? = nil, in browser: BrowserModel) {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isApplyingProfilePins, !browser.isReadingSharedSession, isEnabled(.spaces, for: profile),
               !browser.unplacedSpaceRows.contains(.tab(id)), !browser.unplacedSpaceRows.contains(.folder(id)),
-              case let (window, local)? = spaceTabsTarget(of: id, link: spaceTabID, in: browser),
+              case let (window, local)? = spaceTabsTarget(of: id, link: spaceTabID, pin: pinID, in: browser),
               let entry = links[profile.id]?.slots[local], entry.window == window.windowID, let prior = entry.last else { return }
         links[profile.id]?.slots[local]?.closedAfterRevision = window.sessionRevision
         links[profile.id]?.slots[local]?.editedAfterRevision = nil
@@ -229,7 +229,8 @@ extension CloudSharedSpaces {
         var transferredPins: [SharedSpaceItem] = []
         var restoredMembership = false
         // Missing membership supplies neither a shared destination nor evidence of departure.
-        for row in tree.walk() where !browser.unplacedSpaceRows.contains(row) {
+        // A page whose pin another window removed waits to learn whether it was unpinned or closed (`pendingPinDemotions`).
+        for row in tree.walk() where !browser.unplacedSpaceRows.contains(row) && !browser.awaitsPinOutcome(row) {
             let local: UUID
             switch row {
             case .folder(let id), .tab(let id):

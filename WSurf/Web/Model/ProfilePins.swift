@@ -121,6 +121,8 @@ final class ProfilePinStore {
     private let database: AppDatabase
     private let subscribers = NSHashTable<BrowserModel>.weakObjects()
     @ObservationIgnored private var isPublishing = false
+    /// True while the windows apply a set that came from iCloud rather than from one of them. See `releaseGonePins`.
+    @ObservationIgnored private(set) var isApplyingRemote = false
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
@@ -268,15 +270,21 @@ final class ProfilePinStore {
             source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
         }
         isPublishing = true
+        isApplyingRemote = source == nil
         for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {
             model.applyProfilePins(next)
             model.scheduleSave()
         }
         isPublishing = false
+        isApplyingRemote = false
         // A window that removes a pin publishes its Space rows next (`scheduleSave`). A set from iCloud has no such window,
         // so every window publishes now: a page unpinned on another Mac finds its row, and what is left was a pin removed.
+        // A window holding such a new row goes first; one that published before it would remove that row's page.
         if source == nil {
-            for model in attachedWindows where model.sessionClosedAt == nil {
+            let known = Set(spaceRows.map(\.id))
+            let windows = attachedWindows.filter { $0.sessionClosedAt == nil }
+            let adopting = windows.filter { model in model.tabs.contains { $0.spaceTabID.map { !known.contains($0) } ?? false } }
+            for model in adopting + windows.filter({ model in !adopting.contains { $0 === model } }) {
                 model.publishSpaceRows()
             }
             closeUnclaimedPinPages(except: nil)

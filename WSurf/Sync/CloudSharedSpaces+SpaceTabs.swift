@@ -32,8 +32,12 @@ extension CloudSharedSpaces {
     }
 
     /// The owner's local ID and window for a row another window of the profile shows as `id`.
-    func spaceTabsTarget(of id: UUID, link spaceTabID: UUID?, in browser: BrowserModel) -> (window: BrowserModel, id: UUID)? {
+    /// A pin's page has no row; the owner's page for the same pin holds the slot of the shared tab it was pinned from.
+    func spaceTabsTarget(of id: UUID, link spaceTabID: UUID?, pin pinID: UUID? = nil, in browser: BrowserModel) -> (window: BrowserModel, id: UUID)? {
         guard browser.sharesSpaceTabs, let owner = spaceTabsOwner(of: browser.context.profile), owner !== browser else { return (browser, id) }
+        if spaceTabID == nil, let pinID {
+            return owner.tabs.first { $0.pinID == pinID }.map { (owner, $0.id) }
+        }
         guard let spaceTabID else { return owner.folder(id: id) == nil ? nil : (owner, id) }
         return owner.tabs.first { $0.spaceTabID == spaceTabID }.map { (owner, $0.id) }
     }

@@ -85,7 +85,7 @@ extension SharedSpacesTests {
     }
 
     enum RemotePinChange: String, CaseIterable, Sendable {
-        case deleteInOneWindow, deleteInTwoWindows, unpinInTwoWindows
+        case deleteInOneWindow, deleteInTwoWindows, unpinInTwoWindows, closeInSecondWindow
     }
 
     /// A pin removed on another Mac leaves no page behind; one unpinned there is one shared Space tab in every window here.
@@ -115,9 +115,19 @@ extension SharedSpacesTests {
             #expect(window.page(for: pinID) != nil)
         }
 
-        if change == .unpinInTwoWindows {
+        switch change {
+        case .unpinInTwoWindows:
             studio.browser.unpin(pin)
-        } else {
+        case .closeInSecondWindow:
+            // Closed on this Mac, in the window iCloud does not follow, while the other window's page holds a live slot.
+            let owner = try #require(air.host.spaceTabsOwner(of: air.profile))
+            let other = try #require(windows.first { $0 !== owner })
+            other.close([.tab(try #require(other.page(for: pinID)).id)])
+            for window in windows {
+                window.scheduleSave()
+            }
+            try await air.sync()
+        case .deleteInOneWindow, .deleteInTwoWindows:
             studio.browser.close([.tab(pin.id)])
         }
         try await studio.sync()
@@ -137,10 +147,50 @@ extension SharedSpacesTests {
                 #expect(pages.isEmpty)
             }
         }
+        if change == .closeInSecondWindow {
+            #expect(sharedTabs(in: cloud).filter { $0.url == address }.isEmpty)
+            #expect(air.browser.pinStore.spaceRows.allSatisfy { $0.url != address })
+        }
         if change == .unpinInTwoWindows {
             #expect(links.count == 1)
             #expect(sharedTabs(in: cloud).filter { $0.url == address }.count == 1)
         }
+    }
+
+    /// A shared tab pinned in the window iCloud follows keeps its slot. Closing the pin in the other window must close it
+    /// everywhere, not bring it back as a shared Space tab from that slot.
+    @Test func closingAPinMadeFromASharedTabInAnotherWindowClosesItEverywhere() async throws {
+        let cloud = FakeSyncCloud()
+        let studio = Mac(cloud, name: "Studio", sharesSpaceTabs: true)
+        defer { studio.finish() }
+        let address = "https://pinned-from-shared.example.test/"
+        let second = studio.addWindow()
+        studio.browser.addPage(address)
+        studio.browser.scheduleSave()
+        _ = try await studio.host.publishProfile(studio.profile)
+        try await studio.host.share(try #require(studio.store.spaces.first), in: studio.profile)
+        try await studio.sync()
+        let owner = try #require(studio.host.spaceTabsOwner(of: studio.profile))
+        let other = owner === studio.browser ? second : studio.browser
+        let ownerPage = try #require(owner.tabs.first { $0.urlString == address })
+        owner.pin(ownerPage)
+        let pinID = try #require(ownerPage.pinID)
+        try await studio.sync()
+        #expect(studio.host.links[studio.profile.id]?.slots[ownerPage.id]?.pinID == pinID)
+
+        let otherPin = try #require(other.page(for: pinID))
+        other.close([.tab(otherPin.id)])
+        for window in [studio.browser, second] {
+            window.scheduleSave()
+        }
+        try await studio.sync()
+
+        for window in [studio.browser, second] {
+            #expect(window.tabs.filter { $0.urlString == address }.isEmpty)
+            #expect(window.pendingPinDemotions.isEmpty)
+        }
+        #expect(studio.browser.pinStore.spaceRows.allSatisfy { $0.url != address })
+        #expect(sharedTabs(in: cloud).filter { $0.url == address }.isEmpty)
     }
 
     /// The page goes to a micro window from a window that is not the one iCloud follows, and back. Nothing is uploaded again.

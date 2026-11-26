@@ -212,9 +212,10 @@ extension BrowserModel {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false
-                if sharedSpace != nil {
+                if sharedSpace != nil, attachedPinStore?.isApplyingRemote == true {
                     // iCloud already keeps this page as a shared Space tab (an unpin on another Mac). It becomes the row,
-                    // under the pin's ID like a local unpin, so this Mac's other windows keep their pages for it too.
+                    // under the pin's ID like a local unpin, so this Mac's other windows keep their pages for it too. A pin
+                    // removed in a window of this Mac waits instead: that window's rows tell an unpin from a close.
                     if tab.spaceTabID == nil {
                         tab.spaceTabID = pinID
                     }

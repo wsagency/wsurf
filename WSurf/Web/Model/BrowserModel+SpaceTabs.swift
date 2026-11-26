@@ -317,6 +317,11 @@ extension BrowserModel {
         return items
     }
 
+    func awaitsPinOutcome(_ item: SidebarItem) -> Bool {
+        guard !pendingPinDemotions.isEmpty, case .tab(let id) = item else { return false }
+        return pendingPinDemotions.values.contains(id)
+    }
+
     private static func canTakeRow(_ tab: BrowserTab) -> Bool {
         tab.pinID == nil && tab.pinnedURL == nil && tab.microTabID == nil && tab.extensionBaseURL == nil && !tab.isPrivate
     }
