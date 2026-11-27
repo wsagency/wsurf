@@ -24,7 +24,7 @@ nonisolated enum PageRuntime {
         for (const el of root.querySelectorAll('*')) {
           yield el;
           if (el.shadowRoot) { watchRoot(el.shadowRoot); yield* walk(el.shadowRoot); }
-          if (el.tagName === 'IFRAME') {
+          if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
             try {
               if (el.contentDocument) { watchRoot(el.contentDocument); if (el.contentDocument.body) yield* walk(el.contentDocument.body); }
             } catch (e) {}

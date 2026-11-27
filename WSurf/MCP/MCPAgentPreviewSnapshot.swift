@@ -16,6 +16,10 @@ extension MCPAgentWindowRegistry {
         session: MCPBrowserSession,
         owner: AgentWindowOwner
     ) async throws -> [String: Any] {
+        session.syncAgentWindowGeneration()
+        if tab.mcpSecretWriteEpoch == tab.documentCommitEpoch, session.secrets.isEmpty {
+            throw Self.protectedSnapshotError
+        }
         func checkSite(_ url: URL) throws {
             tab.assistantAccess.pageChanged(url: url)
             let policy = tab.assistantAccess.explicitPolicy ?? coordinator.browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url))
@@ -86,8 +90,6 @@ extension MCPAgentWindowRegistry {
         let pageObject = pageResult.structuredContent?.objectValue ?? [:]
         var response: [String: Any] = [
             "tabId": tab.id.uuidString,
-            "url": session.scrubbed(tab.urlString),
-            "title": session.scrubbed(tab.title),
             "engine": effectiveEngine(of: tab).rawValue,
             "owner": (coordinator.browser.agentCompanion?.owner ?? .agent).rawValue,
             "generation": coordinator.browser.agentCompanion?.generation ?? 1,
@@ -98,10 +100,7 @@ extension MCPAgentWindowRegistry {
                 "height": Int(viewportSize.height.rounded()),
             ],
         ]
-        if let observationID = pageObject["observationID"]?.stringValue ?? session.observations[tab.id]?.id {
-            response["observationId"] = observationID
-        }
-        if opParams["includeImage"] as? Bool == true, owner == .agent || session.secrets.isEmpty {
+        if opParams["includeImage"] as? Bool == true, session.secrets.isEmpty {
             var shotArgs: [String: Value] = ["tabID": .string(tab.id.uuidString)]
             if let maxWidth = opParams["maxWidth"] as? Int {
                 shotArgs["maxWidth"] = .int(maxWidth)
@@ -124,10 +123,28 @@ extension MCPAgentWindowRegistry {
                 throw MCPAgentWindowError(.actionFailed, "The page changed before the snapshot could be returned.")
             }
         }
-        if tab.isMCPCredentialTainted {
+        response["observationId"] = session.observations[tab.id]?.id
+        try protectSnapshotReply(&response, tab: tab, record: record, session: session)
+        return response
+    }
+
+    private func protectSnapshotReply(
+        _ response: inout [String: Any], tab: BrowserTab, record: Record, session: MCPBrowserSession
+    ) throws {
+        guard !tab.isMCPCredentialTainted else { throw Self.protectedSnapshotError }
+        if !session.secrets.isEmpty {
+            response["imageBase64"] = nil
+            response["imageMimeType"] = nil
+        } else if tab.mcpSecretWriteEpoch == tab.documentCommitEpoch {
             throw Self.protectedSnapshotError
         }
-        return response
+        response["url"] = previewMetadata(tab.urlString, tab: tab, record: record)
+        response["title"] = previewMetadata(tab.title, tab: tab, record: record)
+        for key in ["page", "accessibilityTree"] {
+            if let text = response[key] as? String {
+                response[key] = session.scrubbed(text)
+            }
+        }
     }
 
     private static let protectedSnapshotError = MCPAgentWindowError(

@@ -216,7 +216,7 @@ extension BrowserTab {
             await outgoing.close()
             guard let self, retirementGeneration == generation else { return }
             retirement = nil
-            if engineSwitchTask == nil {
+            if engineSwitchTask == nil, retiredView === outgoing {
                 retiredView = nil
                 pageGeneration &+= 1
             }
@@ -231,7 +231,10 @@ extension BrowserTab {
         }
     }
 
-    func switchEngine(to engine: BrowserEngine) async -> Bool {
+    func switchEngine(to engine: BrowserEngine, authorized: (@MainActor () -> Bool)? = nil) async -> Bool {
+        if let authorized {
+            return await switchEngineWhileAuthorized(to: engine, authorized: authorized)
+        }
         while let pending = engineSwitchTask {
             _ = await pending.value
         }
@@ -239,6 +242,42 @@ extension BrowserTab {
         guard liveView?.engine != engine else { return true }
         let url = URL(string: urlString) ?? liveView?.url
         guard await replaceEngine(with: engine), !Task.isCancelled else { return false }
+        if let url, urlString == url.absoluteString {
+            lastRequestedNavigation = loadDirect(url)
+        }
+        return true
+    }
+
+    private func switchEngineWhileAuthorized(to engine: BrowserEngine, authorized: @MainActor () -> Bool) async -> Bool {
+        while let pending = engineSwitchTask {
+            let completed = await PageReply<Bool>.awaiting(within: .seconds(15)) { reply in
+                Task {
+                    _ = await pending.value
+                    reply.finish(true)
+                }
+            }
+            guard completed == true, authorized() else { return false }
+        }
+        if let retirement {
+            let completed = await PageReply<Bool>.awaiting(within: .seconds(15)) { reply in
+                Task {
+                    await retirement.value
+                    reply.finish(true)
+                }
+            }
+            guard completed == true else { return false }
+        }
+        guard !isClosed, !Task.isCancelled, extensionBaseURL == nil, authorized(),
+              engineSwitchTask == nil, retirement == nil else { return false }
+        let url = URL(string: urlString) ?? liveView?.url
+        guard engine != .chromium || !SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return false }
+        guard liveView?.engine != engine else { return true }
+        // Retiring and installing must be one Main Actor turn. Awaiting close after detaching the live page would let
+        // Take Over land while the user's page is already gone.
+        if let outgoing = liveView {
+            retire(outgoing)
+        }
+        finishEngineInstallation(engine)
         if let url, urlString == url.absoluteString {
             lastRequestedNavigation = loadDirect(url)
         }
@@ -269,6 +308,11 @@ extension BrowserTab {
             await retirement.value
         }
         guard !isClosed else { return false }
+        finishEngineInstallation(engine)
+        return true
+    }
+
+    private func finishEngineInstallation(_ engine: BrowserEngine) {
         retiredView = nil
         liveView = nil
         self.engine = engine
@@ -295,6 +339,5 @@ extension BrowserTab {
         adopt(makePage(engine: engine))
         pageGeneration &+= 1
         notifyDocumentCommitted()
-        return true
     }
 }

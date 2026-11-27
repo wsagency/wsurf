@@ -9,6 +9,7 @@ import WebKit
 @MainActor
 enum PageDriver {
     @TaskLocal static var refusesFilledSecrets = false
+    @TaskLocal static var allowsAgentWindowCapture: (@MainActor @Sendable () -> Bool)?
     static let filledSecretRefusal = "The page contains a protected password or sensitive field."
 
     // MARK: - The page-side runtime

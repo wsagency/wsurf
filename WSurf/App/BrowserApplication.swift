@@ -128,8 +128,8 @@ final class BrowserApplication {
         disconnectMCP: { [weak self] browser in
             self?.mcpServer.disconnect(browser: browser)
         },
-        cancelMCPCalls: { [weak self] browser in
-            self?.mcpServer.cancelActiveCall(in: browser)
+        cancelMCPCalls: { [weak self] browser, preservedCall in
+            self?.mcpServer.cancelActiveCall(in: browser, except: preservedCall)
         }
     )
 

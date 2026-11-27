@@ -184,27 +184,37 @@ revoke it immediately.
 An agent-opened tab’s sidebar menu names the client that opened it. **Close
 agent tabs** closes the window-local tabs from that connection in this window.
 The action is also available beside an active connection in External
-connections. Tabs the person took over, pinned or moved into a shared Space
-are excluded.
+connections. Tabs the person took over, filed or pinned are excluded, as are
+tabs already published as shared Space rows. Window-local tabs stay out of
+shared Spaces across restarts until the person moves them into a folder or
+another Space.
 
 ## Agent Micro Windows and the host bridge
 
 The local `host-bridge.sock` v1 protocol lets authenticated paired hosts open a
 dedicated Agent Micro Window and bind a separate MCP connection to it with a
-window token. `openAgentWindow` shows the window by default. Pass
-`open: false` for an intentional background window. Both the open reply and
-`invokePreview` with `operation: "status"` report `visible` from the real
-window, including whether it is minimized.
+window token. `openAgentWindow` shows new or hidden windows by default.
+Omit `open` to reuse a visible window without activating it. Pass `open: true`
+to activate it or `open: false` to leave its visibility and focus alone. Both
+the open reply and preview `status` report actual visibility, accounting for
+minimized windows.
 
 Under **Take Over**, `status` and the read-only `snapshot` remain available to
 the paired host. Website access rules still apply. WSurf scrubs registered
 secrets and refuses the snapshot if a live filled sensitive field or
 Vault-tainted document would put credentials at risk. Mutation, scripting
 and closing remain blocked with `humanControl` until the person selects
-**Hand Back**. **Stop** revokes the window token and pauses the paired app.
-WSurf omits snapshot images during human control once the preview session
-has registered a secret, since it cannot scrub text echoed into pixels.
-A Vault login approval sheet attaches to the Agent Micro Window.
+**Hand Back**. Observations are cleared on ownership changes, so a ref-based
+action needs a fresh snapshot after Hand Back. **Stop** revokes the window token
+and pauses the paired app.
+
+Both sockets share the window’s in-memory secret registry. WSurf scrubs registered
+secrets from preview titles, URLs, text and tab events, and withholds preview
+metadata while the person has control. WSurf omits snapshot images when either
+socket has registered a secret or a visible frame cannot be inspected for
+sensitive fields. A Vault login approval sheet attaches to the Agent Micro
+Window. Choosing **Sign In Myself** or requesting `manualLogin` transfers the
+window to the person before the tool returns `waitingForUser`.
 
 ### Structured outcomes
 
@@ -232,7 +242,7 @@ back for manual sign-in. JSON-RPC protocol errors and host-bridge v1
 | `inspectControl` | Read control state and paginate dropdown options. Reports `sensitive`, `type`, `filled`, and `value: "(hidden)"` on sensitive fields, plus anonymized `vaultHint` on login forms. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | `includeSnapshot` adds the viewport's text and controls; it defaults to false when the connection holds the page's current observation (the reply then names that `observationID`) and to true otherwise. Masking and every refusal below apply either way. Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
+| `screenshotPage` | `includeSnapshot` adds the viewport's text and controls; it defaults to false when the connection holds the page's current observation (the reply then names that `observationID`) and to true otherwise. Masking and every refusal below apply either way. Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). A visible frame that cannot be inspected for sensitive fields refuses capture at every access tier. |
 | `pressKey` | Send a key or a key chord to a control in a visible tab, or in a background Chromium tab through DevTools (a background WebKit tab refuses and names `switchTab`): a named key (`Enter`, `Tab`, `Escape`, `Space`, the arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`) or one printable ASCII character, with optional `modifiers` (`shift`, `option`, `command`). The key goes to the page only; see Key chords below for what is refused. Name the control with `ref` or `selector`. |
 | `hoverOnPage` | Move the pointer to a referenced element or to `x` and `y`, so CSS `:hover` and pointer/mouse handlers run. On Chromium the pointer is a DevTools pointer: it works in the background and WSurf need not be active, and the user's cursor does not move. On WebKit it moves the real pointer and needs WSurf to be the active app with a key window and the tab on screen (a background WebKit tab answers that it is unsupported, naming `switchTab` and Chromium); it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below); on Chromium it works in a background tab. Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |

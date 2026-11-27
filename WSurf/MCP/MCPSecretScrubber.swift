@@ -212,10 +212,6 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     func scrub(_ result: CallTool.Result) -> CallTool.Result {
         let needles = allNeedles
         guard !needles.isEmpty else { return result }
-        let content = result.content.map { block -> MCP.Tool.Content in
-            guard case .text(let text, let annotations, let meta) = block else { return block }
-            return .text(text: Self.scrub(text, needles: needles), annotations: annotations, _meta: meta)
-        }
         let structured = result.structuredContent.map { value -> Value in
             // A protocol code comes from WSurf's fixed vocabulary. Scrub every other field, including dynamic keys.
             guard let fields = value.objectValue, let code = fields["code"]?.stringValue.flatMap(MCPFailureCode.init(rawValue:)),
@@ -223,6 +219,20 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             else { return Self.scrub(value, needles: needles) }
             redacted["code"] = code.value
             return .object(redacted)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let content = result.content.map { block -> MCP.Tool.Content in
+            guard case .text(let text, let annotations, let meta) = block else { return block }
+            let redacted: String
+            if let original = result.structuredContent, let structured,
+               let decoded = try? JSONDecoder().decode(Value.self, from: Data(text.utf8)), decoded == original,
+               let data = try? encoder.encode(structured) {
+                redacted = String(decoding: data, as: UTF8.self)
+            } else {
+                redacted = Self.scrub(text, needles: needles)
+            }
+            return .text(text: redacted, annotations: annotations, _meta: meta)
         }
         return CallTool.Result(
             content: content, structuredContent: structured,

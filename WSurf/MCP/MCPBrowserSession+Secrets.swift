@@ -61,7 +61,7 @@ extension MCPBrowserSession {
     func secretEntryRefusal(_ entry: SecretEntry, tab: BrowserTab) -> CallTool.Result? {
         guard allowsPasswordEntry(for: tab) else {
             return failure(
-                "Password and secret entry is turned off in Settings › Connected apps (or requires Developer access). Nothing was typed.",
+                "Password and secret entry requires Control and Allow password entry in Settings › Connected apps. Paired apps also need their own opt-in. Nothing was typed.",
                 code: .accessDenied)
         }
         for value in entry.values {
@@ -73,6 +73,9 @@ extension MCPBrowserSession {
             case .tooMany:
                 return failure("This connection already typed \(MCPSecretScrubber.maximumSecrets) different secrets. Disconnect to type more. Nothing was typed.")
             }
+        }
+        if agentWindowScope != nil {
+            tab.mcpSecretWriteEpoch = tab.documentCommitEpoch
         }
         return nil
     }

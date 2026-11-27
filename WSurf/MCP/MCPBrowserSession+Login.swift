@@ -21,7 +21,7 @@ struct MCPVaultProvider {
     var blindFill: @MainActor (
         BrowserTab, BrowserPage, URL, AccountSummary, Bool, @MainActor (String) -> Bool
     ) async -> PageDriver.VaultFillResult?
-    var isLocked: @MainActor (BrowserTab, URL) async -> Bool = { _, _ in false }
+    var isLocked: @MainActor (BrowserTab, URL, UUID?) async -> Bool = { _, _, _ in false }
 
     static func live(browser: BrowserModel) -> MCPVaultProvider {
         MCPVaultProvider(
@@ -35,9 +35,9 @@ struct MCPVaultProvider {
                     account: account, submit: submit, in: browser, tab: tab, view: view, url: url,
                     registerSecret: registerSecret)
             },
-            isLocked: { [weak browser] tab, url in
+            isLocked: { [weak browser] tab, url, vaultID in
                 guard let browser else { return false }
-                return await VaultBlindLoginBridge.isLocked(in: browser, tab: tab, url: url)
+                return await VaultBlindLoginBridge.isLocked(in: browser, tab: tab, url: url, vaultID: vaultID)
             }
         )
     }
@@ -128,7 +128,7 @@ extension MCPBrowserSession {
         }
 
         if mode == "manualLogin" {
-            handBack(tab)
+            handBackForLogin(tab)
             return loginResult(
                 status: "waitingForUser", tabID: tab.id,
                 message: "Control was handed to the user. Ask the user to sign in in WSurf and share control again.")
@@ -157,7 +157,7 @@ extension MCPBrowserSession {
         let canFill = allowsVaultFill
         if mode == "vaultFill", !canFill { return vaultFillRefusal() }
         if mode == "vaultFill", accounts.isEmpty {
-            let locked = await vaultProvider.isLocked(tab, url)
+            let locked = await vaultProvider.isLocked(tab, url, nil)
             guard allowsVaultFill else { return vaultFillRefusal() }
             guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
                   tab.documentCommitEpoch == initialCommitEpoch, webURL(of: tab) == liveAfterLookup
@@ -186,7 +186,7 @@ extension MCPBrowserSession {
         case .decline:
             return loginResult(status: "declined", tabID: tab.id, message: "The user declined the login request.")
         case .takeOver:
-            handBack(tab)
+            handBackForLogin(tab)
             return loginResult(
                 status: "waitingForUser", tabID: tab.id,
                 message: "The user chose to sign in themselves. Ask the user to sign in in WSurf and share control again.")
@@ -200,6 +200,14 @@ extension MCPBrowserSession {
             return await fillApprovedLogin(
                 account, submit: choice == .fillAndSignIn(accountID: chosenID), tab: tab, view: view,
                 generation: generation, initialOrigin: initialOrigin, initialCommitEpoch: initialCommitEpoch)
+        }
+    }
+
+    private func handBackForLogin(_ tab: BrowserTab) {
+        if let agentWindowScope {
+            agentWindowScope.takeOver(tab)
+        } else {
+            handBack(tab)
         }
     }
 
@@ -236,7 +244,16 @@ extension MCPBrowserSession {
         tab.autofillSave.clear()
         guard allowsVaultFill else { return vaultFillRefusal() }
         guard let fill = fillResult else {
-            return failure("Could not read the saved login from WSurf Vault. Ask the user to unlock WSurf Vault or sign in manually.", code: .vaultLocked)
+            let locked = await vaultProvider.isLocked(tab, liveBeforeFill, account.vaultID)
+            guard allowsVaultFill, guardScope.validate() else {
+                return failure("Page access changed before credentials could be filled.", code: .accessDenied)
+            }
+            if locked {
+                return failure("Could not read the saved login from WSurf Vault. Ask the user to unlock WSurf Vault or sign in manually.", code: .vaultLocked)
+            }
+            return loginResult(
+                status: "noSavedLogin", tabID: tab.id,
+                message: "The selected WSurf Vault login is no longer available for this website.")
         }
         guard fill.ok else {
             return failure(fill.error ?? "Could not fill the login form.")

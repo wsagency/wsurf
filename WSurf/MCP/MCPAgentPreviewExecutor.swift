@@ -192,7 +192,7 @@ extension MCPAgentWindowRegistry {
         let value: [String: Any]
     }
 
-    private func runCancellablePreview(
+    func runCancellablePreview(
         in record: Record,
         coordinator: AppCoordinator,
         expectedGeneration: Int,
@@ -284,7 +284,7 @@ extension MCPAgentWindowRegistry {
                 startGeneration: startGeneration
             )
         case "wait_for":
-            return try await previewWaitFor(opParams: opParams, coordinator: coordinator, tab: tab, session: session)
+            return try await previewWaitFor(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
         case "resize":
             return try await previewResize(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
         case "set_appearance":
@@ -307,8 +307,8 @@ extension MCPAgentWindowRegistry {
             "windowId": record.windowId.uuidString,
             "tabId": tab.id.uuidString,
             "threadId": record.threadId,
-            "url": tab.urlString,
-            "title": tab.title,
+            "url": previewMetadata(tab.urlString, tab: tab, record: record),
+            "title": previewMetadata(tab.title, tab: tab, record: record),
             "loading": tab.isLoading,
             "owner": (companion?.owner ?? .agent).rawValue,
             "visible": isWindowVisible(coordinator),
@@ -325,7 +325,7 @@ extension MCPAgentWindowRegistry {
             result["pendingDialog"] = [
                 "dialogID": pending.id,
                 "type": pending.kind.rawValue,
-                "message": pending.message,
+                "message": previewMetadata(pending.message, tab: tab, record: record),
             ]
         } else {
             result["pendingDialog"] = NSNull()
@@ -366,8 +366,8 @@ extension MCPAgentWindowRegistry {
         notifyTabsChanged(for: coordinator.browser)
         return [
             "tabId": tab.id.uuidString,
-            "url": tab.urlString,
-            "title": tab.title,
+            "url": previewMetadata(tab.urlString, tab: tab, record: record),
+            "title": previewMetadata(tab.title, tab: tab, record: record),
             "loading": tab.isLoading,
             "engine": effectiveEngine(of: tab).rawValue,
             "generation": coordinator.browser.agentCompanion?.generation ?? 1,
@@ -494,7 +494,7 @@ extension MCPAgentWindowRegistry {
         case .timedOut(let interrupted):
             throw MCPAgentWindowError(.timedOut, interrupted ? "Script timed out and was interrupted." : "Script timed out.")
         case .failed(let message):
-            throw MCPAgentWindowError(.scriptError, message)
+            throw MCPAgentWindowError(.scriptError, session.scrubbed(message))
         case .completed(let text):
             let scrubbed = session.secrets.scrub(text)
             guard let data = scrubbed.data(using: .utf8),
@@ -524,6 +524,7 @@ extension MCPAgentWindowRegistry {
 
     private func previewWaitFor(
         opParams: [String: Any],
+        record: Record,
         coordinator: AppCoordinator,
         tab: BrowserTab,
         session: MCPBrowserSession
@@ -535,17 +536,18 @@ extension MCPAgentWindowRegistry {
                 guard !Task.isCancelled else {
                     throw MCPAgentWindowError(.cancelled, "Wait cancelled.")
                 }
-                if tab.urlString.contains(urlIncludes) {
+                let visibleURL = previewMetadata(tab.urlString, tab: tab, record: record)
+                if visibleURL != MCPSecretScrubber.replacement, visibleURL.contains(urlIncludes) {
                     return [
                         "matched": true,
                         "tabId": tab.id.uuidString,
-                        "url": tab.urlString,
+                        "url": visibleURL,
                         "generation": coordinator.browser.agentCompanion?.generation ?? 1,
                     ]
                 }
                 try? await Task.sleep(for: .milliseconds(50))
             }
-            throw MCPAgentWindowError(.timedOut, "Timed out waiting for URL containing \(urlIncludes).")
+            throw MCPAgentWindowError(.timedOut, session.scrubbed("Timed out waiting for URL containing \(urlIncludes)."))
         }
         var args: [String: Value] = [
             "tabID": .string(tab.id.uuidString),
@@ -712,25 +714,28 @@ extension MCPAgentWindowRegistry {
         if targetEngine == .chromium, !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
             throw MCPAgentWindowError(.unsupported, "Origin \(origin) requires WebKit and cannot switch to Chromium.")
         }
-        tab.engineOverride = nil
-        tab.defaultEngineOverride = targetEngine
         session.observations[tab.id] = nil
         if tab.isMaterialised || !tab.urlString.isEmpty {
+            let generation = coordinator.browser.agentCompanion?.generation ?? 0
+            let switched = await tab.switchEngine(to: targetEngine) {
+                self.mayMutate(record, generation: generation)
+            }
+            guard switched, mayMutate(record, generation: generation) else {
+                throw MCPAgentWindowError(.actionFailed, "Could not switch engine to \(targetEngine.rawValue).")
+            }
             if let currentURL {
                 tab.noteNavigation(to: currentURL, startedByUser: true)
-            }
-            let switched = await tab.switchEngine(to: targetEngine)
-            guard switched else {
-                throw MCPAgentWindowError(.actionFailed, "Could not switch engine to \(targetEngine.rawValue).")
             }
         } else {
             tab.engine = targetEngine
         }
+        tab.engineOverride = nil
+        tab.defaultEngineOverride = targetEngine
         notifyTabsChanged(for: coordinator.browser)
         return [
             "tabId": tab.id.uuidString,
             "engine": effectiveEngine(of: tab).rawValue,
-            "url": tab.urlString,
+            "url": previewMetadata(tab.urlString, tab: tab, record: record),
             "generation": coordinator.browser.agentCompanion?.generation ?? 1,
         ]
     }

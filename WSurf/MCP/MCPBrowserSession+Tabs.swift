@@ -21,6 +21,7 @@ extension BrowserModel {
               tab.microTabID == nil, !tab.isPinnedForProfile, !tab.isFavorite,
               agentCompanion?.owner != .human,
               let source = tab.mcpAgentTabOrigin, source.windowID == windowID,
+              sharedSpaceService?.sharesRow(tab.id, in: self) != true,
               reconciledTree().parent(of: .tab(tab.id)) == nil
         else { return nil }
         return source
@@ -79,9 +80,7 @@ extension MCPBrowserSession {
         secretFields[tab.id] = nil
         inspectionApprovedDocuments[tab.id] = nil
         openedTabs.remove(tab.id)
-        if tab.mcpAgentTabOrigin?.sessionID == id {
-            tab.mcpAgentTabOrigin = nil
-        }
+        tab.mcpAgentTabOrigin = nil
         if let pair = comparison, [pair.webKit, pair.chromium].contains(tab.id) {
             comparison = nil
         }
@@ -175,11 +174,14 @@ extension MCPBrowserSession {
                 isError: false)
         }
         let persistsAnswers = tab.assistantAccess.persistsAnswers
-        tab.engineOverride = engine
-        let switched = await tab.switchEngine(to: engine)
+        let windowGeneration = agentWindowScope?.generation()
+        let switched = await tab.switchEngine(to: engine) {
+            self.mayProceed(tab, capability: .control) && self.agentWindowScope?.generation() == windowGeneration
+        }
         guard switched else {
             return failure("Could not switch the tab engine.")
         }
+        tab.engineOverride = engine
         // `installEngine` clears per-page state and builds a fresh page not yet attached to a window. Re-park it
         // immediately so Chromium begins loading `url`, and re-sync assistantAccess for `url` before checking access.
         tab.assistantAccess.persistsAnswers = persistsAnswers

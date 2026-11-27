@@ -86,8 +86,8 @@ struct MCPAgentMicroWindowTests {
             disconnectMCP: { [weak server] browser in
                 server?.disconnect(browser: browser)
             },
-            cancelMCPCalls: { [weak server] browser in
-                server?.cancelActiveCall(in: browser)
+            cancelMCPCalls: { [weak server] browser, preservedCall in
+                server?.cancelActiveCall(in: browser, except: preservedCall)
             }
         )
         server.agentWindowRegistry = registry
@@ -287,12 +287,13 @@ struct MCPAgentMicroWindowTests {
             #expect(tab.preferredEngine(for: googleSignIn) == .webKit)
             #expect(tab.preferredEngine(for: openAISignIn) == .webKit)
 
-            // Comparison tabs with explicit `engineOverride` keep `main` precedence ahead of webKitOnlyOrigins & signInEngine.
+            // WebKit-only origins also override an explicit Chromium engine.
             let comparisonTab = agentWindow.browser.makeTab(for: googleSignIn)
+            comparisonTab.urlString = googleSignIn.absoluteString
             comparisonTab.engineOverride = .chromium
             comparisonTab.signInEngine = .webKit
-            #expect(comparisonTab.preferredEngine(for: googleSignIn) == .chromium)
-            #expect(agentWindow.browser.engine(for: comparisonTab) == .chromium)
+            #expect(comparisonTab.preferredEngine(for: googleSignIn) == .webKit)
+            #expect(agentWindow.browser.engine(for: comparisonTab) == .webKit)
 
             // Active signInEngine hold keeps sign-in return redirects in WebKit even on a Chromium-default agent tab.
             tab.noteNavigation(to: googleSignIn, startedByUser: false)

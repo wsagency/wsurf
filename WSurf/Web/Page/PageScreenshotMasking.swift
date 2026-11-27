@@ -15,6 +15,72 @@ import Foundation
 /// pixels of page text that merely echo a secret are not covered: read the page, where the registered value is hidden by
 /// `MCPSecretScrubber`.
 struct ScreenshotMasking: Sendable {
+    /// Native captures include frame pixels even when the text runtime cannot enter the frame.
+    static let frameProbeScript = #"""
+        out.frameURLs = [];
+        out.frameNonces = [];
+        out.uninspectableFrame = (() => {
+          for (const el of R.walk(document.documentElement)) {
+            if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') continue;
+            try {
+              const src = el.hasAttribute('srcdoc') ? null : el.getAttribute('src');
+              const requested = src && new URL(src, el.baseURI);
+              const document = el.contentDocument;
+              if (document) {
+                out.frameURLs.push(document.URL);
+                const nonce = el.contentWindow?.__wsurfNativeFrameNonce;
+                if (typeof nonce === 'string') out.frameNonces.push(nonce);
+              }
+              if (!R.visible(el)) continue;
+              if (requested && /^https?:$/.test(requested.protocol) && requested.origin !== el.ownerDocument.location.origin) return true;
+              if (!document?.documentElement) return true;
+            } catch (e) { return true; }
+          }
+          return false;
+        })();
+        """#
+
+    /// A closed shadow root can hide an iframe's element from the runtime while the browser still renders its document.
+    /// Compare the frames the browser knows about with those accounted for by the DOM probe.
+    @MainActor
+    static func hasUninspectableFrame(_ probe: [String: Any], in view: BrowserPage) async -> Bool {
+        guard probe["uninspectableFrame"] as? Bool == false else { return true }
+        if let chromium = view.chromium {
+            guard let addresses = probe["frameURLs"] as? [String],
+                  let frames = try? await chromium.devTools.framesIncludingCrossSiteFrames() else { return true }
+            var seen = addresses.reduce(into: [URL: Int]()) { counts, address in
+                if let url = URL(string: address) {
+                    counts[frameAddress(url), default: 0] += 1
+                }
+            }
+            let childURLs = frames.filter { !$0.isMainFrame }.compactMap { $0.request.url }
+            return childURLs.contains { url in
+                !SitePermissions.webOrigin(for: url).isEmpty && !consumeFrame(url, from: &seen)
+            }
+        }
+        guard let nonces = probe["frameNonces"] as? [String] else { return true }
+        let inspected = Set(nonces)
+        let registry = PageFrameRegistry.shared
+        for target in await registry.targets(in: view) where !inspected.contains(target.id) {
+            if await registry.isLive(target, in: view) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func frameAddress(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
+        components.fragment = nil
+        return components.url ?? url
+    }
+
+    private static func consumeFrame(_ url: URL, from counts: inout [URL: Int]) -> Bool {
+        let key = frameAddress(url)
+        guard let count = counts[key], count > 0 else { return false }
+        counts[key] = count - 1
+        return true
+    }
     /// Refs of fields the connection typed a secret into, covered even when they do not look sensitive. They count only while
     /// the page still shows `documentID`, the document those refs were issued for.
     var secretRefs: Set<Int> = []

@@ -224,6 +224,7 @@ extension PageDriver {
             const root = document.documentElement;
             const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight, dw: root.scrollWidth, dh: root.scrollHeight,
               safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
+            \(ScreenshotMasking.frameProbeScript)
             \(masking?.probeScript ?? "")
             const ref = \(ref);
             if (ref) {
@@ -239,11 +240,14 @@ extension PageDriver {
         let foundOnly = before["foundOnly"] as? Bool == true
         let needsDevelopment = foundOnly || target == .fullPage
         guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard screenshotIsPrivate(before, masking: masking) else { return .failure(.privacy) }
+        if let failure = await screenshotPrivacyFailure(before, masking: masking, in: view) {
+            return .failure(failure)
+        }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
             (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
         }
-        guard let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
+        guard PageAutomationGuard.allowsExecution, view.url == document,
+              let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
         let area: (css: CGRect, placed: CGRect?)
         switch screenshotArea(target, viewport: CGSize(width: width, height: height), measured: before) {
         case .success(let value):
@@ -274,11 +278,13 @@ extension PageDriver {
         guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
             return .failure(.stale)
         }
-        // Development access is checked again right before pixels leave, after the last await.
+        if let failure = await screenshotPrivacyFailure(after, masking: masking, in: view) {
+            return .failure(failure)
+        }
+        // Development access and the document are checked again after the last await.
         let requiresDevelopment = needsDevelopment || after["foundOnly"] as? Bool == true
         guard !(requiresDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard screenshotIsPrivate(after, masking: masking) else { return .failure(.privacy) }
-        guard placementHeld(placed, in: after) else { return .failure(.stale) }
+        guard PageAutomationGuard.allowsExecution, view.url == document, placementHeld(placed, in: after) else { return .failure(.stale) }
         let picture: NSBitmapImageRep
         switch masked(bitmap, with: masking, before: before, after: after, over: css) {
         case .success(let drawn):
@@ -307,8 +313,14 @@ extension PageDriver {
     }
 
     /// Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
-    private static func screenshotIsPrivate(_ probe: [String: Any], masking: ScreenshotMasking?) -> Bool {
-        masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
+    private static func screenshotPrivacyFailure(
+        _ probe: [String: Any], masking: ScreenshotMasking?, in view: BrowserPage
+    ) async -> ScreenshotFailure? {
+        if await ScreenshotMasking.hasUninspectableFrame(probe, in: view) {
+            return .uninspectableFrame
+        }
+        let isSafe = masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
+        return isSafe && (allowsAgentWindowCapture?() ?? true) ? nil : .privacy
     }
 
     /// `bitmap` with the filled sensitive fields painted over when `masking` applies. The boxes painted over the pixels are the

@@ -17,7 +17,9 @@ extension MCPBrowserSession {
     /// Ensures every non-private HTTP(S) tab in a window-scoped Agent Micro Window carries its pre-approved grant,
     /// skipping sites whose explicit Assistant Access policy is `.deny` or `.ask`.
     func syncAgentWindowGrants() {
-        guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return }
+        guard let scope = agentWindowScope, scope.isActive() else { return }
+        syncAgentWindowGeneration()
+        guard scope.isAgentOwned() else { return }
         for tab in browser.tabs where !tab.isClosed && !tab.isPrivate && tab.microTabID == nil && !takenBack.contains(tab.id) {
             guard let url = webURL(of: tab) else { continue }
             tab.assistantAccess.pageChanged(url: url)
@@ -33,6 +35,14 @@ extension MCPBrowserSession {
                 grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
             }
         }
+    }
+
+    func syncAgentWindowGeneration() {
+        let generation = agentWindowScope?.generation()
+        guard generation != lastAgentWindowGeneration else { return }
+        lastAgentWindowGeneration = generation
+        observations.removeAll()
+        digestCache.removeAll()
     }
 
     func requestAccess(development: Bool, developer: Bool = false) async -> CallTool.Result {

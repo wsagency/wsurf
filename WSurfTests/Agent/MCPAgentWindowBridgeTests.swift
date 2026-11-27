@@ -140,6 +140,16 @@ struct MCPAgentWindowBridgeTests {
             }
         }
 
+        func waitForReply(id: String) async throws -> [String: Any] {
+            for _ in 0..<12 {
+                let message = try await nextMessage()
+                if message["id"] as? String == id {
+                    return message
+                }
+            }
+            throw MCPAgentWindowError(.timedOut, "Did not receive reply \(id)")
+        }
+
         func waitForEvent(named name: String, maxMessages: Int = 8) async throws -> [String: Any] {
             for _ in 0..<maxMessages {
                 let message = try await nextMessage()
@@ -169,7 +179,8 @@ struct MCPAgentWindowBridgeTests {
     func startHarness(
         authTimeout: Duration = .seconds(2),
         storage: MemoryTrustStorage = MemoryTrustStorage(),
-        onOpen: @escaping (Bool) -> Void = { _ in }
+        onOpen: @escaping (Bool) -> Void = { _ in },
+        onShow: @escaping () -> Void = {}
     ) async throws -> Harness {
         let directory = "/tmp/wsurf-bridge-\(UUID().uuidString)"
         let mcpEndpoint = directory + "/browser.sock"
@@ -197,7 +208,11 @@ struct MCPAgentWindowBridgeTests {
                 )
             },
             disconnectMCP: { [weak server] browser in server?.disconnect(browser: browser) },
-            cancelMCPCalls: { [weak server] browser in server?.cancelActiveCall(in: browser) }
+            cancelMCPCalls: { [weak server] browser, preservedCall in server?.cancelActiveCall(in: browser, except: preservedCall) },
+            showWindow: { window in
+                onShow()
+                window.showBrowser(activate: false)
+            }
         )
         let bridge = MCPAgentWindowBridge(
             endpoint: bridgeEndpoint,

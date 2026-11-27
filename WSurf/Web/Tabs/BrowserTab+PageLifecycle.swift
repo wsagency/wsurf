@@ -237,6 +237,10 @@ extension BrowserTab {
         let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
             && request.httpBody == nil && request.httpBodyStream == nil
         let destination = SitePermissions.webOrigin(for: url)
+        if !canReissue, engine == .chromium, enforcesWebKitOnlySignIn, SitePermissions.webKitOnlyOrigins.contains(destination) {
+            // Reissuing would discard the form body.
+            return false
+        }
         if canReissue {
             promoteSameSiteWebKitSignInIfNeeded(for: url, destination: destination)
         }

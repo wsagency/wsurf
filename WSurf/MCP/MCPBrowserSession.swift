@@ -120,11 +120,15 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let activity = ExternalActivityLog()
     /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
     /// wiped when the connection ends.
-    @ObservationIgnored let secrets = MCPSecretScrubber()
+    @ObservationIgnored private let connectionSecrets = MCPSecretScrubber()
+    var secrets: MCPSecretScrubber {
+        agentWindowScope?.secrets ?? connectionSecrets
+    }
     /// The fields of each tab's current document that this connection typed a secret into, so a screenshot covers them too.
     @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
     /// When non-nil, this session is bound exclusively to an Agent Micro Window via a host-bridge `windowToken`.
     @ObservationIgnored var agentWindowScope: MCPAgentWindowScope?
+    @ObservationIgnored var lastAgentWindowGeneration: Int?
     /// Documents where the user explicitly approved sensitive script inspection (`tabID -> runtimeDocumentID`). Never set automatically.
     @ObservationIgnored var inspectionApprovedDocuments: [UUID: String] = [:]
 
@@ -191,7 +195,7 @@ final class MCPBrowserSession: Identifiable {
         destinations = []
         comparison = nil
         actionPolicy.revokeAll()
-        secrets.wipe()
+        connectionSecrets.wipe()
         secretFields = [:]
         inspectionApprovedDocuments = [:]
         digestCache = [:]
@@ -236,16 +240,23 @@ final class MCPBrowserSession: Identifiable {
         }
         let started = ContinuousClock.now
         let subject = logSubject(for: name, arguments: arguments)
-        let result = await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
-            await AgentActionConsent.$externalClientName.withValue(clientName) {
-                await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
-                    await execute(entry, arguments: arguments)
+        let result = await withAgentWindowCapturePolicy {
+            await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
+                await AgentActionConsent.$externalClientName.withValue(clientName) {
+                    await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
+                        await execute(entry, arguments: arguments)
+                    }
                 }
             }
         }
         let scrubbed = finished(result)
         logCall(name, subject: subject, result: scrubbed, since: started)
         return scrubbed
+    }
+
+    private func withAgentWindowCapturePolicy(_ body: () async -> CallTool.Result) async -> CallTool.Result {
+        guard let scope = agentWindowScope else { return await body() }
+        return await PageDriver.$allowsAgentWindowCapture.withValue({ scope.isActive() && scope.secrets.isEmpty }, operation: body)
     }
 
     private func executeTabFree(_ name: String, arguments: [String: Value]) async -> CallTool.Result? {

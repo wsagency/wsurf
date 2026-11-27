@@ -259,6 +259,8 @@ extension MCPBrowserSession {
             let code: MCPFailureCode = switch failure {
             case .privacy:
                 .protectedSecretPresent
+            case .uninspectableFrame:
+                .unsupported
             case .stale:
                 .stale
             case .invalidGeometry:

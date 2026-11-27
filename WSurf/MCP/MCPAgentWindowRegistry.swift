@@ -13,6 +13,9 @@ final class MCPAgentWindowScope {
     let access: MCPAccessConsent.Access
     let isActive: () -> Bool
     let isAgentOwned: () -> Bool
+    let generation: () -> Int?
+    let takeOver: (BrowserTab) -> Void
+    let secrets: MCPSecretScrubber
     let onBeginWorking: () -> UUID
     let onEndWorking: (UUID) -> Void
 
@@ -22,6 +25,9 @@ final class MCPAgentWindowScope {
         access: MCPAccessConsent.Access,
         isActive: @escaping () -> Bool,
         isAgentOwned: @escaping () -> Bool,
+        generation: @escaping () -> Int?,
+        takeOver: @escaping (BrowserTab) -> Void,
+        secrets: MCPSecretScrubber,
         onBeginWorking: @escaping () -> UUID,
         onEndWorking: @escaping (UUID) -> Void
     ) {
@@ -30,6 +36,9 @@ final class MCPAgentWindowScope {
         self.access = access
         self.isActive = isActive
         self.isAgentOwned = isAgentOwned
+        self.generation = generation
+        self.takeOver = takeOver
+        self.secrets = secrets
         self.onBeginWorking = onBeginWorking
         self.onEndWorking = onEndWorking
     }
@@ -50,6 +59,7 @@ final class MCPAgentWindowRegistry {
         let windowToken: String
         let windowTokenHash: Data
         let access: AgentWindowAccess
+        let secrets = MCPSecretScrubber()
         weak var coordinator: AppCoordinator?
         var previewSession: MCPBrowserSession?
         var activeOperations: [UUID: Task<Void, Never>] = [:]
@@ -94,7 +104,8 @@ final class MCPAgentWindowRegistry {
     @ObservationIgnored private let opener: WindowOpener
     @ObservationIgnored private let profileCatalog: () -> ProfileStore
     @ObservationIgnored private let disconnectMCP: (BrowserModel) -> Void
-    @ObservationIgnored private let cancelMCPCalls: (BrowserModel) -> Void
+    @ObservationIgnored private let cancelMCPCalls: (BrowserModel, UUID?) -> Void
+    @ObservationIgnored private let showWindow: (AppCoordinator) -> Void
     @ObservationIgnored var onEvent: ((_ pairedClientId: UUID, _ event: String, _ payload: [String: Any]) -> Void)?
     @ObservationIgnored var onStopClient: ((_ pairedClientId: UUID) -> Void)?
 
@@ -103,13 +114,15 @@ final class MCPAgentWindowRegistry {
         profileCatalog: @escaping () -> ProfileStore = { .shared },
         opener: @escaping WindowOpener,
         disconnectMCP: @escaping (BrowserModel) -> Void = { _ in },
-        cancelMCPCalls: @escaping (BrowserModel) -> Void = { _ in }
+        cancelMCPCalls: @escaping (BrowserModel, UUID?) -> Void = { _, _ in },
+        showWindow: @escaping (AppCoordinator) -> Void = { $0.showBrowser(activate: !AppDatabase.isRunningTests) }
     ) {
         self.trustStore = trustStore
         self.profileCatalog = profileCatalog
         self.opener = opener
         self.disconnectMCP = disconnectMCP
         self.cancelMCPCalls = cancelMCPCalls
+        self.showWindow = showWindow
         trustStore.onChange { [weak self] in
             self?.reconcileStoppedClients()
         }
@@ -193,6 +206,12 @@ final class MCPAgentWindowRegistry {
             isAgentOwned: { [weak record] in
                 record?.coordinator?.browser.agentCompanion?.owner == .agent
             },
+            generation: { [weak record] in record?.coordinator?.browser.agentCompanion?.generation },
+            takeOver: { [weak self, weak record] tab in
+                guard let self, let record, self.isActiveRecord(record), let browser = record.coordinator?.browser else { return }
+                self.takeOver(window: browser, tabId: tab.id, preservingCall: BrowserMCPServer.currentCallID)
+            },
+            secrets: record.secrets,
             onBeginWorking: { [weak self, weak record] in
                 guard let self, let record else { return UUID() }
                 return self.beginWorking(for: record)
@@ -230,7 +249,7 @@ final class MCPAgentWindowRegistry {
         let access = try parseAccess(params["access"])
         try validateRequestedAccess(access, for: pairedClientId)
         let floatOnTop = params["floatOnTop"] as? Bool
-        let open = params["open"] as? Bool ?? true
+        let open = params["open"] as? Bool
         let reuseExisting = params["reuseExistingTab"] as? Bool ?? true
         let requestedURL = try parseOptionalURL(params["url"])
 
@@ -251,7 +270,12 @@ final class MCPAgentWindowRegistry {
                 open: open,
                 reuseExisting: reuseExisting
             )
-            return try await reuseOrAddTab(in: existing, coordinator: coordinator, options: options)
+            guard let generation = coordinator.browser.agentCompanion?.generation else {
+                throw MCPAgentWindowError(.notFound, "Agent session is no longer active.")
+            }
+            return try await runCancellablePreview(in: existing, coordinator: coordinator, expectedGeneration: generation, owner: .agent) {
+                try await self.reuseOrAddTab(in: existing, coordinator: coordinator, options: options, generation: generation)
+            }
         }
 
         let openForClient = records.values.filter { $0.pairedClientId == pairedClientId }.count
@@ -282,7 +306,7 @@ final class MCPAgentWindowRegistry {
             defaultEngine: requestedEngine,
             access: access
         )
-        let coordinator = opener(profile, companion, requestedURL, requestedEngine, floatOnTop ?? false, open)
+        let coordinator = opener(profile, companion, requestedURL, requestedEngine, floatOnTop ?? false, open ?? true)
         let record = Record(
             windowId: coordinator.windowID,
             pairedClientId: pairedClientId,
@@ -296,7 +320,7 @@ final class MCPAgentWindowRegistry {
         let tab = coordinator.browser.activeTab ?? coordinator.browser.newTab(url: requestedURL, transition: .agent)
         configureTabEngine(tab, requested: requestedEngine, url: requestedURL)
         ensurePreviewSession(for: record)?.attributeAgentTab(tab)
-        if open {
+        if open ?? true {
             showAgentWindow(coordinator)
         }
         return windowDescriptor(record: record, coordinator: coordinator, tab: tab)
@@ -360,7 +384,7 @@ final class MCPAgentWindowRegistry {
 
     // MARK: - UI Controls (Take Over / Hand Back / Stop / Close)
 
-    func takeOver(window browser: BrowserModel) {
+    func takeOver(window browser: BrowserModel, tabId: UUID? = nil, preservingCall: UUID? = nil) {
         guard let record = records[browser.windowID],
               let coordinator = record.coordinator,
               !coordinator.isClosed
@@ -374,7 +398,8 @@ final class MCPAgentWindowRegistry {
             return
         }
         record.lockedByHumanTakeOver = true
-        _ = transitionOwner(record: record, coordinator: coordinator, to: .human, tabId: browser.activeTab?.id)
+        _ = transitionOwner(
+            record: record, coordinator: coordinator, to: .human, tabId: tabId ?? browser.activeTab?.id, preservingCall: preservingCall)
     }
 
     func handBack(window browser: BrowserModel) {
@@ -558,8 +583,8 @@ final class MCPAgentWindowRegistry {
             "owner": (companion?.owner ?? .agent).rawValue,
             "visible": isWindowVisible(coordinator),
             "engine": effectiveEngine(of: tab).rawValue,
-            "url": tab.urlString,
-            "title": tab.title,
+            "url": previewMetadata(tab.urlString, tab: tab, record: record),
+            "title": previewMetadata(tab.title, tab: tab, record: record),
             "windowToken": record.windowToken,
             "backend": MCPAgentBridgeProtocol.backendName,
             "mcpAllowed": true,
@@ -577,8 +602,8 @@ final class MCPAgentWindowRegistry {
             "tabId": tab.id.uuidString,
             "windowId": record.windowId.uuidString,
             "threadId": record.threadId,
-            "url": tab.urlString,
-            "title": tab.title,
+            "url": previewMetadata(tab.urlString, tab: tab, record: record),
+            "title": previewMetadata(tab.title, tab: tab, record: record),
             "owner": companion.owner.rawValue,
             "generation": companion.generation,
             "engine": effectiveEngine(of: tab).rawValue,
@@ -608,7 +633,7 @@ final class MCPAgentWindowRegistry {
     }
 
     func showAgentWindow(_ coordinator: AppCoordinator) {
-        coordinator.showBrowser(activate: !AppDatabase.isRunningTests)
+        showWindow(coordinator)
     }
 
     func parseEngine(_ raw: Any?, defaultEngine: BrowserEngine) throws -> BrowserEngine {
@@ -641,14 +666,15 @@ final class MCPAgentWindowRegistry {
         let engine: BrowserEngine
         let explicitEngine: Bool
         let floatOnTop: Bool?
-        let open: Bool
+        let open: Bool?
         let reuseExisting: Bool
     }
 
     private func reuseOrAddTab(
         in record: Record,
         coordinator: AppCoordinator,
-        options: ReuseOptions
+        options: ReuseOptions,
+        generation: Int
     ) async throws -> [String: Any] {
         let owner = coordinator.browser.agentCompanion?.owner ?? .agent
         guard owner == .agent else {
@@ -657,7 +683,6 @@ final class MCPAgentWindowRegistry {
             }
             throw MCPAgentWindowError(.denied, "Window is unclaimed and not owned by the agent.")
         }
-        let generation = coordinator.browser.agentCompanion?.generation
         if let url = options.url {
             try ensureDestinationAllowed(url, permissions: coordinator.browser.sitePermissions)
         }
@@ -689,23 +714,28 @@ final class MCPAgentWindowRegistry {
                 if options.engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(currentOrigin) {
                     throw MCPAgentWindowError(.unsupported, "This origin requires WebKit and cannot switch to Chromium.")
                 }
-                configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
                 if tab.isMaterialised {
-                    _ = await tab.switchEngine(to: options.engine)
+                    let switched = await tab.switchEngine(to: options.engine) {
+                        self.mayMutate(record, generation: generation)
+                    }
                     if coordinator.browser.agentCompanion?.owner == .human {
                         throw MCPAgentWindowError(.humanControl, "Window is under human control.")
                     }
-                    guard isActiveRecord(record), coordinator.browser.agentCompanion?.generation == generation else {
+                    guard mayMutate(record, generation: generation) else {
                         throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
                     }
+                    guard switched else {
+                        throw MCPAgentWindowError(.actionFailed, "Could not switch the tab engine.")
+                    }
                 }
+                configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
             }
             if let url = options.url {
                 tab.load(url, transition: .agent)
             }
         }
         ensurePreviewSession(for: record)?.syncAgentWindowGrants()
-        if options.open {
+        if options.open ?? !isWindowVisible(coordinator) {
             showAgentWindow(coordinator)
         }
         return windowDescriptor(record: record, coordinator: coordinator, tab: tab)
@@ -748,7 +778,8 @@ final class MCPAgentWindowRegistry {
         record: Record,
         coordinator: AppCoordinator,
         to owner: AgentWindowOwner,
-        tabId: UUID?
+        tabId: UUID?,
+        preservingCall: UUID? = nil
     ) -> Int {
         var companion = coordinator.browser.agentCompanion ?? AgentCompanionInfo(
             hostName: record.hostName,
@@ -761,9 +792,10 @@ final class MCPAgentWindowRegistry {
             record.activeWorkingIDs.removeAll()
         }
         coordinator.browser.agentCompanion = companion
+        record.previewSession?.syncAgentWindowGeneration()
         if owner != .agent {
             cancelOperations(in: record)
-            cancelMCPCalls(coordinator.browser)
+            cancelMCPCalls(coordinator.browser, preservingCall)
             for tab in coordinator.browser.tabs {
                 tab.setExternalAutomationWorking(false)
             }
@@ -785,8 +817,9 @@ final class MCPAgentWindowRegistry {
         record.activeWorkingIDs.removeAll()
         record.previewSession?.revoke()
         record.previewSession = nil
+        record.secrets.wipe()
         if let coordinator = record.coordinator {
-            cancelMCPCalls(coordinator.browser)
+            cancelMCPCalls(coordinator.browser, nil)
             disconnectMCP(coordinator.browser)
             for tab in coordinator.browser.tabs {
                 tab.setExternalAutomationWorking(false)
@@ -801,6 +834,20 @@ final class MCPAgentWindowRegistry {
                 "threadId": record.threadId,
             ])
         }
+    }
+
+    /// Page-controlled metadata is sent on both the wire replies and pushed tab events.
+    func previewMetadata(_ text: String, tab: BrowserTab, record: Record) -> String {
+        if record.coordinator?.browser.agentCompanion?.owner == .human || tab.isMCPCredentialTainted
+            || (tab.mcpSecretWriteEpoch == tab.documentCommitEpoch && record.secrets.isEmpty) {
+            return MCPSecretScrubber.replacement
+        }
+        return record.secrets.scrub(text)
+    }
+
+    func mayMutate(_ record: Record, generation: Int) -> Bool {
+        guard !Task.isCancelled, isActiveRecord(record), let companion = record.coordinator?.browser.agentCompanion else { return false }
+        return companion.owner == .agent && companion.generation == generation
     }
 
     private func cancelOperations(in record: Record) {

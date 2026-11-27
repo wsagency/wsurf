@@ -149,6 +149,23 @@ struct MCPSecretScrubberTests {
         #expect(MCPSecretScrubber().scrub(result) == result)
     }
 
+    @Test func mirroredJSONKeepsTheFixedCodeEvenWhenItMatchesASecret() throws {
+        let scrubber = MCPSecretScrubber()
+        let code = MCPFailureCode.waitingForUser.rawValue
+        scrubber.register(code)
+        let original: Value = .object(["code": .string(code), "message": .string("Echo: \(code)")])
+        let text = try String(decoding: JSONEncoder().encode(original), as: UTF8.self)
+        let reply = CallTool.Result(
+            content: [.text(text: text, annotations: nil, _meta: nil)],
+            structuredContent: Optional.some(original),
+            isError: false)
+        let redacted = scrubber.scrub(reply)
+        let parsed = try JSONDecoder().decode(Value.self, from: Data(MCPBrowserSession.text(of: redacted).utf8))
+        #expect(parsed == redacted.structuredContent)
+        #expect(parsed.objectValue?["code"] == .string(code))
+        #expect(parsed.objectValue?["message"] == .string("Echo: \(Self.hidden)"))
+    }
+
     @Test func recordsTheUserReadsHideOnlyValuesConfirmedAsWrittenIntoASecretField() {
         let scrubber = MCPSecretScrubber()
         scrubber.register("Pay $500 to X")  // the agent chose to register a phrase

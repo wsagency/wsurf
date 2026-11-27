@@ -337,19 +337,27 @@ final class BrowserTab: Identifiable {
     /// tab. Back ends there once the tab's own history is spent, as in Safari (`BrowserModel.bindCallbacks`).
     var hasOpener: (() -> Bool)?
     var onBackToOpener: (() -> Void)?
+    // An agent tab or tab with an explicit engine cannot start a Chromium submission to a WebKit-only origin.
+    var enforcesWebKitOnlySignIn: Bool {
+        staysInItsWindow || engineOverride != nil || defaultEngineOverride != nil
+    }
+
     func preferredEngine(for url: URL?, keepingSignIn: Bool = true) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
+        let origin = SitePermissions.origin(for: url)
+        if SitePermissions.webKitOnlyOrigins.contains(origin) {
+            // An ordinary tab can already be holding a sign-in started by a form that could not be reissued.
+            if keepingSignIn, signInEngine == .chromium, !enforcesWebKitOnlySignIn {
+                return .chromium
+            }
+            return .webKit
+        }
         if let engineOverride {
             return engineOverride
         }
-        guard let url else { return defaultEngineOverride ?? .webKit }
-        let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return defaultEngineOverride ?? .webKit }
         if keepingSignIn, let signInEngine {
             return signInEngine
-        }
-        if SitePermissions.webKitOnlyOrigins.contains(origin) {
-            return .webKit
         }
         if let pinnedEngine, pinnedEngine.origin == origin {
             return pinnedEngine.engine
@@ -704,6 +712,7 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored private(set) var documentCommitEpoch: UInt64 = 0
     /// Shared by automation connections so taking over or disconnecting cannot remove the document's protection.
     @ObservationIgnored var mcpCredentialTaint: (commitEpoch: UInt64, mainDocumentID: String?)?
+    @ObservationIgnored var mcpSecretWriteEpoch: UInt64?
     var isMCPCredentialTainted: Bool {
         mcpCredentialTaint?.commitEpoch == documentCommitEpoch
     }
@@ -720,6 +729,7 @@ final class BrowserTab: Identifiable {
     func notifyDocumentCommitted() {
         documentCommitEpoch &+= 1
         mcpCredentialTaint = nil
+        mcpSecretWriteEpoch = nil
         for observer in Array(documentCommitObservers.values) {
             observer()
         }

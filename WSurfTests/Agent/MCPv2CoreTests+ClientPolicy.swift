@@ -110,10 +110,60 @@ extension MCPv2CoreTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func unavailableBlindFillDistinguishesChangedAccountFromSelectedVaultLock(locked: Bool) async throws {
+        try await withRig(ownerPath: "/login") { rig in
+            let account = MCPVaultProvider.AccountSummary(id: UUID(), label: "Test", vaultID: UUID(), revision: 1, epoch: 1)
+            let provider = MCPVaultProvider(
+                savedAccounts: { _, _, _ in [account] },
+                blindFill: { _, _, _, _, _, _ in nil },
+                isLocked: { _, _, vaultID in
+                    #expect(vaultID == account.vaultID)
+                    return locked
+                })
+            let session = MCPBrowserSession(
+                browser: rig.browser, trust: rig.trust, available: { true }, consent: { _, _, _ in .control },
+                loginConsent: { _, _, _, _, _ in .fill(accountID: account.id) }, vaultProvider: provider)
+            defer { session.revoke() }
+            _ = try await call(session, "requestAccess")
+            let reply = try await call(session, "requestUserLogin", tab: rig.owner, ["mode": "vaultFill"])
+            #expect(reply.structuredContent?.objectValue?["code"] == .string(locked ? "vaultLocked" : "noSavedLogin"))
+        }
+    }
+
+    @Test func developerPasswordEntryStillRequiresBothOptIns() async throws {
+        try await withRig(ownerPath: "/login") { rig in
+            let paired = try rig.trust.pair(token: SyntheticToken.first, name: "Editor", kind: nil)
+            try rig.trust.setDeveloperProfile(rig.browser.context.profile.id, dedicated: true)
+            try rig.trust.setStanding(.developer, for: paired.id)
+            try rig.trust.setAllowsPasswordEntry(true)
+            let session = MCPBrowserSession(browser: rig.browser, trust: rig.trust, available: { true })
+            session.pairedClient = paired
+            defer { session.revoke() }
+            _ = try await call(session, "requestAccess")
+            #expect(session.permits(rig.owner, capability: .developer))
+            let page = try await call(session, "readPage", tab: rig.owner)
+            let ref = try fieldRef("Password", in: page)
+            let args: [String: Value] = ["ref": .int(ref), "text": .string(Self.controlPassword), "secret": true]
+            let denied = try await call(session, "typeOnPage", tab: rig.owner, args)
+            let text = MCPBrowserSession.text(of: denied)
+            #expect(denied.structuredContent?.objectValue?["code"] == "accessDenied")
+            #expect(text.contains("Allow password entry"))
+            #expect(text.contains("own opt-in"))
+            let tool = try #require(MCPToolCatalog.entries.first { $0.name == "typeOnPage" })
+            #expect(tool.description.contains("own password-entry opt-in"))
+
+            try rig.trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: paired.id)
+            #expect(session.allowsPasswordEntry(for: rig.owner))
+            try rig.trust.setAllowsPasswordEntry(false)
+            #expect(!session.allowsPasswordEntry(for: rig.owner))
+        }
+    }
+
     @Test func structuredCodesPreserveToolStatusAndMessage() async throws {
         try await withRig(ownerPath: "/login") { rig in
             var vault = emptyVault()
-            vault.isLocked = { _, _ in true }
+            vault.isLocked = { _, _, _ in true }
             let session = MCPBrowserSession(
                 browser: rig.browser, trust: rig.trust, available: { true }, consent: { _, _, _ in .control }, vaultProvider: vault)
             defer { session.revoke() }

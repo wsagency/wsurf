@@ -106,9 +106,9 @@ The following architectural decisions are finalized for MCP v2:
 - **Keychain-backed setting (`MCPTrustStore`):**
   - `allowsPasswordEntry: Bool` (default `false`), stored in the data-protection keychain document alongside paired apps and developer settings, exposed as a toggle in **Settings › Assistant › Connected apps** (and referenced from External connections).
 - **Eligibility:**
-  - When a connection holds `.control` on a tab AND (`trust.allowsPasswordEntry` is `true` OR connection holds `.developer`), `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` may write into `isSensitiveSecret` fields without requiring `secret: true` and without requiring `localhost` / Developer profile.
+  - A connection needs Control and the global `trust.allowsPasswordEntry` setting. Paired clients also need their own password-entry opt-in, including clients with Developer access. With those permissions, `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` can write sensitive fields directly.
   - Explicit `secret: true` remains supported as an opt-in hint for non-password fields (e.g., API keys in plain text inputs) under the same eligibility rule.
-  - When `allowsPasswordEntry` is `false` (and not `.developer`), password/OTP writes are refused before touching the DOM.
+  - WSurf refuses password and OTP writes when a required permission is off.
 - **Automatic protections on any write into a sensitive secret field:**
   1. Target sensitivity is checked before typing so values are registered in `MCPSecretScrubber` **before** DOM `input` listeners can echo them into titles, console, or network requests.
   2. The field is not focused (preventing autofill popups), must reside in the main document (not cross-origin/embedded frames), and triggers `finishSecretEntry` (dismissing `AutofillSuggestions` and clearing `tab.autofillSave`).
@@ -201,7 +201,8 @@ preserve the user's current profile selection.
 - **Session attribution and cleanup.** The tab menu names the connection that
   opened a window-local tab. **Close agent tabs** closes only that connection's
   window-local tabs in the current window. Tabs taken over by the person, pinned
-  tabs and shared Space tabs are excluded.
+  tabs and shared Space tabs are excluded. Window-local tabs stay out of cloud
+  Space capture across restarts until the person files them.
 - **Cross-engine comparison.** `setTabEngine`, `openComparison` and `compareTabs`
   let clients compare Chromium with WebKit using structured layout, console and
   network diffs and an optional image overlay. WebKit-only sites cannot be
@@ -216,12 +217,15 @@ preserve the user's current profile selection.
   for each paired client. Older pairings load with password entry off, Vault
   requests subject to human approval and Chromium as the default where WebKit
   is not required. The live connection uses current settings.
-- **Host bridge parity.** `openAgentWindow` shows the window when `open` is
-  omitted and reports actual visibility, as does preview `status`. A verified
-  host can take a guarded read-only `snapshot` during human control. Changed
-  ownership generation, a filled sensitive field, a Vault-tainted document or
-  an explicit site refusal prevents the corresponding read. All mutations
-  remain blocked until Hand Back.
+- **Host bridge parity.** When `open` is omitted, `openAgentWindow` shows new
+  or hidden windows and preserves focus on visible reuse. The open reply and
+  preview `status` report actual visibility. A verified host can take a guarded
+  read-only `snapshot` during human control. Both sockets share the window’s
+  in-memory secret registry, including for redaction of preview metadata.
+  Snapshots omit images when a visible frame cannot be inspected. Take Over
+  cancels in-flight mutations, manual sign-in transfers ownership before
+  returning `waitingForUser`, and Hand Back requires a fresh observation for
+  ref-based actions.
 
 ---
 
@@ -231,11 +235,11 @@ preserve the user's current profile selection.
 | --- | --- |
 | Malicious/prompt-injected agent hijacks user's active tab | `newTab` works without touching user tabs; `navigate` on user-shared tabs opens a new background tab unless `inPlace: true`. |
 | Shell process enables password entry or grants silently | `allowsPasswordEntry`, pairings, standing grants, and Website default live in the data-protection Keychain (`MCPTrustStore`), never in UserDefaults or editable files. |
-| Agent extracts Vault password via `requestUserLogin` | Blind fill writes directly inside WSurf; Vault credentials never enter MCP messages; human approves one of 4 explicit sheet choices; password registered in memory-only `MCPSecretScrubber` (zeroed on disconnect). |
+| Agent extracts Vault password via `requestUserLogin` | Blind fill writes directly inside WSurf; Vault credentials never enter MCP messages; human approves one of 4 explicit sheet choices; password registered in memory-only `MCPSecretScrubber` (zeroed on connection teardown, or window-session teardown for the shared Agent Micro Window registry). |
 | Agent extracts Vault or user-typed password via `evaluateScript` / DevTools | `credentialTainted` + live filled-secret check blocks `evaluateScript` (`protectedSecretPresent`), strips `readNetwork` bodies (`omitted: protected credential form`), suppresses `readConsole` previews, bans `[value]` selectors and `editDOM` on sensitive forms, and masks screenshots in black. |
 | Agent probes whether user has accounts in Vault | `vaultHint` exposes only `{ hasSavedLogin: Bool, requiresUserApproval: true }` on pages with login forms; never usernames, counts, or credentials; returns `false` when Vault is locked. |
 | Echoed password leaks through page title, console, or URL | `MCPSecretScrubber` registers typed & stored/reformatted values before DOM events fire and scrubs all encodings (raw, whitespace-collapsed, percent, JSON, HTML) across every reply. |
-| Forced Chromium on WebKit-only auth origins | `SitePermissions.webKitOnlyOrigins` enforced in both `newTab` and `setTabEngine`. |
+| Forced Chromium on WebKit-only auth origins | `SitePermissions.webKitOnlyOrigins` enforced on open, engine switches and later navigation, ahead of explicit tab engine preferences. |
 
 ---
 
