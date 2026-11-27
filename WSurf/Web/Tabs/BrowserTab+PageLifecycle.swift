@@ -421,7 +421,7 @@ extension BrowserTab {
                     guard let self, let view, !isClosed, liveView === view else { return }
                     onOpenInNewWindow?(url, isPrivate || self.isPrivate)
                 }
-                tabView.onContextDownload = { [weak self] download, source in self?.onDownload?(download, source) }
+                tabView.onContextDownload = { [weak self] download, source in self?.onDownload?(download, source, false) }
                 tabView.onPeekLink = { [weak self, weak view] url in
                     guard let view else { return }
                     self?.onOpenInPeek?(url, TabNavigationDelegate.pointer(in: view))

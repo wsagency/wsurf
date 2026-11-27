@@ -271,13 +271,9 @@ final class BrowserModel {
             guard let tab else { return }
             self?.onPictureReturnExpected?(tab)
         }
-        tab.onDownload = { [weak self, weak tab] download, source in
-            self?.downloads.adopt(
-                download,
-                suggestedSource: source,
-                sourceTabID: tab?.id,
-                privately: tab?.isPrivate ?? false
-            )
+        tab.onDownload = { [weak self, weak tab] download, source, closesPopup in
+            guard let self, let tab else { return }
+            adoptDownload(download, source: source, from: tab, closesPopup: closesPopup)
         }
         tab.onSaveDocument = { [weak self, weak tab] data, filename, source, opensAfterSaving in
             guard let self, let tab, !tab.isClosed else { return }
@@ -328,6 +324,15 @@ final class BrowserModel {
         tab.hasActiveDownload = { [weak self, weak tab] in
             guard let self, let tab else { return false }
             return self.downloads.hasActiveDownload(for: tab.id)
+        }
+    }
+
+    private func adoptDownload(_ download: WKDownload, source: URL?, from tab: BrowserTab, closesPopup: Bool) {
+        let closePopup = closesPopup && tab.lastRequestedNavigation == nil && !tab.isPinnedForProfile && !tab.isFavorite
+        let window = tab.liveView?.window ?? openerByTab[tab.id].flatMap { tabsByID[$0]?.liveView?.window }
+        downloads.adopt(download, suggestedSource: source, sourceTabID: tab.id, privately: tab.isPrivate, on: closePopup ? window : nil)
+        if closePopup {
+            close(tab, recordForReopening: false)
         }
     }
 

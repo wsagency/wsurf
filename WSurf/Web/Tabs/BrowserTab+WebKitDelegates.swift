@@ -13,6 +13,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     private var pendingMainFrameURL: URL?
     private var mainFrameActionGeneration = 0
 
+    /// Only the first navigation of a new window opened directly to a web address can close it on download.
+    private enum InitialPopupNavigation {
+        case awaitingNavigation
+        case navigating
+        case downloading(generation: Int)
+    }
+    private var initialPopupNavigation: InitialPopupNavigation?
+
     init(tab: BrowserTab) {
         self.tab = tab
     }
@@ -57,8 +65,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if navigationAction.shouldPerformDownload {
-            downloadSource = navigationAction.request.url
-            pendingMainFrameURL = nil
+            if navigationAction.targetFrame?.isMainFrame != false {
+                pendingMainFrameURL = nil
+            }
+            if navigationAction.targetFrame?.isMainFrame == true {
+                if case .awaitingNavigation = initialPopupNavigation {
+                    initialPopupNavigation = .downloading(generation: mainFrameActionGeneration)
+                }
+            }
             decisionHandler(.download)
             return
         }
@@ -288,7 +302,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         // A window an agent's input opened never takes the place of the person's tab.
         let activate = (!modifiers.contains(.command) || modifiers.contains(.shift)) && BrowserPage.from(webView)?.isAutomatedInputRecent != true
         onNewWindow(view, activate)
-        (view.navigationDelegate as? TabNavigationDelegate)?.tab?.resolveOpenerSignIn(for: navigationAction.request.url)
+        if let delegate = view.navigationDelegate as? TabNavigationDelegate {
+            let url = navigationAction.request.url
+            delegate.tab?.resolveOpenerSignIn(for: url)
+            if !chosenFromMenu, !SitePermissions.webOrigin(for: url).isEmpty {
+                delegate.initialPopupNavigation = .awaitingNavigation
+            }
+        }
         return view
     }
 
@@ -515,7 +535,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         }
     }
 
-    private var downloadSource: URL?
+    nonisolated static func isAttachment(_ response: URLResponse) -> Bool {
+        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
+              let disposition = response.value(forHTTPHeaderField: "Content-Disposition"),
+              let token = disposition.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false).first
+        else { return false }
+        let asciiWhitespace = CharacterSet(charactersIn: " \t\r\n\u{000B}\u{000C}")
+        return token.trimmingCharacters(in: asciiWhitespace).caseInsensitiveCompare("attachment") == .orderedSame
+    }
 
     func webView(
         _ webView: WKWebView,
@@ -530,16 +557,18 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
             tab?.autofillSave.submissions.clear()
         }
-        guard !navigationResponse.canShowMIMEType else {
+        guard !navigationResponse.canShowMIMEType || Self.isAttachment(navigationResponse.response) else {
             decisionHandler(.allow)
             return
         }
-        downloadSource = navigationResponse.response.url
         if navigationResponse.isForMainFrame {
             pendingMainFrameURL = nil
-        }
-        if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
-            PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
+            if case .navigating = initialPopupNavigation {
+                initialPopupNavigation = .downloading(generation: mainFrameActionGeneration)
+            }
+            if let page = BrowserPage.from(webView) {
+                PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
+            }
         }
         decisionHandler(.download)
     }
@@ -549,7 +578,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         navigationAction: WKNavigationAction,
         didBecome download: WKDownload
     ) {
-        hand(download, source: navigationAction.request.url)
+        hand(download, source: navigationAction.request.url, mainFrame: navigationAction.targetFrame?.isMainFrame == true)
     }
 
     func webView(
@@ -557,17 +586,26 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         navigationResponse: WKNavigationResponse,
         didBecome download: WKDownload
     ) {
-        hand(download, source: navigationResponse.response.url)
+        hand(download, source: navigationResponse.response.url, mainFrame: navigationResponse.isForMainFrame)
     }
 
-    private func hand(_ download: WKDownload, source: URL?) {
-        let origin = source ?? downloadSource
-        downloadSource = nil
-        pendingMainFrameURL = nil
-        tab?.onDownload?(download, origin)
+    private func hand(_ download: WKDownload, source: URL?, mainFrame: Bool) {
+        var closesPopup = false
+        if mainFrame {
+            if case .downloading(let generation) = initialPopupNavigation {
+                closesPopup = mainFrameActionGeneration == generation && tab?.committedURL == nil
+            }
+            initialPopupNavigation = nil
+        }
+        tab?.onDownload?(download, source, closesPopup)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if case .awaitingNavigation = initialPopupNavigation {
+            initialPopupNavigation = .navigating
+        } else {
+            initialPopupNavigation = nil
+        }
         guard let page = BrowserPage.from(webView) else { return }
         let nativeNavigation = page.navigation(for: navigation)
         page.certificateStanding.navigationStarted()
@@ -632,6 +670,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        initialPopupNavigation = nil
         pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         page.certificateStanding.navigationCommitted()

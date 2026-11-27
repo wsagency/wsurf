@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
+import AppKit
 import Foundation
 import GRDB
 import Testing
@@ -160,6 +161,155 @@ struct BrowserSmokeTests {
         #expect(item.sourceTabID == tab.id)
         #expect(destination.deletingLastPathComponent() == folder)
         #expect(try Data(contentsOf: destination) == payload)
+    }
+
+    @Test func attachmentPolicyUsesTheDispositionTokenOfSuccessfulHTTPResponses() throws {
+        let url = URL(string: "https://example.test/sample.mp4")!
+        let cases: [(Int, String?, Bool)] = [
+            (200, "attachment", true),
+            (200, "ATTACHMENT; filename=\"sample.mp4\"", true),
+            (200, "attachment; filename*=UTF-8''sample.mp4", true),
+            (206, " \tAtTaChMeNt \r\n ; filename=\"sample; clip.mp4\"", true),
+            (200, "inline; filename=attachment", false),
+            (200, "form-data; name=\"attachment\"", false),
+            (200, "attachment-extra", false),
+            (200, ";attachment", false),
+            (200, "\u{00A0}attachment", false),
+            (200, "", false),
+            (200, nil, false),
+            (302, "attachment", false),
+            (403, "attachment", false),
+            (404, "attachment", false),
+            (500, "attachment", false),
+        ]
+        for (status, disposition, expected) in cases {
+            let headers = disposition.map { ["cOnTeNt-dIsPoSiTiOn": $0] }
+            let response = try #require(HTTPURLResponse(
+                url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers
+            ))
+            #expect(TabNavigationDelegate.isAttachment(response) == expected, "HTTP \(status), disposition \(disposition ?? "(absent)")")
+        }
+        let nonHTTP = URLResponse(url: URL(fileURLWithPath: "/sample.mp4"), mimeType: "video/mp4", expectedContentLength: 0, textEncodingName: nil)
+        #expect(!TabNavigationDelegate.isAttachment(nonHTTP))
+    }
+
+    enum VideoDownloadNavigation: CaseIterable {
+        case mainFrame, hiddenFrame, emptyPopup, redirectedPopup, committedPopup, newTab
+    }
+
+    @Test(arguments: VideoDownloadNavigation.allCases)
+    func webKitDownloadsAnMP4Attachment(navigation: VideoDownloadNavigation) async throws {
+        let payload = try videoSample()
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/page": .html("<title>Opener</title>"),
+            "/popup": .html("<title>Popup</title>"),
+            "/redirect": .init(status: "302 Found", headers: ["Location": "/attachment"], body: Data()),
+            "/attachment": videoResponse(payload, disposition: "attachment"),
+        ])
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wsurf-video-download-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let closesPopup = navigation == .emptyPopup || navigation == .redirectedPopup
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: closesPopup, persists: false)
+        let browser = BrowserModel(
+            database: .temporary(), sitePermissions: permissions("VideoDownload"), downloads: downloads
+        )
+        defer { browser.closeAllTabs() }
+
+        let pageURL = try server.url("/page")
+        let attachmentURL = try server.url("/attachment")
+        let opener = browser.newTab(url: pageURL)
+        try #require(await waitUntil { opener.title == "Opener" })
+        browser.setPopups(.allow, for: opener)
+
+        var source = opener
+        switch navigation {
+        case .mainFrame:
+            opener.load(attachmentURL)
+        case .hiddenFrame:
+            _ = try await opener.page.evaluateJavaScript("""
+                const frame = document.createElement('iframe');
+                frame.hidden = true;
+                frame.src = '/attachment';
+                document.body.append(frame);
+                true;
+                """)
+        case .emptyPopup, .redirectedPopup:
+            let window = NSWindow()
+            browser.onTabOpened = { tab in window.contentView?.addSubview(tab.page) }
+            browser.onTabClosed = { tab in tab.liveView?.removeFromSuperview() }
+            downloads.selectSaveLocation = { filename, folder, presentingWindow in
+                #expect(presentingWindow === window)
+                return folder.appendingPathComponent(filename)
+            }
+            let path = navigation == .redirectedPopup ? "/redirect" : "/attachment"
+            _ = try await opener.page.evaluateJavaScript("window.open('\(path)'); true")
+        case .committedPopup:
+            _ = try await opener.page.evaluateJavaScript("window.open('/popup'); true")
+            try #require(await waitUntil { browser.activeTab?.title == "Popup" })
+            source = try #require(browser.activeTab)
+            source.load(attachmentURL)
+        case .newTab:
+            source = browser.newTab(url: attachmentURL, byPerson: true)
+        }
+
+        try #require(await waitUntil(timeout: .seconds(10)) { downloads.items.first?.state == .finished })
+        let item = try #require(downloads.items.first)
+        let destination = try #require(item.destination)
+        #expect(downloads.items.count == 1)
+        #expect(item.filename == "sample.mp4")
+        #expect(try Data(contentsOf: destination) == payload)
+        if closesPopup {
+            #expect(item.sourceTabID != nil && item.sourceTabID != opener.id)
+            #expect(browser.tabs.map(\.id) == [opener.id])
+            #expect(browser.activeTabID == opener.id)
+        } else {
+            #expect(item.sourceTabID == source.id)
+            #expect(browser.tabs.contains { $0 === source })
+            #expect(source.committedURL != attachmentURL)
+        }
+    }
+
+    @Test func webKitDisplaysAnInlineMP4() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/inline": videoResponse(try videoSample(), disposition: "inline"),
+        ])
+        let downloads = DownloadManager(persists: false)
+        let browser = BrowserModel(
+            database: .temporary(), sitePermissions: permissions("InlineVideo"), downloads: downloads
+        )
+        defer { browser.closeAllTabs() }
+        let url = try server.url("/inline")
+        let tab = browser.newTab(url: url)
+
+        try #require(await waitUntil { tab.committedURL == url && !tab.isLoading })
+        let showsPlayer = try await tab.page.evaluateJavaScript("""
+            const video = document.querySelector('video');
+            document.contentType === 'video/mp4' && video?.controls && video.src === location.href;
+            """)
+        #expect(showsPlayer as? Bool == true)
+        #expect(downloads.items.isEmpty)
+    }
+
+    private final class VideoFixtureBundle {}
+
+    private func videoSample() throws -> Data {
+        let url = try #require(Bundle(for: VideoFixtureBundle.self).url(
+            forResource: "attachment-sample", withExtension: "mp4"
+        ))
+        return try Data(contentsOf: url)
+    }
+
+    private func videoResponse(_ payload: Data, disposition: String) -> HTTPFixtureServer.Response {
+        .init(
+            status: "200 OK",
+            headers: [
+                "Content-Type": "video/mp4",
+                "Content-Disposition": "\(disposition); filename=\"sample.mp4\"",
+            ],
+            body: payload
+        )
     }
 
     @Test func aFreshPrivateSessionHasNoPriorTabsCookiesOrAgentLog() async throws {

@@ -389,7 +389,7 @@ final class BrowserTab: Identifiable {
     var onCloseRequested: (() -> Void)?
     var onPictureInPictureChanged: ((Bool) -> Void)?
     var onPictureReturnExpected: (() -> Void)?
-    var onDownload: ((WKDownload, URL?) -> Void)?
+    var onDownload: ((WKDownload, URL?, _ closesPopup: Bool) -> Void)?
     var onSaveDocument: ((Data, String, URL?, Bool) async -> Void)?
     var onChromiumDownload: ((BrowserPage, CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var onChromiumDownloadProgress: ((BrowserPage, CefDownload) -> Void)?
