@@ -26,6 +26,7 @@ extension BrowserModel {
                 case .tab(let id):
                     // A row standing for a page in a micro window is not a page here; the micro window reports the page.
                     guard let tab = liveTabs[id], tab.pinID == nil, tab.microTabID == nil, !tab.isPrivate, tab.extensionBaseURL == nil,
+                          !tab.isProvisionalDownloadPopup,
                           includingSpaceRows || tab.spaceTabID == nil
                     else { return nil }
                     return SessionNode.tab(id: tab.id, title: tab.title, url: tab.urlString)

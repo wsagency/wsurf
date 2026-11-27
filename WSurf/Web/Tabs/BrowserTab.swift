@@ -222,6 +222,9 @@ final class BrowserTab: Identifiable {
     /// sidebars, until the person moves it into a folder or another Space.
     var staysInItsWindow = false
     var mcpAgentTabOrigin: MCPAgentTabOrigin?
+    /// A popup that may close itself on its initial download stays local until a document commits.
+    @ObservationIgnored var isProvisionalDownloadPopup = false
+    var onProvisionalPopupCommitted: (() -> Void)?
     /// The space of the window this tab belongs to. Nil while it is a pin or inside a pinned folder, which every space
     /// shows, and for a tab that has not joined a space yet.
     var spaceID: UUID? {
@@ -398,7 +401,7 @@ final class BrowserTab: Identifiable {
     var onCloseRequested: (() -> Void)?
     var onPictureInPictureChanged: ((Bool) -> Void)?
     var onPictureReturnExpected: (() -> Void)?
-    var onDownload: ((WKDownload, URL?) -> Void)?
+    var onDownload: ((WKDownload, URL?, _ closesPopup: Bool) -> Void)?
     var onSaveDocument: ((Data, String, URL?, Bool) async -> Void)?
     var onChromiumDownload: ((BrowserPage, CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var onChromiumDownloadProgress: ((BrowserPage, CefDownload) -> Void)?
@@ -620,6 +623,7 @@ final class BrowserTab: Identifiable {
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil
         onNavigationStarted = nil
+        onProvisionalPopupCommitted = nil
         onFirstAddress = nil
         onNavigationFinished = nil
         onNavigationOutsideExtension = nil

@@ -147,6 +147,98 @@ struct SpaceTabWindowTests {
         }
     }
 
+    enum PopupOutcome: CaseIterable {
+        case download, page, failure
+    }
+
+    @Test(arguments: PopupOutcome.allCases)
+    func aPendingPopupInASharedFolderStaysInItsWindow(outcome: PopupOutcome) async throws {
+        try await withProfile { profile in
+            let response = ResponseGate()
+            let image = ResponseGate()
+            defer {
+                response.open()
+                image.open()
+            }
+            let payload = Data("Popup download".utf8)
+            let refusedServer = outcome == .failure ? try await HTTPFixtureServer.start(routes: [:]) : nil
+            let refusedURL = try refusedServer?.url("/refused")
+            var popupResponse: HTTPFixtureServer.Response = switch outcome {
+            case .download:
+                .download(payload, filename: "popup.txt")
+            case .page:
+                .html("<title>Committed popup</title><img src='/held-image'>")
+            case .failure:
+                .redirect(to: try #require(refusedURL))
+            }
+            popupResponse.gate = response
+            let server = try await HTTPFixtureServer.start(routes: [
+                "/opener": .html("<title>Opener</title>"),
+                "/popup": popupResponse,
+                "/held-image": .html("", gate: image),
+            ])
+            await refusedServer?.stop()
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            defer { finish(app) }
+            let first = app.newWindow(profile: profile, show: false)
+            let second = app.newWindow(profile: profile, show: false)
+            first.settings.sharesSpaceTabsAcrossWindows = true
+            let browser = first.browser
+            let sibling = second.browser
+            try #require(browser.sharesSpaceTabs && sibling.sharesSpaceTabs)
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent("wsurf-download-\(UUID())", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let downloads = DownloadManager(destinationFolder: destination, asksWhereToSave: false, persists: false)
+            browser.downloads = downloads
+
+            let opener = browser.newTab(url: try server.url("/opener"))
+            let folder = browser.createFolder(named: "Work", containing: [opener])
+            try #require(await waitUntil { opener.title == "Opener" })
+            let siblingOpener = try #require(copy(of: opener, in: second))
+            sibling.activate(siblingOpener)
+            let siblingTabs = sibling.tabs.map(\.id)
+            let sharedRows = browser.pinStore.spaceRows.map(\.id)
+            browser.setPopups(.allow, for: opener)
+            let url = try server.url("/popup")
+
+            _ = try await opener.page.evaluateJavaScript("window.open('/popup'); true")
+            try #require(await waitUntil { response.requestCount > 0 })
+            let popup = try #require(browser.activeTab)
+            try #require(popup !== opener)
+            try #require(browser.folder(containing: popup)?.id == folder.id)
+            #expect(popup.spaceTabID == nil)
+            #expect(browser.pinStore.spaceRows.map(\.id) == sharedRows)
+            #expect(sibling.tabs.map(\.id) == siblingTabs)
+            response.open()
+
+            switch outcome {
+            case .page:
+                // The image keeps the page loading. Committing the document is enough to publish the row.
+                try #require(await waitUntil { popup.committedURL == url && image.requestCount > 0 })
+                let copied = try #require(copy(of: popup, in: second))
+                #expect(sibling.folder(containing: copied)?.id == folder.id)
+                #expect(copied.urlString == url.absoluteString)
+            case .download:
+                try #require(await waitUntil { downloads.items.first?.state == .finished })
+                let item = try #require(downloads.items.first)
+                #expect(item.sourceTabID == popup.id)
+                #expect(try Data(contentsOf: #require(item.destination)) == payload)
+                #expect(browser.tab(id: popup.id) == nil)
+                #expect(browser.pinStore.spaceRows.map(\.id) == sharedRows)
+                #expect(sibling.tabs.map(\.id) == siblingTabs)
+                #expect(sibling.activeTabID == siblingOpener.id)
+            case .failure:
+                try #require(await waitUntil { popup.isShowingError && popup.committedNavigation != nil && !popup.isLoading })
+                #expect(!popup.isProvisionalDownloadPopup)
+                let copied = try #require(copy(of: popup, in: second))
+                #expect(sibling.folder(containing: copied)?.id == folder.id)
+                #expect(copied.urlString == refusedURL?.absoluteString)
+                #expect(sibling.activeTabID == siblingOpener.id)
+                #expect(downloads.items.isEmpty)
+            }
+        }
+    }
+
     @Test func aTabMovedToAnotherSpaceMovesInEveryWindow() async throws {
         try await withProfile { profile in
             let app = run(InMemoryUserDefaults(inheriting: .standard))

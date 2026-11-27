@@ -29,7 +29,7 @@ extension BrowserTab {
                 guard let data = await webKit.mainResourceData() else {
                     // A WebKit without the private call: the tab's own session fetches it again.
                     let download = await webKit.startDownload(using: URLRequest(url: url))
-                    onDownload?(download, url)
+                    onDownload?(download, url, false)
                     return
                 }
                 guard liveView === view else { return }

@@ -16,6 +16,8 @@ final class TabWebView: WKWebView {
 
     static let liveInstances = NSHashTable<TabWebView>.weakObjects()
     weak var profileContext: BrowserProfileContext?
+    /// Set while WebKit hands a new popup view to its tab.
+    var opensAsProvisionalDownloadPopup = false
 
     static var refreshHoverShield: (() -> Void)?
 

@@ -151,7 +151,7 @@ extension ChromiumHistoryRestoreTests {
             }
             let outside = try other.url("/outside")
             var downloadURL: URL?
-            favorite.tab.onDownload = { download, source in
+            favorite.tab.onDownload = { download, source, _ in
                 downloadURL = source
                 download.cancel { _ in }
             }
