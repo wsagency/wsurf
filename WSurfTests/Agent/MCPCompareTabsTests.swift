@@ -312,12 +312,18 @@ struct MCPCompareTabsTests {
             let initialLayout = object(original)["layout"]?.objectValue?["a"]?.objectValue
             #expect(initialLayout?["documentHeight"] == .int(1024))
             #expect(initialLayout?["documentWidth"] == .int(1024))
-            #expect(rig.session.secrets.register("1024") == .registered)
-
-            let result = try await compare(rig)
+            let result = try await PageDriver.$afterScreenshotCapture.withValue({
+                if rig.session.secrets.isEmpty {
+                    #expect(rig.session.secrets.register("1024") == .registered)
+                }
+            }) {
+                try await compare(rig, ["diagnostics": false])
+            }
             #expect(result.isError == false, "\(text(result))")
             let mirrored = try JSONDecoder().decode(Value.self, from: Data(text(result).utf8))
             let report = object(result)
+            #expect(report["diagnostics"] == nil)
+            #expect(mirrored.objectValue?["diagnostics"] == nil)
             #expect(report["layout"] == mirrored.objectValue?["layout"])
             #expect(report["viewport"] == mirrored.objectValue?["viewport"])
             for side in ["a", "b"] {

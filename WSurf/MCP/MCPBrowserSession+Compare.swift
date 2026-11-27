@@ -81,19 +81,18 @@ extension MCPBrowserSession {
                     "b": .object(["viewport": Self.viewportValue(b.layout)]),
                 ])
         }
-        var fields: [String: Value] = [
-            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout),
-            "layout": secrets.scrubPageValue(MCPCompareTools.layoutValue(a.layout, b.layout)),
-        ]
         let shot = await screenshotComparison(a, b, wantsImage: arguments["image"]?.boolValue == true)
-        fields["screenshot"] = secrets.scrubPageValue(shot.value)
-        if arguments["diagnostics"]?.boolValue != false {
-            fields["diagnostics"] = secrets.scrubPageValue(await diagnosticsComparison(a.tab, b.tab))
-        }
+        let diagnostics: Value? = arguments["diagnostics"]?.boolValue != false ? await diagnosticsComparison(a.tab, b.tab) : .none
         // The last await is behind us: what is returned is still within this connection's access.
         guard mayProceed(a.tab, capability: .development), mayProceed(b.tab, capability: .development),
             a.tab.isLive(a.view, generation: a.generation), b.tab.isLive(b.view, generation: b.generation)
         else { return MCPCompareTools.result(.stale, message: "Page access changed while comparing. Its contents were not returned.") }
+        var fields: [String: Value] = [
+            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout),
+            "layout": secrets.scrubPageValue(MCPCompareTools.layoutValue(a.layout, b.layout)),
+            "screenshot": secrets.scrubPageValue(shot.value),
+        ]
+        fields["diagnostics"] = diagnostics.map(secrets.scrubPageValue)
         return MCPCompareTools.result(.ok, fields, image: shot.image)
     }
 
