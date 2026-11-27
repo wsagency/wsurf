@@ -30,8 +30,9 @@ nonisolated extension PageRuntime {
 
     static let walkScript = #"""
       const isFrame = el => el?.nodeType === 1 && /^(iframe|frame)$/i.test(el.localName);
-      function* walk(root, inspectedFrame, observeFrames) {
-        for (const el of root.querySelectorAll('*')) {
+      function* walk(root, inspectedFrame, observeFrames, includeRoot = false) {
+        const descendants = root.querySelectorAll('*');
+        for (const el of includeRoot ? [root, ...descendants] : descendants) {
           yield el;
           if (el.shadowRoot) {
             watchRoot(el.shadowRoot);
@@ -48,7 +49,7 @@ nonisolated extension PageRuntime {
           if (childRoot) {
             watchRoot(child);
             observeFrames?.(child);
-            yield* walk(childRoot, inspectedFrame, observeFrames);
+            yield* walk(childRoot, inspectedFrame, observeFrames, true);
           }
           inspectedFrame?.(el, childRoot ? child : null);
         }

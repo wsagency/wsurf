@@ -6,6 +6,7 @@ import Foundation
 import MCP
 import Network
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -385,7 +386,8 @@ extension MCPAgentWindowBridgeTests {
         }
     }
 
-    @Test(.timeLimit(.minutes(1))) func webKitScreenshotAccountsForSameOriginSVGFields() async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func webKitScreenshotAccountsForSameOriginSensitiveFields(editableBody: Bool) async throws {
         let svg = """
             <svg xmlns="http://www.w3.org/2000/svg" width="250" height="100">
               <foreignObject width="250" height="100">
@@ -393,9 +395,12 @@ extension MCPAgentWindowBridgeTests {
               </foreignObject>
             </svg>
             """
+        let field: HTTPFixtureServer.Response = editableBody
+            ? .html("<body id='passcode' contenteditable>fixture-secret</body>")
+            : .bytes(Data(svg.utf8), contentType: "image/svg+xml")
         let fixture = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<title>SVG fixture</title><iframe src='/field.svg'></iframe>"),
-            "/field.svg": .bytes(Data(svg.utf8), contentType: "image/svg+xml"),
+            "/": .html("<title>Frame fixture</title><iframe src='/field'></iframe>"),
+            "/field": field,
         ])
         defer { withExtendedLifetime(fixture) {} }
         try await withProfile { profile in
@@ -430,6 +435,40 @@ extension MCPAgentWindowBridgeTests {
             window.takeOverAgentMicroWindow()
             let human = try await preview(bridge, "snapshot", tab: tab, params: ["includeImage": true])
             #expect((human["error"] as? [String: Any])?["code"] as? String == "protectedSecretPresent")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func workerAttachAndDetachDoesNotInvalidateChromiumCapture() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Worker fixture</title><p>Stable page</p>"),
+            "/worker.js": .bytes(Data("postMessage('ready');".utf8), contentType: "text/javascript"),
+        ])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), engine: .chromium)
+            let page = try #require(tab.liveView)
+            let tools = try #require(page.chromium?.devTools)
+            var detached = false
+            tools.commandObserver = { method, _ in
+                if method == "Target.detachFromTarget", !tools.nonFrameSessions.isEmpty {
+                    detached = true
+                }
+            }
+            defer { tools.commandObserver = nil }
+            var workerWasProcessed = false
+            let result = await PageDriver.$afterScreenshotCapture.withValue({
+                _ = try? await page.evaluateJavaScript("window.fixtureWorker = new Worker('/worker.js'); true")
+                workerWasProcessed = await waitUntil { detached && tools.nonFrameSessions.isEmpty }
+            }) {
+                await PageDriver.screenshot(in: page)
+            }
+            #expect(workerWasProcessed)
+            #expect(result.failure == nil, "\(result)")
         }
     }
 
@@ -543,6 +582,74 @@ extension MCPAgentWindowBridgeTests {
             #expect(!page.isLoading)
             #expect(fixture.lastRequestHead(for: "/queued") == nil)
             await page.close()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func takeOverDuringSignInCookieReadLeavesWebKitStoreUntouched() async throws {
+        let provider = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Provider</title>")])
+        let providerPort = try #require(provider.port).rawValue
+        let providerURL = try #require(URL(string: "http://localhost:\(providerPort)/"))
+        let gate = ResponseGate()
+        let cookieName = "phase4_handoff_fixture"
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>App</title>", headers: ["Set-Cookie": "\(cookieName)=fixture; Path=/; HttpOnly"]),
+            "/redirect": .init(status: "302 Found", headers: ["Location": providerURL.absoluteString], body: Data(), gate: gate),
+        ])
+        defer { gate.open(); withExtendedLifetime((fixture, provider)) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), engine: .chromium)
+            let chromium = try #require(tab.page.chromium)
+            let store = tab.dataStore.httpCookieStore
+            #expect(try await SiteCookies.chromiumCookies(chromium).contains { $0.name == cookieName })
+            #expect(await !store.allCookies().contains { $0.name == cookieName })
+            try await SitePermissions.withWebKitOnlyOriginForTesting(SitePermissions.origin(for: providerURL)) {
+                let response = try await preview(bridge, "navigate", tab: tab, params: [
+                    "url": fixture.url("/redirect").absoluteString, "readiness": "none",
+                ])
+                try #require(response["ok"] as? Bool == true, "\(response)")
+                try #require(await gate.waitForRequest())
+                var startedRead = false
+                chromium.devTools.commandObserver = { method, _ in
+                    if method == "Network.getAllCookies" {
+                        startedRead = true
+                        window.takeOverAgentMicroWindow()
+                    }
+                }
+                defer { chromium.devTools.commandObserver = nil }
+                gate.open()
+                try #require(await waitUntil { startedRead })
+                #expect(await tab.waitForPendingNavigation() == nil)
+                #expect(window.browser.agentCompanion?.owner == .human)
+                #expect(await !store.allCookies().contains { $0.name == cookieName })
+                #expect(provider.lastRequestHead(for: "/") == nil)
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func previewNavigateReportsALoadReadinessTimeout() async throws {
+        let gate = ResponseGate()
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Loaded</title>"), "/slow": .html("<title>Delayed</title>", gate: gate),
+        ])
+        defer { gate.open(); withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let destination = try fixture.url("/slow")
+            let response = try await preview(bridge, "navigate", tab: tab, params: ["url": destination.absoluteString, "timeoutMs": 100])
+            #expect((response["error"] as? [String: Any])?["code"] as? String == "timedOut", "\(response)")
+            #expect(tab.isLoading)
+            gate.open()
+            try #require(await waitUntil { tab.liveView?.url == destination && !tab.isLoading })
         }
     }
 

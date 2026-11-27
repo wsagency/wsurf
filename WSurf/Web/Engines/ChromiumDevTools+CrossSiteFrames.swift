@@ -117,7 +117,9 @@ extension ChromiumDevTools {
         }
         owner.sessions[session] = child
         let isFrame = info?["type"] as? String == "iframe" && !target.isEmpty
-        if !isFrame {
+        if isFrame {
+            owner.screenshotFrameRevision &+= 1
+        } else {
             owner.nonFrameSessions.insert(session)
         }
         // A frame that was already running when the session attached (in a pop-up's first page) has a document its scripts missed.
@@ -159,8 +161,11 @@ extension ChromiumDevTools {
 
     /// The renderer of one of this session's frames crashed: its documents are gone, its session stays for the reloaded frame.
     func targetCrashed(_ params: [String: Any]) {
+        let owner = root ?? self
         guard let target = params["targetId"] as? String,
-              let child = (root ?? self).sessions.values.first(where: { $0.targetID == target && $0.parent === self }) else { return }
+              let child = owner.sessions.first(where: { $0.value.targetID == target && $0.value.parent === self && !owner.nonFrameSessions.contains($0.key) })?.value
+        else { return }
+        owner.screenshotFrameRevision &+= 1
         let documents = child.framesByID.values.map(\.documentID)
         // A crashed renderer plays nothing, and its frames' last word about their sound would otherwise stand (the reloaded
         // frame says its own, and the old one is forgotten here, so nothing would retire it).
@@ -185,8 +190,10 @@ extension ChromiumDevTools {
         uniqueIDByExecutionID.removeAll()
         scripts.removeAll()
         bindingWorlds.removeAll()
+        if let root, root.nonFrameSessions.remove(sessionID) == nil {
+            root.screenshotFrameRevision &+= 1
+        }
         root?.sessions[sessionID] = nil
-        root?.nonFrameSessions.remove(sessionID)
         root?.failPending(in: sessionID)
         endCrossSiteFrameSessions()
         invalidateCredentialContexts(documents: documents, pageWide: false)

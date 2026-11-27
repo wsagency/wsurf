@@ -104,7 +104,6 @@ extension ChromiumDevTools {
 
     private static let screenshotFrameEvents: Set<String> = [
         "Page.frameAttached", "Page.frameDetached", "Page.frameNavigated", "Page.navigatedWithinDocument",
-        "Target.attachedToTarget", "Target.detachedFromTarget", "Target.targetCrashed",
     ]
 
     private static let diagnosticEvents: Set<String> = [

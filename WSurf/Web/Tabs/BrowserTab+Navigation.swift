@@ -98,7 +98,8 @@ extension BrowserTab {
                 // before WebKit sends its first request to the provider.
                 if let handoff {
                     _ = await SignInCookieHandoff.copy(
-                        origins: handoff.origins, context: context, preferring: handoff.page, into: dataStore.httpCookieStore
+                        origins: handoff.origins, context: context, preferring: handoff.page, into: dataStore.httpCookieStore,
+                        authorized: authorized
                     )
                 }
                 // A new address ends this page's work anyway, so unlike a same-page engine switch it is not confirmed.

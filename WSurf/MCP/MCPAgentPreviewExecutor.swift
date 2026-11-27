@@ -381,7 +381,15 @@ extension MCPAgentWindowRegistry {
         let readiness = (opParams["readiness"] as? String) ?? "load"
         if readiness != "none" {
             let timeoutMs = min(max(opParams["timeoutMs"] as? Int ?? 15_000, 100), 30_000)
-            await waitForTabLoad(tab, timeoutMs: timeoutMs)
+            if !(await waitForTabLoad(tab, timeoutMs: timeoutMs)) {
+                if coordinator.browser.agentCompanion?.owner == .human {
+                    throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+                }
+                if tab.isClosed {
+                    throw MCPAgentWindowError(.notFound, "Tab closed while waiting for it to load.")
+                }
+                throw MCPAgentWindowError(.timedOut, "Timed out waiting for the tab to load.")
+            }
         }
         session.syncAgentWindowGrants()
         notifyTabsChanged(for: coordinator.browser)
@@ -783,14 +791,15 @@ extension MCPAgentWindowRegistry {
 
     // MARK: - Helpers
 
-    private func waitForTabLoad(_ tab: BrowserTab, timeoutMs: Int) async {
+    private func waitForTabLoad(_ tab: BrowserTab, timeoutMs: Int) async -> Bool {
         let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
         while ContinuousClock.now < deadline, !Task.isCancelled, !tab.isClosed {
-            if !tab.isLoading, tab.liveView?.mainDocumentID != nil {
-                return
+            if !tab.isLoading, let view = tab.liveView, !view.isLoading, view.mainDocumentID != nil {
+                return true
             }
             try? await Task.sleep(for: .milliseconds(30))
         }
+        return false
     }
 
     nonisolated static func mapActToMCPTool(

@@ -82,12 +82,13 @@ extension MCPBrowserSession {
                 ])
         }
         var fields: [String: Value] = [
-            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout), "layout": MCPCompareTools.layoutValue(a.layout, b.layout),
+            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout),
+            "layout": secrets.scrubPageValue(MCPCompareTools.layoutValue(a.layout, b.layout)),
         ]
         let shot = await screenshotComparison(a, b, wantsImage: arguments["image"]?.boolValue == true)
-        fields["screenshot"] = shot.value
+        fields["screenshot"] = secrets.scrubPageValue(shot.value)
         if arguments["diagnostics"]?.boolValue != false {
-            fields["diagnostics"] = await diagnosticsComparison(a.tab, b.tab)
+            fields["diagnostics"] = secrets.scrubPageValue(await diagnosticsComparison(a.tab, b.tab))
         }
         // The last await is behind us: what is returned is still within this connection's access.
         guard mayProceed(a.tab, capability: .development), mayProceed(b.tab, capability: .development),
