@@ -175,8 +175,9 @@ extension MCPBrowserSession {
         }
         let persistsAnswers = tab.assistantAccess.persistsAnswers
         let windowGeneration = agentWindowScope?.generation()
-        let switched = await tab.switchEngine(to: engine) {
-            self.mayProceed(tab, capability: .control) && self.agentWindowScope?.generation() == windowGeneration
+        let switched = await tab.switchEngine(to: engine) { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return self.mayProceed(tab, capability: .control) && self.agentWindowScope?.generation() == windowGeneration
         }
         guard switched else {
             return failure("Could not switch the tab engine.")

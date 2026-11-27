@@ -222,9 +222,11 @@ extension PageDriver {
         let probe = scripted(
             """
             const root = document.documentElement;
+            const frameProof = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
+            const scan = R.scanScreenshot(frameProof);
             const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight, dw: root.scrollWidth, dh: root.scrollHeight,
-              safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
-            \(ScreenshotMasking.frameProbeScript)
+              safe: scan.filled.length === 0, frames: scan.frames, uninspectableFrame: scan.uninspectable,
+              frameRevision: scan.revision, frameProof };
             \(masking?.probeScript ?? "")
             const ref = \(ref);
             if (ref) {
@@ -234,13 +236,19 @@ extension PageDriver {
             }
             return JSON.stringify(out);
             """)
+        let initialFrameRevision = ScreenshotMasking.nativeFrameRevision(in: view)
         guard let before = await evaluateJSON(probe, in: view), before["stale"] == nil else { return .failure(.stale) }
         // An element only `findElements` registered, and the full page, are capturable under development access alone; that
         // is decided first and asked again after every await.
         let foundOnly = before["foundOnly"] as? Bool == true
         let needsDevelopment = foundOnly || target == .fullPage
         guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        if let failure = await screenshotPrivacyFailure(before, masking: masking, in: view) {
+        let inspection = await screenshotInspection(before, masking: masking, in: view, revision: initialFrameRevision)
+        let frameEvidence: ScreenshotMasking.CaptureEvidence
+        switch inspection {
+        case .success(let evidence):
+            frameEvidence = evidence
+        case .failure(let failure):
             return .failure(failure)
         }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
@@ -264,12 +272,7 @@ extension PageDriver {
         let pixelLimit = target == .fullPage ? min(requested, ScreenshotTarget.fullPagePixelWidth) : requested
         let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
         let pointWidth = crop?.width ?? view.bounds.width
-        let captured: NSImage?
-        if target == .fullPage, let chromium = view.chromium {
-            captured = try? await chromium.captureFullPage(css, scale: min(1, Double(pixelLimit) / Double(css.width)))
-        } else {
-            captured = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth)))
-        }
+        let captured = await captureScreenshot(target, area: css, crop: crop, pixelLimit: pixelLimit, pointWidth: pointWidth, in: view)
         guard let image = captured,
             PageAutomationGuard.allowsExecution, view.url == document,
             let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), bitmap.pixelsWide > 0
@@ -278,7 +281,9 @@ extension PageDriver {
         guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
             return .failure(.stale)
         }
-        if let failure = await screenshotPrivacyFailure(after, masking: masking, in: view) {
+        if case .failure(let failure) = await screenshotInspection(
+            after, masking: masking, in: view, revision: initialFrameRevision, matching: frameEvidence
+        ) {
             return .failure(failure)
         }
         // Development access and the document are checked again after the last await.
@@ -300,6 +305,21 @@ extension PageDriver {
                 requiresDevelopment: requiresDevelopment))
     }
 
+    @TaskLocal static var afterScreenshotCapture: (@MainActor () async -> Void)?
+
+    private static func captureScreenshot(
+        _ target: ScreenshotTarget, area: CGRect, crop: CGRect?, pixelLimit: Int, pointWidth: CGFloat, in view: BrowserPage
+    ) async -> NSImage? {
+        let image: NSImage?
+        if target == .fullPage, let chromium = view.chromium {
+            image = try? await chromium.captureFullPage(area, scale: min(1, Double(pixelLimit) / Double(area.width)))
+        } else {
+            image = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth)))
+        }
+        await afterScreenshotCapture?()
+        return image
+    }
+
     /// Why a capture cannot start: stale automation, a full page on an engine that cannot take one, or a full page without
     /// development access. The last is asked before the first await as well as after each one: a caller may have waited (for its
     /// turn to capture) since it checked.
@@ -313,14 +333,15 @@ extension PageDriver {
     }
 
     /// Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
-    private static func screenshotPrivacyFailure(
-        _ probe: [String: Any], masking: ScreenshotMasking?, in view: BrowserPage
-    ) async -> ScreenshotFailure? {
-        if await ScreenshotMasking.hasUninspectableFrame(probe, in: view) {
-            return .uninspectableFrame
-        }
+    private static func screenshotInspection(
+        _ probe: [String: Any], masking: ScreenshotMasking?, in view: BrowserPage, revision: UInt64,
+        matching previous: ScreenshotMasking.CaptureEvidence? = nil
+    ) async -> Result<ScreenshotMasking.CaptureEvidence, ScreenshotFailure> {
+        guard let evidence = await ScreenshotMasking.frameEvidence(probe, in: view), evidence.native.revision == revision,
+              previous.map({ $0 == evidence }) ?? true else { return .failure(.uninspectableFrame) }
         let isSafe = masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
-        return isSafe && (allowsAgentWindowCapture?() ?? true) ? nil : .privacy
+        guard isSafe, allowsAgentWindowCapture?() ?? true else { return .failure(.privacy) }
+        return .success(evidence)
     }
 
     /// `bitmap` with the filled sensitive fields painted over when `masking` applies. The boxes painted over the pixels are the

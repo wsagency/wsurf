@@ -298,6 +298,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         }
         let store = store(for: view)
         if message.name == Self.handlerName {
+            if !message.frameInfo.isMainFrame {
+                view.webKitFrameRevision &+= 1
+            }
             let frame = BrowserFrame(webKit: message.frameInfo)
             guard let url = frame.request.url,
                   frame.isMainFrame || (frame.hasTrustedSecurityOrigin && Self.urlMatches(url, origin: frame.securityOrigin)) else {

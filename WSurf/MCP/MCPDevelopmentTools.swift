@@ -166,7 +166,7 @@ nonisolated enum MCPDevelopmentTools {
         ])
     }
 
-    static func value(_ record: PageDiagnostics.Record, formatter: ISO8601DateFormatter) -> Value {
+    static func value(_ record: PageDiagnostics.Record, formatter: ISO8601DateFormatter, secrets: MCPSecretScrubber) -> Value {
         var object: [String: Value] = [
             "seq": .int(Int(record.seq)), "timestamp": .string(formatter.string(from: record.timestamp)),
             "documentID": .string(record.documentID), "truncated": .bool(record.truncated),
@@ -176,7 +176,7 @@ nonisolated enum MCPDevelopmentTools {
             case .text(let text):
                 object[key] = .string(text)
             case .number(let number):
-                object[key] = .int(number)
+                object[key] = secrets.scrubPageValue(.int(number))
             }
         }
         if record.stream == .network {
@@ -561,7 +561,7 @@ extension MCPBrowserSession {
             diagnostics.taintDocument(diagnostics.buffer.documentID)
         }
         func shown(_ record: PageDiagnostics.Record) -> Value {
-            MCPDevelopmentTools.value(record, formatter: formatter)
+            MCPDevelopmentTools.value(record, formatter: formatter, secrets: secrets)
         }
         var fields = diagnosticsInfo(diagnostics, tab: tab)
         fields["lostInFlight"] = .int(diagnostics.lostInFlight)

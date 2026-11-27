@@ -309,13 +309,17 @@ final class BrowserPage: NSView {
     /// `byPerson`: a person asked for this load (see `BrowserTab.load(byPerson:)`). Only a page in the Chromium service reads it
     /// (it ends a crash loop there); a WebKit or in-process page ignores it.
     @discardableResult
-    func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
-        guard !closed else { return nil }
+    func load(
+        _ request: URLRequest, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
+        guard !closed, authorized?() ?? true else { return nil }
         leave()
         if let webKit {
-            return navigation(for: webKit.load(request))
+            let navigation = navigation(for: webKit.load(request))
+            navigation?.authorization = authorized
+            return navigation
         }
-        return chromium?.loadInHistory(request, byPerson: byPerson)
+        return chromium?.loadInHistory(request, byPerson: byPerson, authorized: authorized)
     }
 
     /// Chromium has no read-access parameter: `ChromiumFileScope` holds a `file:` page to the same scope, frame by frame.
@@ -483,6 +487,7 @@ final class BrowserPage: NSView {
 
     /// Script round trips made through this page, counted so a test can show that a wait asks the page once instead of polling.
     private(set) var evaluations = 0
+    var webKitFrameRevision: UInt64 = 0
     private(set) var asyncCalls = 0
 
     /// Without a user gesture on either engine (`WKWebView.evaluate`; CDP `userGesture: false`); `userGesture` replays a

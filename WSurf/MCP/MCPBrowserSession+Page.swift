@@ -11,11 +11,19 @@ import MCP
 /// Reading and acting on a shared page.
 @MainActor
 extension MCPBrowserSession {
+    /// A parked operation can outlive both sides of a handoff, even on the same page.
+    func pageOwnershipGuard() -> @MainActor @Sendable () -> Bool {
+        guard let scope = agentWindowScope else { return { true } }
+        let generation = scope.generation()
+        return { generation != nil && scope.generation() == generation }
+    }
+
     func usePage(
         _ entry: MCPToolCatalog.Entry, arguments: [String: Value], tab: BrowserTab, capability: Scope,
         previewRead: PageAutomationGuard? = nil
     ) async -> CallTool.Result {
         let name = entry.name
+        let holdsOwnership = pageOwnershipGuard()
         if previewRead == nil {
             tab.setExternalAutomationWorking(true)
             tab.realizeDeferredSession()
@@ -33,7 +41,7 @@ extension MCPBrowserSession {
             return refusal
         }
         var targeted = arguments
-        if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url) {
+        if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url, holdsOwnership: holdsOwnership) {
             return refusal
         }
         let arguments = targeted
@@ -73,13 +81,13 @@ extension MCPBrowserSession {
                 let probeScope = PageAutomationGuard(
                     documentURL: url.absoluteString, snapshot: observation?.snapshot,
                     validate: { [weak self, weak tab, weak view] in
-                        guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                        guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                         return self.mayProceed(tab, capability: capability)
                     })
                 autoSensitiveRefs = await PageAutomationGuard.$current.withValue(probeScope) {
                     await PageDriver.sensitiveSecretRefs(probeRefs, in: view)
                 }
-                guard mayProceed(tab, capability: capability), tab.isLive(view, generation: generation), webURL(of: tab) == url else {
+                guard probeScope.validate(), webURL(of: tab) == url else {
                     return failure("Page access changed. Read the page again.", code: .accessDenied)
                 }
             }
@@ -92,7 +100,7 @@ extension MCPBrowserSession {
         let scope = previewRead ?? PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
                     && (!typesSecret || self.allowsPasswordEntry(for: tab))
                     && (!readsAsDeveloper || self.mayProceed(tab, capability: .developer))
@@ -104,7 +112,7 @@ extension MCPBrowserSession {
         let reading = previewRead ?? PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: .read)
             }
         )
@@ -151,6 +159,9 @@ extension MCPBrowserSession {
             let acted = await PageSettle.$limits.withValue(limits) {
                 await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
             }
+            guard scope.validate(), !Task.isCancelled else {
+                return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+            }
             guard let acted else {
                 observations[tab.id] = nil
                 return interruptedResult(tab)
@@ -161,7 +172,6 @@ extension MCPBrowserSession {
             }
         }
         guard scope.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
             return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         if output == PageDriver.filledSecretRefusal {
@@ -176,11 +186,10 @@ extension MCPBrowserSession {
         if !succeeded { content["code"] = (failureCode ?? .actionFailed).value }
         if !PageDriver.refusesFilledSecrets, succeeded, name == "readPage" || name == "inspectControl", let currentURL = webURL(of: tab),
             let hint = await vaultHint(for: tab, view: view, url: currentURL) {
-            guard scope.validate(), !Task.isCancelled else {
-                observations[tab.id] = nil
-                return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
-            }
             content["vaultHint"] = hint
+        }
+        guard scope.validate(), !Task.isCancelled else {
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         var delivered: PageObservation?
         if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,

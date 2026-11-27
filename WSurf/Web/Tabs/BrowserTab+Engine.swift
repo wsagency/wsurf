@@ -249,7 +249,7 @@ extension BrowserTab {
     }
 
     func switchEngineWhileAuthorized(
-        to engine: BrowserEngine, destination: URL? = nil, authorized: @MainActor () -> Bool
+        to engine: BrowserEngine, destination: URL? = nil, authorized: @escaping @MainActor () -> Bool
     ) async -> Bool {
         while let pending = engineSwitchTask {
             let completed = await PageReply<Bool>.awaiting(within: .seconds(15)) { reply in
@@ -281,7 +281,7 @@ extension BrowserTab {
         }
         finishEngineInstallation(engine)
         if destination == nil, let url, urlString == url.absoluteString {
-            lastRequestedNavigation = loadDirect(url)
+            lastRequestedNavigation = loadDirect(url, authorized: authorized)
         }
         return true
     }

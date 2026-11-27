@@ -22,9 +22,11 @@ nonisolated enum BrowserEngine: String, Codable, CaseIterable, Sendable {
 final class PageNavigation {
     let id = UUID()
     let webKit: WKNavigation?
+    var authorization: (@MainActor () -> Bool)?
 
-    init(webKit: WKNavigation? = nil) {
+    init(webKit: WKNavigation? = nil, authorization: (@MainActor () -> Bool)? = nil) {
         self.webKit = webKit
+        self.authorization = authorization
     }
 }
 

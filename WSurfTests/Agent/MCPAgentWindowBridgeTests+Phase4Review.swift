@@ -372,6 +372,244 @@ extension MCPAgentWindowBridgeTests {
             let previewReply = try await preview(bridge, "evaluate", tab: tab, params: ["expression": "718429"])
             let previewContent = try #require(previewReply["result"] as? [String: Any], "\(previewReply)")
             #expect(previewContent["value"] as? String == MCPSecretScrubber.replacement)
+            #expect(record.secrets.register("1920") == .registered)
+            tab.page.developmentViewport = CGSize(width: 1920, height: 1080)
+            let info: MCP.RequestContext<CallTool.Result> = try await client.callTool(
+                name: "getDevelopmentInfo", arguments: ["tabID": .string(tab.id.uuidString)])
+            let infoReply = try await info.value
+            #expect(infoReply.isError == false)
+            let text = Data(MCPBrowserSession.text(of: infoReply).utf8)
+            let decoded = try JSONDecoder().decode(Value.self, from: text)
+            #expect(decoded.objectValue?["viewportOverride"] == .object(["width": .int(1920), "height": .int(1080)]))
+            #expect(decoded.objectValue?["viewportOverride"] == infoReply.structuredContent?.objectValue?["viewportOverride"])
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func webKitScreenshotAccountsForSameOriginSVGFields() async throws {
+        let svg = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="250" height="100">
+              <foreignObject width="250" height="100">
+                <input xmlns="http://www.w3.org/1999/xhtml" type="password" value="fixture-secret"/>
+              </foreignObject>
+            </svg>
+            """
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>SVG fixture</title><iframe src='/field.svg'></iframe>"),
+            "/field.svg": .bytes(Data(svg.utf8), contentType: "image/svg+xml"),
+        ])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let page = try #require(tab.liveView)
+            let nonce = try await page.evaluateJavaScript(
+                "document.querySelector('iframe').contentWindow.__wsurfNativeFrameNonce",
+                in: nil, contentWorld: PageAutomationGuard.world
+            )
+            try #require(PageFrameRegistry.shared.target(try #require(nonce as? String), in: page) != nil)
+            #expect(await PageDriver.screenshot(in: page).failure == .privacy)
+            let masked = await PageDriver.screenshot(masking: ScreenshotMasking(), in: page)
+            let capture = try masked.get()
+            let bitmap = try #require(NSBitmapImageRep(data: capture.jpeg))
+            let center = try #require(try await page.evaluateJavaScript("""
+                (() => { const r = document.querySelector('iframe').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()
+                """) as? [Double])
+            let color = try #require(bitmap.colorAt(x: Int(center[0] * capture.scale), y: Int(center[1] * capture.scale))?.usingColorSpace(.sRGB))
+            #expect(color.redComponent < 0.1 && color.greenComponent < 0.1 && color.blueComponent < 0.1)
+            let unregistered = await PageDriver.$afterScreenshotCapture.withValue({
+                // The frame's URL and JavaScript nonce still match, but its native registration is no longer current.
+                PageFrameRegistry.shared.retire(page)
+            }) {
+                await PageDriver.screenshot(masking: ScreenshotMasking(), in: page)
+            }
+            #expect(unregistered.failure == .uninspectableFrame)
+            window.takeOverAgentMicroWindow()
+            let human = try await preview(bridge, "snapshot", tab: tab, params: ["includeImage": true])
+            #expect((human["error"] as? [String: Any])?["code"] as? String == "protectedSecretPresent")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [BrowserEngine.webKit, .chromium])
+    func transientChildDuringCaptureInvalidatesOtherwiseIdenticalFrames(engine: BrowserEngine) async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Stable top document</title><iframe src='/child'></iframe>"),
+            "/child": .html("<p>Safe child</p>"),
+        ])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), engine: engine)
+            let page = try #require(tab.liveView)
+            let stable = await PageDriver.screenshot(in: page)
+            try #require(stable.failure == nil, "\(stable)")
+            var mutated = false
+            let changed = await PageDriver.$afterScreenshotCapture.withValue({
+                let result = try? await page.evaluateJavaScript("""
+                    const transient = document.createElement('iframe');
+                    document.body.append(transient);
+                    transient.remove();
+                    document.querySelectorAll('iframe').length;
+                    """)
+                mutated = result as? Int == 1
+            }) {
+                await PageDriver.screenshot(in: page)
+            }
+            #expect(mutated)
+            #expect(changed.failure == .uninspectableFrame)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func takeOverCancelsRedirectReissueWaitingForEngineRetirement() async throws {
+        let target = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Redirect destination</title>")])
+        let targetURL = try target.url("/")
+        let gate = ResponseGate()
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Keep this document</title>"),
+            "/redirect": .init(status: "302 Found", headers: ["Location": targetURL.absoluteString], body: Data(), gate: gate),
+        ])
+        defer { gate.open(); withExtendedLifetime((fixture, target)) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let source = try fixture.url("/")
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: source, engine: .chromium)
+            let page = try #require(tab.liveView)
+            try await SitePermissions.withWebKitOnlyOriginForTesting(SitePermissions.origin(for: targetURL)) {
+                let response = try await preview(bridge, "navigate", tab: tab, params: [
+                    "url": fixture.url("/redirect").absoluteString, "readiness": "none",
+                ])
+                try #require(response["ok"] as? Bool == true, "\(response)")
+                try #require(await gate.waitForRequest())
+                let retirement = Task {
+                    try? await Task.sleep(for: .seconds(30))
+                    tab.retirement = nil
+                }
+                defer { retirement.cancel() }
+                tab.retirement = retirement
+                gate.open()
+                try #require(await waitUntil { tab.pendingNavigationTask != nil })
+                window.takeOverAgentMicroWindow()
+                retirement.cancel()
+                await retirement.value
+                #expect(await tab.waitForPendingNavigation() == nil)
+                #expect(tab.liveView === page)
+                #expect(page.url == source)
+                #expect(target.lastRequestHead(for: "/") == nil)
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func takeOverStopsUnattachedChromiumNavigationBeforeDispatch() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Window fixture</title>"), "/queued": .html("<title>Queued Chromium request</title>"),
+        ])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let record = try #require(harness.registry.record(pairedClientId: paired.id, threadId: "review"))
+            let generation = try #require(window.browser.agentCompanion?.generation)
+            try ChromiumRuntime.shared.ensureInitialized()
+            let native = ChromiumPage(context: tab.context)
+            let page = BrowserPage(chromium: native)
+            let pendingURL = try fixture.url("/queued")
+            try #require(page.load(URLRequest(url: pendingURL), authorized: {
+                harness.registry.mayMutate(record, generation: generation)
+            }) != nil)
+            try #require(await waitUntil { !native.attachmentWaiters.isEmpty })
+            window.takeOverAgentMicroWindow()
+            let host = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400),
+                                styleMask: .borderless, backing: .buffered, defer: false)
+            host.isReleasedWhenClosed = false
+            host.contentView = page
+            defer { host.contentView = nil; host.close() }
+            await native.pendingLoad?.value
+            #expect(native.navigation == nil)
+            #expect(!page.isLoading)
+            #expect(fixture.lastRequestHead(for: "/queued") == nil)
+            await page.close()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func parkedFindCannotPublishAnObservationAcrossTakeOverAndHandBack() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: ["/": .html("<button id='old'>Old</button><section id='new'><button>New</button></section>")])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let record = try #require(harness.registry.record(pairedClientId: paired.id, threadId: "review"))
+            let session = try #require(record.previewSession)
+            session.syncAgentWindowGrants()
+            let entry = try #require(MCPToolCatalog.entries.first { $0.name == "findElements" })
+            let queue = tab.dialogs
+            let claim = queue.claim(connection: session.id) { true }
+            defer { claim.end(); queue.cancelAll() }
+            let result = await PageDriver.$beforeFindObservation.withValue({
+                _ = await queue.run(.init(kind: .alert, message: "Fixture dialog", origin: "")) {
+                    .init(accepted: true)
+                }
+            }) {
+                await session.usePage(entry, arguments: ["selector": "#old"], tab: tab, capability: .read)
+            }
+            #expect(result.structuredContent?.objectValue?["status"]?.stringValue == "dialogOpened")
+            let dialog = try #require(queue.pending(for: session.id).first)
+            window.takeOverAgentMicroWindow()
+            window.handBackAgentMicroWindow()
+            #expect(queue.answer(dialog.id, connection: session.id, with: .init(accepted: true)))
+            await queue.settleParked()
+            #expect(PageDriver.observation(in: tab.page) == nil)
+            let scoped = try await preview(bridge, "snapshot", tab: tab, params: ["scope": "#new"])
+            #expect((scoped["result"] as? [String: Any])?["observationId"] != nil)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func hostBridgeReportsRetirementTimeoutForNavigateAndReusedOpen() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Current page</title>"), "/next": .html("<title>Next page</title>"),
+        ])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let source = try fixture.url("/")
+            let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: source)
+            let page = try #require(tab.liveView)
+            let retirement = Task {
+                try? await Task.sleep(for: .seconds(45))
+                tab.retirement = nil
+            }
+            defer { retirement.cancel() }
+            tab.retirement = retirement
+            let next = try fixture.url("/next").absoluteString
+            let navigated = try await preview(bridge, "navigate", tab: tab, params: ["url": next, "readiness": "none"])
+            #expect((navigated["error"] as? [String: Any])?["code"] as? String == "actionFailed")
+            let (reopened, _) = try await bridge.request(id: "reopen", op: "openAgentWindow", params: ["threadId": "review", "url": next])
+            #expect((reopened["error"] as? [String: Any])?["code"] as? String == "actionFailed")
+            #expect(tab.liveView === page)
+            #expect(page.url == source)
+            #expect(fixture.lastRequestHead(for: "/next") == nil)
         }
     }
 
@@ -430,5 +668,12 @@ extension MCPAgentWindowBridgeTests {
             #expect(scope.secrets.isEmpty)
             #expect(!session.isConnected)
         }
+    }
+}
+
+private extension Result where Failure == ScreenshotFailure {
+    var failure: ScreenshotFailure? {
+        guard case .failure(let error) = self else { return nil }
+        return error
     }
 }

@@ -221,7 +221,8 @@ extension ChromiumDevTools {
     }
 
     /// Screenshot accounting needs every frame, including non-HTTP documents and frames outside the main process.
-    func screenshotChildFrameURLs() async throws -> [URL] {
+    func screenshotFrameEvidence() async throws -> ScreenshotMasking.FrameEvidence {
+        let revision = screenshotFrameRevision
         let sessionsForFrames = sessions.filter { !nonFrameSessions.contains($0.key) }
         let frameSessions = [self] + Array(sessionsForFrames.values)
         var frames: [String: FrameState] = [:]
@@ -232,6 +233,7 @@ extension ChromiumDevTools {
         }
         guard frames.count <= 257,
               await page?.screenshotFrameCount() == frames.count,
+              screenshotFrameRevision == revision,
               Set(sessions.keys).subtracting(nonFrameSessions) == Set(sessionsForFrames.keys),
               let main = frames.values.first(where: \.isMainFrame), frames.values.filter(\.isMainFrame).count == 1
         else { throw ChromiumError.staleFrame }
@@ -240,6 +242,7 @@ extension ChromiumDevTools {
             !child.documentID.isEmpty && child.hasTrustedSecurityOrigin && child.securityOrigin == main.securityOrigin
                 && child.parentID.flatMap { frames[$0] } != nil
         }) else { throw ChromiumError.staleFrame }
-        return children.map(\.url)
+        let documents = children.sorted { $0.id < $1.id }.map { [$0.id, $0.documentID, $0.url.absoluteString] }
+        return ScreenshotMasking.FrameEvidence(documents: documents, revision: revision)
     }
 }

@@ -356,13 +356,15 @@ final class ChromiumPage: NSView {
     }
 
     @discardableResult
-    func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
-        guard !isClosed, !closing, let url = request.url else { return nil }
+    func load(
+        _ request: URLRequest, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
+        guard !isClosed, !closing, authorized?() ?? true, let url = request.url else { return nil }
         guard !holdsForRecovery(request, byPerson: byPerson) else { return nil }
         supersedeStop()
         pendingLoad?.cancel()
         mainFrameGeneration &+= 1
-        let next = PageNavigation()
+        let next = PageNavigation(authorization: authorized)
         navigation = next
         requestedURL = url
         htmlDocumentURL = nil
@@ -387,6 +389,12 @@ final class ChromiumPage: NSView {
                     hasAppliedInitialSettings = true
                 }
                 guard !Task.isCancelled, navigation === next else { return }
+                guard next.authorization?() ?? true else {
+                    endUnstartedLoad()
+                    navigation = nil
+                    requestedURL = nil
+                    return
+                }
                 try loadNative(request)
             } catch {
                 guard !Task.isCancelled, navigation === next else { return }

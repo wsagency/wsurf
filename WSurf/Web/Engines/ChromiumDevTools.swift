@@ -39,7 +39,6 @@ final class ChromiumDevTools {
     private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
-
     struct FrameState {
         let id: String
         let parentID: String?
@@ -100,6 +99,7 @@ final class ChromiumDevTools {
     /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
     var mainFrameAddress: URL?
     var frameRevision = 0
+    var screenshotFrameRevision: UInt64 = 0
     /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
     /// (`verifyOrigin`), which then is never trusted.
     var documentOrigins: [String: Bool] = [:]

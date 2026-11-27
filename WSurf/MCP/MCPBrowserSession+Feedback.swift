@@ -176,13 +176,12 @@ extension MCPBrowserSession {
                 }
             }
         }
+        guard reading.validate(), !Task.isCancelled else {
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+        }
         guard let output = acted else {
             observations[tab.id] = nil
             return interruptedResult(tab)
-        }
-        guard reading.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         let status = output.trimmingCharacters(in: .whitespacesAndNewlines)
         let target = arguments["ref"]?.intValue ?? arguments["fields"]?.arrayValue?.first?.objectValue?["ref"]?.intValue
@@ -191,40 +190,41 @@ extension MCPBrowserSession {
             var effect = ActionEffect(action: name, status: status)
             effect.statusOnly = true
             let image = await failureImage(arguments["screenshotOnFailure"]?.stringValue, ref: target, tab: tab, view: view, scope: scope)
+            guard reading.validate(), !Task.isCancelled else {
+                return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+            }
             if image != nil { effect.status += "\nscreenshot: " + (arguments["screenshotOnFailure"]?.stringValue ?? "viewport") }
             return feedbackReply(
                 name: name, tab: tab, effect: effect, budget: budget, settle: meter.elapsed, started: started, ok: false, image: image).result
         }
-        guard let after = await PageDriver.digestAfterAction(in: view, viewportOnly: viewportOnly, validate: reading.validate) else {
+        let digest = await PageDriver.digestAfterAction(in: view, viewportOnly: viewportOnly, validate: reading.validate)
+        guard reading.validate(), !Task.isCancelled else {
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+        }
+        guard let after = digest else {
             observations[tab.id] = nil
             var effect = ActionEffect(action: name, status: status)
             effect.statusOnly = true
             effect.status += "\nThe page did not answer afterwards. Use readPage."
             return feedbackReply(name: name, tab: tab, effect: effect, budget: budget, settle: meter.elapsed, started: started, ok: true, image: nil).result
         }
-        guard reading.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
-        }
         var effect = ActionEffect.make(action: name, status: status, before: before, after: after, viewportOnly: viewportOnly)
         let changes = await watch.changes()
+        guard reading.validate(), !Task.isCancelled else {
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+        }
         effect.diagnosticsRunning = watch.isRunning
         effect.console = changes.console
         effect.failedRequests = changes.failed
         effect.popups = openedTabs(since: tabsBefore, by: tab)
         // The client now holds the refs this reply lists, besides those of earlier replies for the same document.
         let reply = feedbackReply(name: name, tab: tab, effect: effect, budget: budget, settle: meter.elapsed, started: started, ok: true, image: nil)
-        guard reading.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
-        }
         let seen = reply.refs.compactMap { ref -> (ref: Int, hash: Int)? in
             guard let control = after.controls.first(where: { $0.ref == ref }), control.signature != 0 else { return nil }
             return (ref, control.signature)
         }
         await PageDriver.acknowledge(seen, in: view, validate: reading.validate)
         guard reading.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
             return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         PageDriver.adopt(after, listed: reply.refs, in: view)

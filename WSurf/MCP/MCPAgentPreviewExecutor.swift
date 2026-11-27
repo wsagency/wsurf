@@ -333,6 +333,27 @@ extension MCPAgentWindowRegistry {
         return result
     }
 
+    func navigateAgentTab(_ tab: BrowserTab, to url: URL, record: Record, generation: Int) async throws {
+        let immediate = tab.load(url, transition: .agent) { [weak self, weak record] in
+            guard let self, let record else { return false }
+            return self.mayMutate(record, generation: generation)
+        }
+        let navigation = if immediate == nil, tab.pendingNavigationTask != nil {
+            await tab.waitForPendingNavigation(cancelWithCaller: true)
+        } else {
+            immediate
+        }
+        if record.coordinator?.browser.agentCompanion?.owner == .human {
+            throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+        }
+        guard mayMutate(record, generation: generation) else {
+            throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
+        }
+        guard navigation != nil else {
+            throw MCPAgentWindowError(.actionFailed, "Could not start navigation.")
+        }
+    }
+
     private func previewNavigate(
         opParams: [String: Any],
         record: Record,
@@ -356,7 +377,7 @@ extension MCPAgentWindowRegistry {
             source: .agentWindow
         )
         let generation = coordinator.browser.agentCompanion?.generation ?? 0
-        _ = await navigateAgentTab(tab, to: url, record: record, generation: generation)
+        try await navigateAgentTab(tab, to: url, record: record, generation: generation)
         let readiness = (opParams["readiness"] as? String) ?? "load"
         if readiness != "none" {
             let timeoutMs = min(max(opParams["timeoutMs"] as? Int ?? 15_000, 100), 30_000)
@@ -497,7 +518,7 @@ extension MCPAgentWindowRegistry {
             throw MCPAgentWindowError(.scriptError, session.scrubbed(message))
         case .completed(let text):
             guard let value = try? JSONDecoder().decode(Value.self, from: Data(text.utf8)),
-                  let data = try? JSONEncoder().encode(session.secrets.scrub(value)),
+                  let data = try? JSONEncoder().encode(session.secrets.scrubPageValue(value)),
                   let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             else {
                 throw MCPAgentWindowError(.scriptError, "Could not decode script reply.")
@@ -717,8 +738,9 @@ extension MCPAgentWindowRegistry {
         session.observations[tab.id] = nil
         if tab.isMaterialised || !tab.urlString.isEmpty {
             let generation = coordinator.browser.agentCompanion?.generation ?? 0
-            let switched = await tab.switchEngine(to: targetEngine) {
-                self.mayMutate(record, generation: generation)
+            let switched = await tab.switchEngine(to: targetEngine) { [weak self, weak record] in
+                guard let self, let record else { return false }
+                return self.mayMutate(record, generation: generation)
             }
             guard switched, mayMutate(record, generation: generation) else {
                 throw MCPAgentWindowError(.actionFailed, "Could not switch engine to \(targetEngine.rawValue).")

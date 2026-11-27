@@ -43,7 +43,7 @@ extension ChromiumDevTools {
     /// A cross-site frame's session hears only what concerns its own frames: never the page's security state, responses,
     /// address or diagnostics.
     private static let crossSiteFrameEvents: Set<String> = [
-        "Runtime.bindingCalled", "Page.frameNavigated", "Page.frameDetached",
+        "Runtime.bindingCalled", "Page.frameNavigated", "Page.frameAttached", "Page.frameDetached", "Page.navigatedWithinDocument",
         "Target.attachedToTarget", "Target.detachedFromTarget", "Target.targetCrashed",
     ]
 
@@ -57,6 +57,7 @@ extension ChromiumDevTools {
         "Runtime.executionContextDestroyed": { $0.executionContextDestroyed($1) },
         "Runtime.executionContextsCleared": { $0.executionContextsCleared($1) },
         "Runtime.bindingCalled": { $0.bindingCalled($1) },
+        "Page.frameAttached": { _, _ in },
         "Page.frameNavigated": { $0.frameNavigated($1) },
         "Page.navigatedWithinDocument": { $0.navigatedWithinDocument($1) },
         "Page.frameDetached": { $0.frameDetached($1) },
@@ -69,6 +70,9 @@ extension ChromiumDevTools {
 
     func receiveEvent(name: String, params: [String: Any]) {
         guard !closed, sessionID == nil || Self.crossSiteFrameEvents.contains(name) else { return }
+        if Self.screenshotFrameEvents.contains(name) {
+            (root ?? self).screenshotFrameRevision &+= 1
+        }
         if let diagnosticsSink, Self.diagnosticEvents.contains(name) {
             diagnosticsSink(name, params)
         }
@@ -97,6 +101,11 @@ extension ChromiumDevTools {
         guard let address = params["url"] as? String, let url = URL(string: address) else { return }
         page?.windowOpenAttempt?(url, params["userGesture"] as? Bool ?? true)
     }
+
+    private static let screenshotFrameEvents: Set<String> = [
+        "Page.frameAttached", "Page.frameDetached", "Page.frameNavigated", "Page.navigatedWithinDocument",
+        "Target.attachedToTarget", "Target.detachedFromTarget", "Target.targetCrashed",
+    ]
 
     private static let diagnosticEvents: Set<String> = [
         "Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Network.requestWillBeSent", "Network.responseReceived",

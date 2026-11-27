@@ -101,8 +101,10 @@ extension MCPBrowserSession {
     /// finds its own ends. A selector reads the page's structure, so it needs development access, not only control.
     /// Returns a refusal, or nil with `arguments` rewritten.
     func prepareTargets(
-        _ entry: MCPToolCatalog.Entry, arguments: inout [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int, url: URL
+        _ entry: MCPToolCatalog.Entry, arguments: inout [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int, url: URL,
+        holdsOwnership: @escaping @MainActor @Sendable () -> Bool
     ) async -> CallTool.Result? {
+        guard holdsOwnership() else { return failure("Page access changed. Read the page again.", code: .accessDenied) }
         let name = entry.name
         let needsDevelopment = "A selector needs development access. Use readPage and a ref, or ask for development access with requestAccess."
         if name == "dragOnPage" {
@@ -129,7 +131,7 @@ extension MCPBrowserSession {
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: .development) && self.isReachable(tab)
             })
         let outcome = await PageAutomationGuard.$current.withValue(scope) { () -> Result<PageDriver.ControlTarget, PageDriver.TargetFailure> in

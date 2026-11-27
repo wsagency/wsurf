@@ -187,9 +187,9 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         Self.scrub(text, needles: allNeedles)
     }
 
-    func scrub(_ value: Value) -> Value {
+    func scrubPageValue(_ value: Value) -> Value {
         let needles = allNeedles
-        return needles.isEmpty ? value : Self.scrub(value, needles: needles)
+        return needles.isEmpty ? value : Self.scrub(value, needles: needles, pageNumbers: true)
     }
 
     /// For a record the user reads about what the agent did: hides only the values confirmed as written into a password, code
@@ -243,16 +243,18 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             isError: result.isError, _meta: result._meta)
     }
 
-    private static func scrub(_ value: Value, needles: [[UInt8]]) -> Value {
+    private static func scrub(_ value: Value, needles: [[UInt8]], pageNumbers: Bool = false) -> Value {
         switch value {
         case .string(let text):
             .string(scrub(text, needles: needles))
-        case .int, .double:
+        case .int where pageNumbers, .double where pageNumbers:
             redactNumber(value, needles: needles)
         case .array(let items):
-            .array(items.map { scrub($0, needles: needles) })
+            .array(items.map { scrub($0, needles: needles, pageNumbers: pageNumbers) })
         case .object(let fields):
-            .object(Dictionary(fields.map { (scrub($0.key, needles: needles), scrub($0.value, needles: needles)) }) { first, _ in first })
+            .object(Dictionary(fields.map {
+                (scrub($0.key, needles: needles), scrub($0.value, needles: needles, pageNumbers: pageNumbers))
+            }) { first, _ in first })
         default:
             value
         }

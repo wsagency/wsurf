@@ -20,17 +20,7 @@ nonisolated enum PageRuntime {
       \#(changeScript)
       const parentOf = el => el.parentElement || el.getRootNode()?.host || el.ownerDocument?.defaultView?.frameElement;
 
-      function* walk(root) {
-        for (const el of root.querySelectorAll('*')) {
-          yield el;
-          if (el.shadowRoot) { watchRoot(el.shadowRoot); yield* walk(el.shadowRoot); }
-          if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
-            try {
-              if (el.contentDocument) { watchRoot(el.contentDocument); if (el.contentDocument.body) yield* walk(el.contentDocument.body); }
-            } catch (e) {}
-          }
-        }
-      }
+      \#(walkScript)
 
       const visible = el => {
         const frame = el.ownerDocument.defaultView?.frameElement;
@@ -97,7 +87,7 @@ nonisolated enum PageRuntime {
       const labelOf = (el, kind) => ['button', 'link', 'combobox', 'scrollarea'].includes(kind) ? controlLabel(el) : fieldLabel(el);
 
       const markStickyPassword = el => {
-        if (el && el.tagName === 'INPUT' && ((el.type || '') + '').toLowerCase() === 'password'
+        if (el && el.localName === 'input' && ((el.type || '') + '').toLowerCase() === 'password'
             && typeof el.value === 'string' && el.value.length > 0 && !el.hasAttribute('data-wsurf-password')) {
           el.setAttribute('data-wsurf-password', '');
         }
@@ -131,7 +121,7 @@ nonisolated enum PageRuntime {
       const hasLoginForm = () => {
         if (!document.body) return false;
         for (const el of walk(document.body)) {
-          if (el.tagName !== 'INPUT' || !visible(el)) continue;
+          if (el.localName !== 'input' || !visible(el)) continue;
           const kind = ((el.type || '') + '').toLowerCase();
           if (kind === 'password') return true;
           const auto = norm(el.autocomplete).toLowerCase();
@@ -144,7 +134,7 @@ nonisolated enum PageRuntime {
         const root = document.body || document.documentElement;
         if (!root) return false;
         for (const el of walk(root)) {
-          const holder = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+          const holder = /^(input|textarea|select)$/.test(el.localName);
           const editable = el.isContentEditable === true && !holder;
           if (!holder && !editable) continue;
           if (!isSensitiveSecret(el)) continue;
@@ -158,7 +148,7 @@ nonisolated enum PageRuntime {
         const root = document.body || document.documentElement;
         if (!root) return false;
         for (const el of walk(root)) {
-          const holder = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+          const holder = /^(input|textarea|select)$/.test(el.localName);
           const editable = el.isContentEditable === true && !holder;
           if (!holder && !editable) continue;
           if (!isSensitiveField(el)) continue;
@@ -796,7 +786,9 @@ nonisolated enum PageRuntime {
 
       \#(feedbackScript)
 
-      return { resolveTarget, dragPlan, dragHolds, matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
+      \#(screenshotFrameScript)
+      return { scanScreenshot, resolveTarget, dragPlan, dragHolds, matchesRef, inspectableRef,
+        isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
         pageText, viewportText, resolve, setValue, pressEnter,
         labelOf, kindOf, visible, highlight, isSensitiveField, isSensitiveForRead, isSensitiveSecret, hasLoginForm,
         hasFilledSensitiveSecret, hasFilledSensitiveField,

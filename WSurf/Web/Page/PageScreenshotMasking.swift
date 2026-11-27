@@ -16,44 +16,78 @@ import WebKit
 /// pixels of page text that merely echo a secret are not covered: read the page, where the registered value is hidden by
 /// `MCPSecretScrubber`.
 struct ScreenshotMasking: Sendable {
-    /// Native captures include frame pixels even when the text runtime cannot enter the frame.
-    static let frameProbeScript = #"""
-        out.frameURLs = [];
-        out.uninspectableFrame = (() => {
-          for (const el of R.walk(document.documentElement)) {
-            if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') continue;
-            try {
-              const document = el.contentDocument;
-              if (!document?.documentElement || el.contentWindow.origin === 'null') return true;
-              out.frameURLs.push(document.URL);
-            } catch (e) { return true; }
-          }
-          return false;
-        })();
-        """#
+    struct FrameEvidence: Equatable {
+        let documents: [[String]]
+        let revision: UInt64
 
-    /// Only return pixels when the engine accounts for every child document probed by the masking runtime.
-    @MainActor
-    static func hasUninspectableFrame(_ probe: [String: Any], in view: BrowserPage) async -> Bool {
-        guard probe["uninspectableFrame"] as? Bool == false, let addresses = probe["frameURLs"] as? [String] else { return true }
-        let children: [URL]?
-        if let native = view.webKit {
-            children = await native.screenshotChildFrameURLs()
-        } else if let chromium = view.chromium {
-            children = try? await chromium.devTools.screenshotChildFrameURLs()
-        } else {
-            return true
+        var addresses: [String] {
+            documents.compactMap(\.last)
         }
-        guard let children, children.count == addresses.count else { return true }
-        let inspected = addresses.compactMap(URL.init(string:)).map(frameAddress).sorted { $0.absoluteString < $1.absoluteString }
-        let native = children.map(frameAddress).sorted { $0.absoluteString < $1.absoluteString }
-        return inspected != native
     }
 
-    private static func frameAddress(_ url: URL) -> URL {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
+    struct CaptureEvidence: Equatable {
+        let inspected: FrameEvidence
+        let native: FrameEvidence
+    }
+
+    @MainActor
+    static func nativeFrameRevision(in view: BrowserPage) -> UInt64 {
+        view.chromium?.devTools.screenshotFrameRevision ?? view.webKitFrameRevision
+    }
+
+    /// Only return pixels when the engine accounts for every child document inspected by the masking runtime.
+    @MainActor
+    static func frameEvidence(_ probe: [String: Any], in view: BrowserPage) async -> CaptureEvidence? {
+        guard probe["uninspectableFrame"] as? Bool == false, let documents = probe["frames"] as? [[String]],
+              let revision = (probe["frameRevision"] as? NSNumber)?.uint64Value,
+              let proof = probe["frameProof"] as? String,
+              documents.allSatisfy({ $0.count == 3 })
+        else { return nil }
+        let inspected = FrameEvidence(documents: documents, revision: revision)
+        let native: FrameEvidence?
+        if let webKit = view.webKit {
+            native = await webKitEvidence(in: view, webKit: webKit, proof: proof, count: documents.count)
+        } else if let chromium = view.chromium {
+            native = try? await chromium.devTools.screenshotFrameEvidence()
+        } else {
+            return nil
+        }
+        guard let native, native.documents.count == documents.count else { return nil }
+        let addresses = inspected.addresses.compactMap(URL.init(string:)).map(frameAddress).sorted()
+        let nativeAddresses = native.addresses.compactMap(URL.init(string:)).map(frameAddress).sorted()
+        guard addresses.count == documents.count, addresses == nativeAddresses else { return nil }
+        return CaptureEvidence(inspected: inspected, native: native)
+    }
+
+    @MainActor
+    private static func webKitEvidence(in view: BrowserPage, webKit: WKWebView, proof: String, count: Int) async -> FrameEvidence? {
+        let revision = view.webKitFrameRevision
+        guard let frames = await webKit.screenshotChildFrames(), frames.count == count else { return nil }
+        var documents: [[String]] = []
+        for frame in frames {
+            // Require this exact native document to have finished registration and to bear the isolated world's
+            // proof from the field traversal. An address can match while it is still loading or belongs to a sibling.
+            let script = """
+                if (document.__wsurfScreenshotProof !== proof) return null;
+                return [globalThis.__wsurfNativeFrameNonce, document.URL];
+                """
+            guard let document = try? await view.callAsyncJavaScript(
+                script, arguments: ["proof": proof], in: BrowserFrame(webKit: frame), contentWorld: PageAutomationGuard.world
+            ) as? [String], document.count == 2,
+                let target = PageFrameRegistry.shared.target(document[0], in: view),
+                PageFrameRegistry.shared.isCurrent(target, in: view)
+            else { return nil }
+            documents.append(document)
+        }
+        guard view.webKitFrameRevision == revision else { return nil }
+        guard Set(documents.compactMap(\.first)).count == count else { return nil }
+        return FrameEvidence(documents: documents.sorted { $0[0] < $1[0] }, revision: revision)
+    }
+
+    private static func frameAddress(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url.absoluteString }
         components.fragment = nil
-        return components.url ?? url
+        return components.url?.absoluteString ?? url.absoluteString
     }
 
     /// Refs of fields the connection typed a secret into, covered even when they do not look sensitive. They count only while
@@ -69,7 +103,7 @@ struct ScreenshotMasking: Sendable {
         let document = documentID.flatMap(PageDriver.jsonString) ?? "null"
         return """
             {
-              const filled = Array.from(R.walk(document.body)).filter(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent));
+              const filled = scan.filled;
               if (R.documentID === \(document)) {
                 for (const ref of [\(refs)]) {
                   const el = window.__wsurfRefs[ref - 1];
@@ -148,34 +182,34 @@ struct ScreenshotMasking: Sendable {
 
 private extension WKWebView {
     /// WebKit's frame tree also includes frames blocked from script access and frames in closed shadow roots.
-    func screenshotChildFrameURLs() async -> [URL]? {
+    func screenshotChildFrames() async -> [WKFrameInfo]? {
         let selector = NSSelectorFromString("_frames:")
         guard responds(to: selector) else { return nil }
         typealias Fetch = @convention(c) (AnyObject, Selector, @escaping @convention(block) (NSObject?) -> Void) -> Void
         let fetch = unsafeBitCast(method(for: selector), to: Fetch.self)
-        return await PageReply<[URL]>.awaiting(within: .seconds(2)) { gate in
+        return await PageReply<[WKFrameInfo]>.awaiting(within: .seconds(2)) { gate in
             fetch(self, selector) { root in
-                gate.finish(root.flatMap(Self.screenshotChildFrameURLs))
+                gate.finish(root.flatMap(Self.screenshotChildFrames))
             }
         }
     }
 
-    private static func screenshotChildFrameURLs(_ root: NSObject) -> [URL]? {
+    private static func screenshotChildFrames(_ root: NSObject) -> [WKFrameInfo]? {
         let infoKey = "info"
         let childrenKey = "childFrames"
         guard root.responds(to: NSSelectorFromString(infoKey)),
               let main = root.value(forKey: infoKey) as? WKFrameInfo, main.isMainFrame,
               root.responds(to: NSSelectorFromString(childrenKey)),
               var pending = root.value(forKey: childrenKey) as? [NSObject] else { return nil }
-        var urls: [URL] = []
+        var frames: [WKFrameInfo] = []
         while let node = pending.popLast() {
-            guard urls.count < 256, node.responds(to: NSSelectorFromString(infoKey)),
-                  let frame = node.value(forKey: infoKey) as? WKFrameInfo, !frame.isMainFrame, let url = frame.request.url,
+            guard frames.count < 256, node.responds(to: NSSelectorFromString(infoKey)),
+                  let frame = node.value(forKey: infoKey) as? WKFrameInfo, !frame.isMainFrame, frame.request.url != nil,
                   !frame.securityOrigin.protocol.isEmpty, node.responds(to: NSSelectorFromString(childrenKey)),
                   let children = node.value(forKey: childrenKey) as? [NSObject] else { return nil }
-            urls.append(url)
+            frames.append(frame)
             pending.append(contentsOf: children)
         }
-        return urls
+        return frames
     }
 }

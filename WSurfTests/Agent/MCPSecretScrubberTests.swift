@@ -154,9 +154,11 @@ struct MCPSecretScrubberTests {
         let code = MCPFailureCode.waitingForUser.rawValue
         scrubber.register(code)
         scrubber.register("718429")
+        scrubber.register("1920")
         let original: Value = .object([
             "code": .string(code), "message": .string("Echo: \(code)"),
-            "value": .array([.int(718429), .double(718429.25), .double(718429), .int(12)]),
+            "value": scrubber.scrubPageValue(.array([.int(718429), .double(718429.25), .double(718429), .int(12)])),
+            "viewportOverride": .object(["width": .int(1920)]),
         ])
         let text = try String(decoding: JSONEncoder().encode(original), as: UTF8.self)
         let reply = CallTool.Result(
@@ -168,6 +170,7 @@ struct MCPSecretScrubberTests {
         #expect(parsed == redacted.structuredContent)
         #expect(parsed.objectValue?["code"] == .string(code))
         #expect(parsed.objectValue?["message"] == .string("Echo: \(Self.hidden)"))
+        #expect(parsed.objectValue?["viewportOverride"]?.objectValue?["width"] == .int(1920))
         #expect(parsed.objectValue?["value"] == .array([.string(Self.hidden), .string("\(Self.hidden).25"), .string(Self.hidden), .int(12)]))
         #expect(!MCPBrowserSession.text(of: redacted).contains("718429"))
     }

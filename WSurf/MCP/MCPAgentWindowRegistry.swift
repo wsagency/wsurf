@@ -715,8 +715,9 @@ final class MCPAgentWindowRegistry {
                     throw MCPAgentWindowError(.unsupported, "This origin requires WebKit and cannot switch to Chromium.")
                 }
                 if tab.isMaterialised {
-                    let switched = await tab.switchEngine(to: options.engine) {
-                        self.mayMutate(record, generation: generation)
+                    let switched = await tab.switchEngine(to: options.engine) { [weak self, weak record] in
+                        guard let self, let record else { return false }
+                        return self.mayMutate(record, generation: generation)
                     }
                     if coordinator.browser.agentCompanion?.owner == .human {
                         throw MCPAgentWindowError(.humanControl, "Window is under human control.")
@@ -731,10 +732,7 @@ final class MCPAgentWindowRegistry {
                 configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
             }
             if let url = options.url {
-                _ = await navigateAgentTab(tab, to: url, record: record, generation: generation)
-                guard mayMutate(record, generation: generation) else {
-                    throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
-                }
+                try await navigateAgentTab(tab, to: url, record: record, generation: generation)
             }
         }
         ensurePreviewSession(for: record)?.syncAgentWindowGrants()
@@ -742,13 +740,6 @@ final class MCPAgentWindowRegistry {
             showAgentWindow(coordinator)
         }
         return windowDescriptor(record: record, coordinator: coordinator, tab: tab)
-    }
-
-    func navigateAgentTab(_ tab: BrowserTab, to url: URL, record: Record, generation: Int) async -> PageNavigation? {
-        let immediate = tab.load(url, transition: .agent) {
-            self.mayMutate(record, generation: generation)
-        }
-        return await tab.waitForPendingNavigation(cancelWithCaller: true) ?? immediate
     }
 
     func ensureDestinationAllowed(_ url: URL, permissions: SitePermissions) throws {

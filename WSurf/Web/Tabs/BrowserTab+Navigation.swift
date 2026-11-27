@@ -77,16 +77,16 @@ extension BrowserTab {
     ) -> PageNavigation? {
         guard !isClosed, authorized?() ?? true else { return nil }
         let sourceSignIn = signInEngine
-        let deferNavigationState = authorized != nil && startedByUser
+        let deferNavigationState = authorized != nil
         if !deferNavigationState {
             noteNavigation(to: url, startedByUser: startedByUser)
         }
         pendingNavigationTask?.cancel()
-        let desired = preferredEngine(for: url, keepingSignIn: !deferNavigationState)
+        let desired = preferredEngine(for: url, keepingSignIn: !deferNavigationState || !startedByUser)
         if !deferNavigationState {
             prepareNavigation(to: url, engine: desired, transition: transition)
         }
-        let handoff = deferNavigationState ? nil : chromiumSignInHandoff(to: url, engine: desired)
+        let handoff = deferNavigationState && startedByUser ? nil : chromiumSignInHandoff(to: url, engine: desired)
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil || handoff != nil {
             lastRequestedNavigation = nil
             // A Chromium hop back through restored entries leaves a page that is ahead of the new one: Back must not return there.
@@ -109,13 +109,13 @@ extension BrowserTab {
                 }
                 guard ready, !Task.isCancelled, authorized?() ?? true else { return nil }
                 if deferNavigationState {
-                    noteNavigation(to: url, startedByUser: true)
+                    noteNavigation(to: url, startedByUser: startedByUser)
                     prepareNavigation(to: url, engine: desired, transition: transition)
                 }
                 if let left {
                     pageBeforeEngineSwitch = left
                 }
-                let result = loadDirect(url, byPerson: byPerson)
+                let result = loadDirect(url, byPerson: byPerson, authorized: authorized)
                 lastRequestedNavigation = result
                 return result
             }
@@ -123,10 +123,10 @@ extension BrowserTab {
         }
         pendingNavigationTask = nil
         if deferNavigationState {
-            noteNavigation(to: url, startedByUser: true)
+            noteNavigation(to: url, startedByUser: startedByUser)
             prepareNavigation(to: url, engine: desired, transition: transition)
         }
-        let result = loadDirect(url, byPerson: byPerson)
+        let result = loadDirect(url, byPerson: byPerson, authorized: authorized)
         lastRequestedNavigation = result
         return result
     }
@@ -160,7 +160,8 @@ extension BrowserTab {
         }
     }
 
-    func loadDirect(_ url: URL, byPerson: Bool = false) -> PageNavigation? {
+    func loadDirect(_ url: URL, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil) -> PageNavigation? {
+        guard authorized?() ?? true else { return nil }
         discardDeferredSession()
         autofillSave.clear()
         stopUncommittedStartPage()
@@ -169,7 +170,7 @@ extension BrowserTab {
             // Typed, dragged, opened from Finder or from Downloads: a downloaded file reads only itself, the person's own file its folder.
             return page.loadFileURL(url, allowingReadAccessTo: FileAccessScope.readAccess(for: url))
         }
-        return page.load(URLRequest(url: url), byPerson: byPerson)
+        return page.load(URLRequest(url: url), byPerson: byPerson, authorized: authorized)
     }
 
     func waitForPendingNavigation(cancelWithCaller: Bool = false) async -> PageNavigation? {
