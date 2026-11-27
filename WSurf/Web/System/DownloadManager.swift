@@ -89,6 +89,7 @@ final class DownloadManager: NSObject {
     @ObservationIgnored var onFinished: ((String) -> Void)?
 
     @ObservationIgnored private var live: [UUID: WKDownload] = [:]
+    @ObservationIgnored private var savePanelWindows: [UUID: NSWindow] = [:]
     @ObservationIgnored private var chromiumIDs: [UInt32: UUID] = [:]
     @ObservationIgnored private var chromiumControls: [UInt32: ChromiumDownloadControls] = [:]
     @ObservationIgnored private var chromiumPaused: Set<UUID> = []
@@ -231,7 +232,8 @@ final class DownloadManager: NSObject {
         _ download: WKDownload,
         suggestedSource: URL?,
         sourceTabID: UUID? = nil,
-        privately: Bool = false
+        privately: Bool = false,
+        on window: NSWindow? = nil
     ) {
         // Delegate ownership also covers a late handoff after active IDs were cleared.
         guard download.delegate !== self else { return }
@@ -240,6 +242,8 @@ final class DownloadManager: NSObject {
             sourceTabID: sourceTabID,
             privately: privately
         )
+        // Keep the sheet's window when the source popup closes before WebKit asks for a destination.
+        savePanelWindows[id] = window
         attach(download, to: id)
     }
 
@@ -648,6 +652,7 @@ final class DownloadManager: NSObject {
         if let download = live.removeValue(forKey: id) {
             identifiers.removeValue(forKey: ObjectIdentifier(download))
         }
+        savePanelWindows.removeValue(forKey: id)
         let nativeIDs = chromiumIDs.filter { $0.value == id }.map(\.key)
         nativeIDs.forEach { chromiumControls.removeValue(forKey: $0) }
         chromiumIDs = chromiumIDs.filter { $0.value != id }
@@ -762,7 +767,8 @@ extension DownloadManager: WKDownloadDelegate {
         }
 
         guard let id = id(for: download) else { return nil }
-        guard let destination = await destination(for: suggestedFilename, itemID: id, on: download.webView?.window) else {
+        let window = savePanelWindows.removeValue(forKey: id) ?? download.webView?.window
+        guard let destination = await destination(for: suggestedFilename, itemID: id, on: window) else {
             update(id) { $0.state = .cancelled }
             finish(id)
             return nil

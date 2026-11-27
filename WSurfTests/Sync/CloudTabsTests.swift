@@ -295,6 +295,40 @@ struct CloudTabsTests {
         #expect(nodes.allSatisfy { $0.title.isEmpty == false })
     }
 
+    @Test func aPendingPopupURLIsPublishedOnlyOnceItsPageCommits() async throws {
+        let gate = ResponseGate()
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/opener": .html("<title>Opener</title>"),
+            "/popup": .html("<title>Popup</title>", gate: gate),
+        ])
+        let launch = Launch()
+        let window = regularWindow()
+        defer {
+            window.closeAllTabs()
+            gate.open()
+            launch.finish()
+        }
+        let cloudTabs = try #require(launch.start(optedIn: true))
+        launch.models = [window]
+        let openerURL = try server.url("/opener")
+        let popupURL = try server.url("/popup")
+        let opener = window.newTab(url: openerURL)
+        try #require(await waitUntil { opener.committedURL == openerURL })
+        window.setPopups(.allow, for: opener)
+        _ = try await opener.page.evaluateJavaScript("window.open('/popup'); true")
+        try #require(await waitUntil { gate.requestCount > 0 && window.activeTab?.urlString == popupURL.absoluteString })
+        let popup = try #require(window.activeTab)
+        try #require(popup.isProvisionalDownloadPopup)
+
+        let pending = try #require(cloudTabs.payload(for: Profile.originalID, running: true))
+        #expect(urls(in: pending.windows.flatMap(\.nodes)) == [openerURL.absoluteString])
+
+        gate.open()
+        try #require(await waitUntil { popup.committedURL == popupURL })
+        let committed = try #require(cloudTabs.payload(for: Profile.originalID, running: true))
+        #expect(urls(in: committed.windows.flatMap(\.nodes)) == [openerURL.absoluteString, popupURL.absoluteString])
+    }
+
     @Test func privateWindowsAreNeverPublished() throws {
         let launch = Launch()
         defer { launch.finish() }

@@ -23,6 +23,41 @@ struct WindowSessionTests {
         #expect(BrowserModel.savedWindows(in: .temporary(), includeClosed: true).isEmpty)
     }
 
+    @Test func aPendingDownloadPopupIsAbsentFromTheSavedWindow() async throws {
+        let gate = ResponseGate()
+        var attachment = HTTPFixtureServer.Response.download(Data("Popup download".utf8), filename: "report.txt")
+        attachment.gate = gate
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/opener": .html("<title>Opener</title>"), "/attachment": attachment,
+        ])
+        let model = BrowserModel(database: .temporary())
+        defer {
+            model.closeAllTabs()
+            gate.open()
+        }
+        let openerURL = try server.url("/opener")
+        let attachmentURL = try server.url("/attachment")
+        let opener = model.newTab(url: openerURL)
+        try #require(await waitUntil { opener.committedURL == openerURL })
+        model.setPopups(.allow, for: opener)
+        _ = try await opener.page.evaluateJavaScript("window.open('/attachment'); true")
+        try #require(await waitUntil { gate.requestCount > 0 && model.activeTab?.urlString == attachmentURL.absoluteString })
+        let popup = try #require(model.activeTab)
+        try #require(popup.isProvisionalDownloadPopup)
+
+        model.saveBlocking()
+
+        let windowID = model.windowID
+        let urls = try await model.database.writer.read { db in
+            try String.fetchAll(db, sql: "SELECT url FROM sessionTab WHERE windowID = ?", arguments: [windowID])
+        }
+        #expect(urls == [openerURL.absoluteString])
+        let restored = reopen(model)
+        defer { restored.closeAllTabs() }
+        #expect(restored.tabs.map(\.id) == [opener.id])
+        #expect(restored.activeTabID == opener.id)
+    }
+
     @Test func windowsSaveTheirOwnTabsFoldersAndSplits() throws {
         let database = AppDatabase.temporary()
         let first = BrowserModel(windowID: UUID(), database: database)

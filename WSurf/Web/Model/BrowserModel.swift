@@ -271,13 +271,9 @@ final class BrowserModel {
             guard let tab else { return }
             self?.onPictureReturnExpected?(tab)
         }
-        tab.onDownload = { [weak self, weak tab] download, source in
-            self?.downloads.adopt(
-                download,
-                suggestedSource: source,
-                sourceTabID: tab?.id,
-                privately: tab?.isPrivate ?? false
-            )
+        tab.onDownload = { [weak self, weak tab] download, source, closesPopup in
+            guard let self, let tab else { return }
+            adoptDownload(download, source: source, from: tab, closesPopup: closesPopup)
         }
         tab.onSaveDocument = { [weak self, weak tab] data, filename, source, opensAfterSaving in
             guard let self, let tab, !tab.isClosed else { return }
@@ -328,6 +324,15 @@ final class BrowserModel {
         tab.hasActiveDownload = { [weak self, weak tab] in
             guard let self, let tab else { return false }
             return self.downloads.hasActiveDownload(for: tab.id)
+        }
+    }
+
+    private func adoptDownload(_ download: WKDownload, source: URL?, from tab: BrowserTab, closesPopup: Bool) {
+        let closePopup = closesPopup && tab.lastRequestedNavigation == nil && !tab.isPinnedForProfile && !tab.isFavorite
+        let window = tab.liveView?.window ?? openerByTab[tab.id].flatMap { tabsByID[$0]?.liveView?.window }
+        downloads.adopt(download, suggestedSource: source, sourceTabID: tab.id, privately: tab.isPrivate, on: closePopup ? window : nil)
+        if closePopup, tabs.contains(where: { $0 !== tab && !$0.isClosed && $0.microTabID == nil && isShown($0) }) {
+            close(tab, recordForReopening: false)
         }
     }
 
@@ -419,6 +424,7 @@ final class BrowserModel {
 
     /// The events that write History: a finished load, a move the page made itself, and a title that arrived later.
     private func bindHistoryCallbacks(to tab: BrowserTab) {
+        tab.onProvisionalPopupCommitted = { [weak self] in self?.scheduleSave() }
         tab.onNavigationFinished = { [weak self, weak tab] wasRestore in
             self?.scheduleSave()
             guard let tab else { return }
@@ -533,6 +539,7 @@ final class BrowserModel {
         byPerson: Bool = false
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
+        tab.isProvisionalDownloadPopup = (adopting as? TabWebView)?.opensAsProvisionalDownloadPopup == true
         if let engine {
             tab.engineOverride = engine
         } else if isAgentMicro {
