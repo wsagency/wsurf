@@ -519,9 +519,7 @@ final class BrowserMCPServer {
             break
         case .full(let lane):
             let what = lane == .global ? "for a sheet or tab change" : "for this tab"
-            return CallTool.Result(
-                content: [.text(text: "\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.", annotations: nil, _meta: nil)],
-                isError: true)
+            return MCPFailureCode.busy.result("\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.")
         case .cancelled:
             throw CancellationError()
         }

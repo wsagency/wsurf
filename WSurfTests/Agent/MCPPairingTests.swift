@@ -202,6 +202,42 @@ struct MCPPairingTests {
         #expect(reopened.authenticate(token: SyntheticToken.first)?.name == "Claude Code")
     }
 
+    @Test func legacyClientPoliciesAreSafeAndUpdatesSurviveReloadAndTokenRotation() throws {
+        let original = MemoryTrustStorage()
+        let client = try store(original).pair(token: SyntheticToken.first, name: "Editor", kind: nil)
+        let data = try #require(original.stored)
+        var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var clients = try #require(legacy["clients"] as? [[String: Any]])
+        clients[0]["storedPolicy"] = nil
+        legacy["clients"] = clients
+        let storage = MemoryTrustStorage(data: try JSONSerialization.data(withJSONObject: legacy))
+        let trust = store(storage)
+        trust.reload()
+        #expect(trust.client(id: client.id)?.policy.allowsPasswordEntry == false)
+        #expect(trust.client(id: client.id)?.policy.allowsVaultFill == true)
+        #expect(trust.client(id: client.id)?.policy.defaultEngine == .followDefault)
+        #expect(storage.writes == 0)
+
+        try trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: client.id)
+        try trust.setClientPolicy(\.allowsVaultFill, to: false, for: client.id)
+        try trust.setClientPolicy(\.defaultEngine, to: .webKit, for: client.id)
+        let other = try trust.pair(token: SyntheticToken.second, name: "Other", kind: nil)
+        let rotated = try trust.pair(token: SyntheticToken.stranger, name: "Editor", kind: nil, replacing: client.id)
+        let reopened = store(storage)
+        reopened.reload()
+        #expect(reopened.client(forToken: SyntheticToken.stranger)?.policy == rotated.policy)
+        #expect(rotated.policy.allowsPasswordEntry)
+        #expect(!rotated.policy.allowsVaultFill)
+        #expect(rotated.policy.defaultEngine == .webKit)
+        #expect(reopened.client(id: other.id)?.policy == PairedClient.Policy())
+
+        storage.refuseWrites()
+        #expect(throws: MCPTrustStore.Failure.storage) {
+            try reopened.setClientPolicy(\.allowsPasswordEntry, to: false, for: client.id)
+        }
+        #expect(reopened.client(id: client.id)?.policy.allowsPasswordEntry == true)
+    }
+
     @Test func rePairRotatesTheTokenAndKeepsTheClient() throws {
         let trust = store()
         let first = try trust.pair(token: SyntheticToken.first, name: "Codex", kind: .codex)

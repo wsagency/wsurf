@@ -36,6 +36,7 @@ extension MCPBrowserSession {
         }
         if let open = dialogRefusal(for: tab) {
             fields["status"] = "dialogPending"
+            fields["code"] = MCPFailureCode.dialogPending.value
             fields["page"] = open.structuredContent ?? .string(Self.text(of: open))
             return reply(fields)
         }
@@ -47,6 +48,7 @@ extension MCPBrowserSession {
         guard read.isError != true, let page = read.structuredContent?.objectValue else {
             fields["status"] = "opened"
             fields["readError"] = .string(Self.text(of: read))
+            fields["code"] = read.structuredContent?.objectValue?["code"]
             return reply(fields)
         }
         fields["status"] = "ready"
@@ -105,17 +107,18 @@ extension MCPBrowserSession {
     func runSteps(_ arguments: [String: Value], tab: BrowserTab) async -> CallTool.Result {
         let steps = arguments["steps"]?.arrayValue ?? []
         guard (1...MCPToolCatalog.maximumSteps).contains(steps.count) else {
-            return failure("Give one to \(MCPToolCatalog.maximumSteps) steps.")
+            return failure("Give one to \(MCPToolCatalog.maximumSteps) steps.", code: .invalidInput)
         }
         let origin = webURL(of: tab).map(SitePermissions.origin(for:))
         var summaries: [Value] = []
         var last: CallTool.Result?
-        func finish(failedAt index: Int?, _ error: String?) -> CallTool.Result {
+        func finish(failedAt index: Int?, _ error: String?, code: MCPFailureCode = .accessDenied) -> CallTool.Result {
             var fields: [String: Value] = [
                 "tabID": .string(tab.id.uuidString), "completedSteps": .int(index ?? steps.count), "steps": .array(summaries),
             ]
             if let index {
                 fields["failedStepIndex"] = .int(index)
+                fields["code"] = code.value
             }
             if let error {
                 fields["error"] = .string(error)
@@ -131,14 +134,19 @@ extension MCPBrowserSession {
         for (index, item) in steps.enumerated() {
             guard case .object(let step) = item, let name = step["tool"]?.stringValue, let tool = MCPToolCatalog.stepTools[name],
                 let entry = MCPToolCatalog.entries.first(where: { $0.name == tool })
-            else { return finish(failedAt: index, "Unknown step. Use \(MCPToolCatalog.stepTools.keys.sorted().joined(separator: ", ")).") }
+            else {
+                return finish(
+                    failedAt: index, "Unknown step. Use \(MCPToolCatalog.stepTools.keys.sorted().joined(separator: ", ")).", code: .invalidInput)
+            }
             var stepArguments = step["arguments"]?.objectValue ?? [:]
-            guard stepArguments["tabID"] == nil else { return finish(failedAt: index, "Steps act on the runSteps tab. Leave tabID out of a step.") }
+            guard stepArguments["tabID"] == nil else {
+                return finish(failedAt: index, "Steps act on the runSteps tab. Leave tabID out of a step.", code: .invalidInput)
+            }
             stepArguments["tabID"] = .string(tab.id.uuidString)
             do {
                 try entry.validate(stepArguments)
             } catch {
-                return finish(failedAt: index, "Step \(index) (\(name)) has invalid arguments: \(error.localizedDescription)")
+                return finish(failedAt: index, "Step \(index) (\(name)) has invalid arguments: \(error.localizedDescription)", code: .invalidInput)
             }
             if let stop = stepInterruption(tab, origin: origin) {
                 return finish(failedAt: index, stop)
@@ -154,7 +162,8 @@ extension MCPBrowserSession {
                     "summary": .string(Self.stepLine(line, limit: 300, scrub: scrubbed)),
                 ]))
             if result.isError == true {
-                return finish(failedAt: index, Self.stepLine(line, limit: 600, scrub: scrubbed))
+                let code = result.structuredContent?.objectValue?["code"]?.stringValue.flatMap(MCPFailureCode.init(rawValue:)) ?? .actionFailed
+                return finish(failedAt: index, Self.stepLine(line, limit: 600, scrub: scrubbed), code: code)
             }
             // A step that did not wait for the page (settle none or fast) may have started a navigation the next step would race.
             // ponytail: a 50 ms window, not the 500 ms an action allows, so steps that stay on the page stay fast; a navigation the
@@ -167,7 +176,9 @@ extension MCPBrowserSession {
             }
             // A step that opened a dialog reports success with dialogOpened: the page is blocked until it is answered.
             if result.structuredContent?.objectValue?["status"]?.stringValue == "dialogOpened" || tab.dialogs.hasOpenDialog {
-                return finish(failedAt: index + 1 < steps.count ? index + 1 : nil, "A dialog opened. Answer it with handleDialog before going on.")
+                return finish(
+                    failedAt: index + 1 < steps.count ? index + 1 : nil,
+                    "A dialog opened. Answer it with handleDialog before going on.", code: .dialogPending)
             }
             if index + 1 < steps.count, let stop = stepInterruption(tab, origin: origin) {
                 return finish(failedAt: index + 1, stop)

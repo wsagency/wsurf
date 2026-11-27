@@ -31,7 +31,7 @@ extension MCPBrowserSession {
         guard let first = arguments["tabA"]?.stringValue.flatMap(UUID.init(uuidString:)),
             let second = arguments["tabB"]?.stringValue.flatMap(UUID.init(uuidString:)), first != second
         else { return MCPCompareTools.result(.invalidInput, message: "tabA and tabB must be the IDs of two different tabs.") }
-        guard let tabA = sharedTab(first), let tabB = sharedTab(second) else { return failure("This tab is not shared with this connection.") }
+        guard let tabA = sharedTab(first), let tabB = sharedTab(second) else { return failure("This tab is not shared with this connection.", code: .tabNotFound) }
         guard mayProceed(tabA, capability: .development), mayProceed(tabB, capability: .development) else {
             return MCPCompareTools.result(.denied, message: "Comparing needs development access to both tabs.")
         }

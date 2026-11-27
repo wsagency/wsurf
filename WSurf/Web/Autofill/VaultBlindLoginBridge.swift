@@ -21,6 +21,13 @@ enum VaultBlindLoginBridge {
         let epoch: UInt64
     }
 
+    static func isLocked(in browser: BrowserModel, tab: BrowserTab, url: URL) async -> Bool {
+        guard !tab.isPrivate, CredentialAccountSelection.origin(for: url) != nil else { return false }
+        let scope = browser.vaultScope(for: tab)
+        guard let listing = try? await scope.listing(), !listing.isEmpty else { return false }
+        return scope.unlockedManagers.isEmpty
+    }
+
     /// Returns matching saved-login summaries for `(tab, url)` from unlocked vaults in `tab`'s scope, ordered with any
     /// `accountHint` matches first. Uses `autofillCandidates()` so no secret is decrypted during listing.
     static func savedSummaries(

@@ -498,6 +498,7 @@ struct MCPv2CoreTests {
 
     @Test func controlPasswordEntryAutoScrubsMasksScreenshotsAndAllowsPlainLoginSubmit() async throws {
         try await withRig(ownerPath: "/login") { rig in
+            try rig.trust.setAllowsPasswordEntry(true)
             let session = MCPBrowserSession(
                 browser: rig.browser, trust: rig.trust, available: { true },
                 consent: { _, _, _ in .control },
@@ -697,7 +698,7 @@ struct MCPv2CoreTests {
             #expect(try await rig.owner.page.evaluateJavaScript("document.getElementById('user').hasAttribute('data-wsurf-autofilled')") as? Bool == true)
             #expect(try await rig.owner.page.evaluateJavaScript("document.getElementById('pw').hasAttribute('data-wsurf-password')") as? Bool == true)
             #expect(try await rig.owner.page.evaluateJavaScript("document.body.dataset.submitted || ''") as? String == "")
-            #expect(session.credentialTaintedDocuments[rig.owner.id] != nil)
+            #expect(rig.owner.isMCPCredentialTainted)
 
             // 4. Vault Fill & Sign In (`mode: vaultFill` hides Sign In Myself): fills DOM AND submits the form.
             nextAction = .fillAndSignIn

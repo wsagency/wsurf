@@ -84,7 +84,7 @@ extension MCPBrowserSession {
                 .denied,
                 "Script execution is blocked while a protected password or sensitive field is present on this document. "
                     + "Wait until the form navigates away or clears, or ask the user to approve inspection.",
-                ["code": "protectedSecretPresent"])
+                ["code": MCPFailureCode.protectedSecretPresent.value])
         }
         guard scope.validate(), !Task.isCancelled else {
             return result(.stale, "Page access changed before the script ran. Nothing was run.")

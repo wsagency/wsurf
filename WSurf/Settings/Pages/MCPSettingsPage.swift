@@ -58,7 +58,7 @@ struct MCPSettingsPage: View {
                 title: "Paired apps",
                 attributedCaption: trustStore.isAvailable
                     ? SettingsIndex.caption(
-                        "Pairing lets WSurf recognize an app. Review paired apps in Connected apps.",
+                        "Pairing lets WSurf recognize an app. Manage its access and engine in Connected apps.",
                         naming: "Connected apps",
                         at: "assistant.connectedApps"
                     )
@@ -137,14 +137,22 @@ private struct MCPConnectionRow: View {
     var body: some View {
         DetailRow(
             verbatimTitle: session.clientName,
-            verbatimCaption: caption
+            verbatimCaption: caption,
+            controlWidth: nil
         ) {
-            SettingsButton(title: "Disconnect", action: disconnect)
+            HStack(spacing: 8) {
+                if !session.browser.agentTabs(openedBy: session.id).isEmpty {
+                    SettingsButton(title: "Close agent tabs", isDestructive: true) {
+                        session.browser.closeAgentTabs(openedBy: session.id)
+                    }
+                }
+                SettingsButton(title: "Disconnect", action: disconnect)
+            }
         }
     }
 
     private var caption: String {
-        let count = String(localized: "Shared tabs: \(session.grants.count) · Tool calls: \(session.completedCalls)")
+        let count = String(localized: "Shared tabs: \(session.sharedTabs.count) · Tool calls: \(session.completedCalls)")
         guard let action = session.lastActionTitle else { return count }
         return count + "\n" + String(localized: "Latest action: \(action)")
     }

@@ -19,11 +19,35 @@ nonisolated enum MCPDevelopmentTools {
         case scriptError
         /// A script ran past its time limit.
         case timedOut
+
+        var failureCode: MCPFailureCode? {
+            switch self {
+            case .ok:
+                nil
+            case .unsupported:
+                .unsupported
+            case .invalidInput:
+                .invalidInput
+            case .stale:
+                .stale
+            case .denied:
+                .accessDenied
+            case .ownershipConflict:
+                .ownershipConflict
+            case .pageGone:
+                .pageUnavailable
+            case .scriptError:
+                .scriptError
+            case .timedOut:
+                .timeout
+            }
+        }
     }
 
     static func result(_ kind: Kind, tabID: UUID, message: String? = nil, _ fields: [String: Value] = [:]) -> CallTool.Result {
         var object = fields
         object["status"] = .string(kind.rawValue)
+        object["code"] = object["code"] ?? kind.failureCode?.value
         object["tabID"] = .string(tabID.uuidString)
         if let message { object["message"] = .string(message) }
         let value: Value = .object(object)
@@ -108,7 +132,7 @@ nonisolated enum MCPDevelopmentTools {
         case .limited(let reason):
             .object(["status": "limited", "reason": .string(reason)])
         case .unsupported(let reason):
-            .object(["status": "unsupported", "reason": .string(reason)])
+            .object(["status": "unsupported", "code": MCPFailureCode.unsupported.value, "reason": .string(reason)])
         }
     }
 

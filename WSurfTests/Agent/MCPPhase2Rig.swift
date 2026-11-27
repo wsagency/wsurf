@@ -29,7 +29,7 @@ struct MCPPhase2Rig {
         routes["/mine"] = .html("<!doctype html><title>Mine</title><input aria-label=Note>")
         let server = try await HTTPFixtureServer.start(routes: routes)
         let trust = MCPTrustStore(storage: MemoryTrustStorage())
-        trust.loadIfNeeded()
+        try trust.setAllowsPasswordEntry(true)
         let browser = BrowserModel(
             database: .temporary(),
             sitePermissions: SitePermissions(

@@ -8,6 +8,9 @@ import WebKit
 
 @MainActor
 enum PageDriver {
+    @TaskLocal static var refusesFilledSecrets = false
+    static let filledSecretRefusal = "The page contains a protected password or sensitive field."
+
     // MARK: - The page-side runtime
 
     static func scripted(_ body: String) -> String {
@@ -32,7 +35,10 @@ enum PageDriver {
         } else {
             frameCheck = ""
         }
-        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck
+        let secretCheck = refusesFilledSecrets
+            ? "if (R.hasFilledSensitiveField()) return JSON.stringify({error: '\(filledSecretRefusal)'});\n"
+            : ""
+        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck + secretCheck
     }
 
     // MARK: - Reading

@@ -37,9 +37,9 @@ extension MCPBrowserSession {
 
     func requestAccess(development: Bool, developer: Bool = false) async -> CallTool.Result {
         if let scope = agentWindowScope {
-            guard scope.isActive() else { return failure("Access was not granted.") }
+            guard scope.isActive() else { return failure("Access was not granted.", code: .accessDenied) }
             guard scope.isAgentOwned() else {
-                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.")
+                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.", code: .humanControl)
             }
             syncAgentWindowGrants()
             return tabList()
@@ -64,16 +64,16 @@ extension MCPBrowserSession {
             if covered {
                 return tabList()
             }
-            guard !accessWasRequested else { return failure(Self.alreadyRequested) }
+            guard !accessWasRequested else { return failure(Self.alreadyRequested, code: .accessDenied) }
             _ = await consent(clientName, [], development || developer)
-            return failure("No shareable webpage is on screen. WSurf showed the user how to open a webpage. Request access again after they have opened it.")
+            return failure("No shareable webpage is on screen. WSurf showed the user how to open a webpage. Request access again after they have opened it.", code: .pageUnavailable)
         }
         // At most one sheet per connection; later calls only add what a standing grant covers.
-        guard !accessWasRequested else { return covered ? tabList() : failure(Self.alreadyRequested) }
+        guard !accessWasRequested else { return covered ? tabList() : failure(Self.alreadyRequested, code: .accessDenied) }
         accessWasRequested = true
         let granted = await consent(clientName, pages, development || developer)
-        guard isConnected, available(), !Task.isCancelled else { return failure("Access was not granted.") }
-        guard let answer = granted else { return covered ? tabList() : failure("Access was not granted.") }
+        guard isConnected, available(), !Task.isCancelled else { return failure("Access was not granted.", code: .accessDenied) }
+        guard let answer = granted else { return covered ? tabList() : failure("Access was not granted.", code: .accessDenied) }
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
                 !tab.isPrivate, webURL(of: tab) == page.url,
@@ -113,12 +113,12 @@ extension MCPBrowserSession {
     func navigate(_ raw: String, tab: BrowserTab, grant: Grant, inPlace: Bool = false) async -> CallTool.Result {
         if grant.source == .agentWindow, let scope = agentWindowScope {
             guard scope.isActive(), scope.isAgentOwned(), let url = webDestination(raw) else {
-                return failure("Use a valid HTTP(S) URL.")
+                return failure("Use a valid HTTP(S) URL.", code: .invalidInput)
             }
             let origin = SitePermissions.origin(for: url)
             let policy = browser.sitePermissions.assistantRecord(for: origin)
             guard policy != .deny, policy != .ask else {
-                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.")
+                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.", code: .accessDenied)
             }
             rotateDiagnosticsKey(on: tab)
             observations[tab.id] = nil
@@ -129,19 +129,19 @@ extension MCPBrowserSession {
             return success("Navigation started. Use readPage after the page loads.")
         }
         guard let url = permittedDestination(raw, grant: grant) else {
-            return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.")
+            return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.", code: .accessDenied)
         }
         let previousURL = webURL(of: tab)
         let origin = SitePermissions.origin(for: url)
         // A default grant stays a default grant on its own website. A new website joins it only where the default applies.
         let viaDefault = (origin != grant.origin || grant.source == .appDefault) && followsWebsiteDefault(at: url)
         if origin != grant.origin, !followsDeveloperSites(grant, to: url), !viaDefault {
-            guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
+            guard await openConsent(clientName, url) else { return failure("Navigation was not approved.", code: .accessDenied) }
         }
         guard mayProceed(tab, capability: .control), isReachable(tab), webURL(of: tab) == previousURL else {
-            return failure("Page access changed before navigation.")
+            return failure("Page access changed before navigation.", code: .accessDenied)
         }
-        guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
+        guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.", code: .accessDenied) }
 
         let nextGrant: Grant
         if followsDeveloperSites(grant, to: url) {
@@ -155,8 +155,8 @@ extension MCPBrowserSession {
         // Protect user-owned tabs shared via requestAccess: default to opening the destination in a new background tab
         // unless the caller explicitly passed inPlace: true. Tabs this connection opened itself navigate in place.
         if !inPlace, !openedTabs.contains(tab.id) {
-            let engine: BrowserEngine = SitePermissions.webKitOnlyOrigins.contains(origin) ? .webKit : .chromium
-            let opened = openInBackground(url, engine: engine)
+            let engine = defaultTabEngine(for: origin)
+            let opened = openInBackground(url, defaultEngine: engine)
             grants[opened.id] = nextGrant
             keepInWindow(opened)
             let message =
@@ -188,8 +188,7 @@ extension MCPBrowserSession {
 
     /// Opens `raw` in a new background tab behind the user's tab. Works even with no prior tab grants: a standing grant
     /// or the Website access default opens immediately without a sheet; otherwise one consent sheet asks to open and share
-    /// the URL at Control without touching or sharing the user's active tab. Defaults to Chromium unless the origin requires
-    /// WebKit or the caller passes `engine: .webKit`.
+    /// the URL at Control without touching or sharing the user's active tab.
     func openNewTab(_ raw: String, engine: BrowserEngine? = nil) async -> CallTool.Result {
         if let scope = agentWindowScope {
             guard scope.isActive(), scope.isAgentOwned(), isConnected, available(), !Task.isCancelled,
@@ -200,57 +199,54 @@ extension MCPBrowserSession {
             let origin = SitePermissions.origin(for: url)
             let policy = browser.sitePermissions.assistantRecord(for: origin)
             guard policy != .deny, policy != .ask else {
-                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.")
+                return failure(policy == .ask ? "This website requires asking before assistant control." : "Assistant access is off for this website.", code: .accessDenied)
             }
             if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
-                return failure("This website requires WebKit and cannot open in Chromium.")
+                return failure("This website requires WebKit and cannot open in Chromium.", code: .webKitRequired)
             }
-            let tab = openInBackground(url, engine: engine)
+            let resolvedEngine = engine ?? defaultTabEngine(for: origin, fallback: browser.agentCompanion?.defaultEngine ?? .chromium)
+            let tab = openInBackground(url, engine: engine, defaultEngine: resolvedEngine)
             grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
             keepInWindow(tab)
             let effectiveEngine = tab.preferredEngine(for: url)
             return success("Opened tab \(tab.id.uuidString) in the Agent Micro Window. It runs in \(String(localized: effectiveEngine.label)). Use readPage after it loads.")
         }
         guard let destination = webDestination(raw) else {
-            return failure("Opening a tab requires a full HTTP(S) URL.")
+            return failure("Opening a tab requires a full HTTP(S) URL.", code: .invalidInput)
         }
         let origin = SitePermissions.origin(for: destination)
-        let resolvedEngine: BrowserEngine
-        if SitePermissions.webKitOnlyOrigins.contains(origin) {
-            if engine == .chromium {
-                return failure("This website requires WebKit and cannot be opened in Chromium.")
-            }
-            resolvedEngine = .webKit
-        } else {
-            resolvedEngine = engine ?? .chromium
+        if engine == .chromium, SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return failure("This website requires WebKit and cannot be opened in Chromium.", code: .webKitRequired)
         }
 
         if let access = standingAccess(at: destination) {
-            guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.") }
+            guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.", code: .accessDenied) }
             guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-                return failure("Assistant access is off for this website.")
+                return failure("Assistant access is off for this website.", code: .accessDenied)
             }
-            let tab = openInBackground(destination, engine: resolvedEngine)
+            let resolvedEngine = engine ?? defaultTabEngine(for: origin)
+            let tab = openInBackground(destination, engine: engine, defaultEngine: resolvedEngine)
             grants[tab.id] = Grant(origin: origin, access: access, source: .standing)
             keepInWindow(tab)
             return openedTabResult(tab, url: destination, engine: resolvedEngine)
         }
 
         guard let url = permittedDestination(raw) else {
-            return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.")
+            return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.", code: .accessDenied)
         }
         guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-            return failure("Assistant access is off for this website.")
+            return failure("Assistant access is off for this website.", code: .accessDenied)
         }
         let viaDefault = followsWebsiteDefault(at: url)
         let approved = viaDefault ? true : await openConsent(clientName, url)
         guard approved, isConnected, available(), !Task.isCancelled else {
-            return failure("Opening the page was not approved.")
+            return failure("Opening the page was not approved.", code: .accessDenied)
         }
         guard browser.sitePermissions.assistantRecord(for: origin) != .deny else {
-            return failure("Assistant access is off for this website.")
+            return failure("Assistant access is off for this website.", code: .accessDenied)
         }
-        let tab = openInBackground(url, engine: resolvedEngine)
+        let resolvedEngine = engine ?? defaultTabEngine(for: origin)
+        let tab = openInBackground(url, engine: engine, defaultEngine: resolvedEngine)
         grants[tab.id] = Grant(origin: origin, access: .control, source: viaDefault ? .appDefault : .sheet)
         keepInWindow(tab)
         return openedTabResult(tab, url: url, engine: resolvedEngine)
@@ -274,10 +270,19 @@ extension MCPBrowserSession {
 
     /// A tab this connection opens: it never takes the place of the person's tab. In a window with no tab there is nothing to
     /// replace, so it becomes the tab the window shows.
-    private func openInBackground(_ url: URL, engine: BrowserEngine?) -> BrowserTab {
-        let tab = browser.newTab(url: url, activate: browser.activeTab == nil, transition: .agent, engine: engine)
+    private func openInBackground(_ url: URL, engine: BrowserEngine? = nil, defaultEngine: BrowserEngine? = nil) -> BrowserTab {
+        let tab = browser.newTab(
+            url: url, activate: browser.activeTab == nil, transition: .agent, engine: engine, defaultEngine: defaultEngine)
         openedTabs.insert(tab.id)
+        attributeAgentTab(tab)
         return tab
+    }
+
+    private func defaultTabEngine(for origin: String, fallback: BrowserEngine = .chromium) -> BrowserEngine {
+        if SitePermissions.webKitOnlyOrigins.contains(origin) {
+            return .webKit
+        }
+        return livePairedClient?.policy.defaultEngine.engine ?? fallback
     }
 
     // MARK: Comparing engines
@@ -304,13 +309,16 @@ extension MCPBrowserSession {
     /// not brought to the front. A pair this connection opened before is loaded again when the website is the same, and closed
     /// when it is not, so a connection keeps at most one pair.
     func openComparison(_ raw: String) async -> CallTool.Result {
-        guard let url = webDestination(raw) else { return failure("Use a full HTTP(S) URL.") }
+        guard let url = webDestination(raw) else { return failure("Use a full HTTP(S) URL.", code: .invalidInput) }
+        guard !SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else {
+            return failure("This website requires WebKit and cannot be opened in Chromium.", code: .webKitRequired)
+        }
         guard let grant = comparisonGrant(for: url) else {
             return failure(
                 "Comparing engines needs development access to this website. Share a page of it with requestAccess (development set), or use a developer site.")
         }
-        guard isConnected, available(), !Task.isCancelled else { return failure("Opening the pages was not approved.") }
-        guard browser.sitePermissions.assistantAccess(for: grant.origin) != .deny else { return failure("Assistant access is off for this website.") }
+        guard isConnected, available(), !Task.isCancelled else { return failure("Opening the pages was not approved.", code: .accessDenied) }
+        guard browser.sitePermissions.assistantAccess(for: grant.origin) != .deny else { return failure("Assistant access is off for this website.", code: .accessDenied) }
         if let comparison, let webKit = comparisonTab(comparison.webKit, for: grant), let chromium = comparisonTab(comparison.chromium, for: grant) {
             for tab in [webKit, chromium] {
                 observations[tab.id] = nil
@@ -338,6 +346,7 @@ extension MCPBrowserSession {
     /// development tools on it, and no other connection holds its lease. Anything else is not reused: the pair is replaced.
     private func comparisonTab(_ tabID: UUID, for grant: Grant) -> BrowserTab? {
         guard let tab = sharedTab(tabID), grants[tabID]?.origin == grant.origin, permits(tab, capability: .development),
+            browser.agentTabOrigin(for: tab)?.sessionID == id,
             tab.developmentRelation(of: id) != .other
         else { return nil }
         return tab
@@ -352,12 +361,14 @@ extension MCPBrowserSession {
         return CallTool.Result(content: [.text(text: encoded(value), annotations: nil, _meta: nil)], structuredContent: Optional.some(value), isError: false)
     }
 
-    /// Closes the pair this connection opened, unless the user pinned a tab of it. It leaves nothing to reopen.
+    /// Closes only the window-local tabs still attributed to this connection. It leaves nothing to reopen.
     private func closeComparison() {
         guard let comparison else { return }
         self.comparison = nil
         for id in [comparison.webKit, comparison.chromium] {
-            guard let tab = browser.tabs.first(where: { $0.id == id }), !tab.isPinnedForProfile else { continue }
+            guard let tab = browser.tabs.first(where: { $0.id == id }),
+                  browser.agentTabOrigin(for: tab)?.sessionID == self.id
+            else { continue }
             browser.close(tab, recordForReopening: false)
             grants[id] = nil
             observations[id] = nil
@@ -459,19 +470,23 @@ extension MCPBrowserSession {
         case .appDefault:
             return followsWebsiteDefault(at: url) ? grant.access : nil
         case .agentWindow:
-            guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned(),
-                  let client = livePairedClient, !client.paused
-            else { return nil }
-            switch grant.access {
-            case .developer:
-                guard client.standing == .developer else { return nil }
-                return developerTierHolds(at: url) ? .developer : .development
-            case .development:
-                guard client.standing == .development || client.standing == .developer else { return nil }
-                return .development
-            case .control, .readOnly:
-                return grant.access
-            }
+            guard let scope = agentWindowScope, scope.isActive(), scope.isAgentOwned() else { return nil }
+            return agentWindowAccess(grant.access, at: url)
+        }
+    }
+
+    /// The live trust and tier checks shared with the host bridge's read-only snapshot during Take Over.
+    func agentWindowAccess(_ access: MCPAccessConsent.Access, at url: URL) -> MCPAccessConsent.Access? {
+        guard let client = livePairedClient, !client.paused else { return nil }
+        switch access {
+        case .developer:
+            guard client.standing == .developer else { return nil }
+            return developerTierHolds(at: url) ? .developer : .development
+        case .development:
+            guard client.standing == .development || client.standing == .developer else { return nil }
+            return .development
+        case .control, .readOnly:
+            return access
         }
     }
 
@@ -491,8 +506,8 @@ extension MCPBrowserSession {
         let stillHolds = { [self] in
             isConnected && available() && !Task.isCancelled && webURL(of: tab) == url && grants[tab.id]?.source == .appDefault
         }
-        guard stillHolds() else { return failure("Page access changed. Read the page again.") }
-        guard await sensitiveConsent(clientName, url), stillHolds() else { return failure("Using this page was not approved.") }
+        guard stillHolds() else { return failure("Page access changed. Read the page again.", code: .accessDenied) }
+        guard await sensitiveConsent(clientName, url), stillHolds() else { return failure("Using this page was not approved.", code: .accessDenied) }
         grants[tab.id] = Grant(origin: grant.origin, access: grant.access)
         return nil
     }

@@ -50,7 +50,7 @@ extension AppCoordinator {
         openInitialURLs(urls, openerSignIn: openerSignIn)
         // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
         if browser.activeTabID == nil {
-            browser.newTab()
+            browser.newTab(transition: isAgentMicro ? .agent : .typed)
         }
         retainAgentMemory()
         timing.mark("session")

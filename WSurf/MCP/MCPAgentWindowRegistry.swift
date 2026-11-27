@@ -219,13 +219,18 @@ final class MCPAgentWindowRegistry {
         guard !threadId.isEmpty else {
             throw MCPAgentWindowError(.invalidParams, "threadId cannot be empty.")
         }
+        let existing = record(pairedClientId: pairedClientId, threadId: threadId)
+        if let existing, existing.lockedByHumanTakeOver || existing.coordinator?.browser.agentCompanion?.owner == .human {
+            throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+        }
         let title = (params["title"] as? String).map { MCPAgentBridgeProtocol.cleanText($0, maxLength: 120) }
-        let requestedEngine = try parseEngine(params["engine"], defaultEngine: .chromium)
+        let defaultEngine = trustStore.client(id: pairedClientId)?.policy.defaultEngine.engine ?? .chromium
+        let requestedEngine = try parseEngine(params["engine"], defaultEngine: defaultEngine)
         let explicitEngine = params["engine"] != nil
         let access = try parseAccess(params["access"])
         try validateRequestedAccess(access, for: pairedClientId)
         let floatOnTop = params["floatOnTop"] as? Bool
-        let open = params["open"] as? Bool ?? false
+        let open = params["open"] as? Bool ?? true
         let reuseExisting = params["reuseExistingTab"] as? Bool ?? true
         let requestedURL = try parseOptionalURL(params["url"])
 
@@ -234,7 +239,7 @@ final class MCPAgentWindowRegistry {
             throw MCPAgentWindowError(.unsupported, "This origin requires WebKit and cannot open in Chromium.")
         }
 
-        if let existing = record(pairedClientId: pairedClientId, threadId: threadId),
+        if let existing,
            let coordinator = existing.coordinator,
            !coordinator.isClosed {
             let options = ReuseOptions(
@@ -290,7 +295,7 @@ final class MCPAgentWindowRegistry {
         records[record.windowId] = record
         let tab = coordinator.browser.activeTab ?? coordinator.browser.newTab(url: requestedURL, transition: .agent)
         configureTabEngine(tab, requested: requestedEngine, url: requestedURL)
-        ensurePreviewSession(for: record)
+        ensurePreviewSession(for: record)?.attributeAgentTab(tab)
         if open {
             showAgentWindow(coordinator)
         }
@@ -551,6 +556,7 @@ final class MCPAgentWindowRegistry {
             "threadId": record.threadId,
             "generation": companion?.generation ?? 1,
             "owner": (companion?.owner ?? .agent).rawValue,
+            "visible": isWindowVisible(coordinator),
             "engine": effectiveEngine(of: tab).rawValue,
             "url": tab.urlString,
             "title": tab.title,
@@ -586,6 +592,11 @@ final class MCPAgentWindowRegistry {
             return loaded
         }
         return tab.preferredEngine(for: URL(string: tab.urlString))
+    }
+
+    func isWindowVisible(_ coordinator: AppCoordinator) -> Bool {
+        guard let window = coordinator.nativeWindow else { return false }
+        return window.isVisible && !window.isMiniaturized
     }
 
     func configureTabEngine(_ tab: BrowserTab, requested: BrowserEngine, url: URL?) {
@@ -646,6 +657,7 @@ final class MCPAgentWindowRegistry {
             }
             throw MCPAgentWindowError(.denied, "Window is unclaimed and not owned by the agent.")
         }
+        let generation = coordinator.browser.agentCompanion?.generation
         if let url = options.url {
             try ensureDestinationAllowed(url, permissions: coordinator.browser.sitePermissions)
         }
@@ -658,13 +670,17 @@ final class MCPAgentWindowRegistry {
         }
         let tab: BrowserTab
         if !options.reuseExisting {
-            tab = coordinator.browser.newTab(url: options.url, activate: true, transition: .agent)
-            configureTabEngine(tab, requested: options.engine, url: options.url)
+            tab = coordinator.browser.newTab(url: options.url, transition: .agent, defaultEngine: options.engine)
+            ensurePreviewSession(for: record)?.attributeAgentTab(tab)
             notifyTabsChanged(for: coordinator.browser)
         } else {
             tab = coordinator.browser.activeTab
                 ?? coordinator.browser.tabs.first
-                ?? coordinator.browser.newTab(url: options.url, activate: true, transition: .agent)
+                ?? {
+                    let opened = coordinator.browser.newTab(transition: .agent, defaultEngine: options.engine)
+                    ensurePreviewSession(for: record)?.attributeAgentTab(opened)
+                    return opened
+                }()
             if options.explicitEngine || options.url != nil {
                 try ensureSiteWritable(tab: tab, browser: coordinator.browser)
             }
@@ -676,6 +692,12 @@ final class MCPAgentWindowRegistry {
                 configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
                 if tab.isMaterialised {
                     _ = await tab.switchEngine(to: options.engine)
+                    if coordinator.browser.agentCompanion?.owner == .human {
+                        throw MCPAgentWindowError(.humanControl, "Window is under human control.")
+                    }
+                    guard isActiveRecord(record), coordinator.browser.agentCompanion?.generation == generation else {
+                        throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
+                    }
                 }
             }
             if let url = options.url {

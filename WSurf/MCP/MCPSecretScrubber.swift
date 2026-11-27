@@ -216,8 +216,16 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             guard case .text(let text, let annotations, let meta) = block else { return block }
             return .text(text: Self.scrub(text, needles: needles), annotations: annotations, _meta: meta)
         }
+        let structured = result.structuredContent.map { value -> Value in
+            // A protocol code comes from WSurf's fixed vocabulary. Scrub every other field, including dynamic keys.
+            guard let fields = value.objectValue, let code = fields["code"]?.stringValue.flatMap(MCPFailureCode.init(rawValue:)),
+                  var redacted = Self.scrub(.object(fields.filter { $0.key != "code" }), needles: needles).objectValue
+            else { return Self.scrub(value, needles: needles) }
+            redacted["code"] = code.value
+            return .object(redacted)
+        }
         return CallTool.Result(
-            content: content, structuredContent: result.structuredContent.map { Self.scrub($0, needles: needles) },
+            content: content, structuredContent: structured,
             isError: result.isError, _meta: result._meta)
     }
 

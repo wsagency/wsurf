@@ -157,7 +157,7 @@ extension MCPBrowserSession {
         let viewportOnly = name == "scrollPage" && arguments["ref"] == nil
         let key = DigestCacheEntry.Key(
             generation: tab.pageGeneration, viewportOnly: viewportOnly,
-            tainted: credentialTaintedDocuments[tab.id].map { $0.commitEpoch == tab.documentCommitEpoch } ?? false)
+            tainted: tab.isMCPCredentialTainted)
         let cached = digestCache[tab.id].flatMap { $0.key == key ? $0.digest : nil }
         digestCache[tab.id] = nil
         guard let before = await PageDriver.digestBefore(in: view, viewportOnly: viewportOnly, cached: cached) else { return nil }
@@ -182,7 +182,7 @@ extension MCPBrowserSession {
         }
         guard reading.validate(), !Task.isCancelled else {
             observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.")
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         let status = output.trimmingCharacters(in: .whitespacesAndNewlines)
         let target = arguments["ref"]?.intValue ?? arguments["fields"]?.arrayValue?.first?.objectValue?["ref"]?.intValue
@@ -204,7 +204,7 @@ extension MCPBrowserSession {
         }
         guard reading.validate(), !Task.isCancelled else {
             observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.")
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         var effect = ActionEffect.make(action: name, status: status, before: before, after: after, viewportOnly: viewportOnly)
         let changes = await watch.changes()
@@ -216,7 +216,7 @@ extension MCPBrowserSession {
         let reply = feedbackReply(name: name, tab: tab, effect: effect, budget: budget, settle: meter.elapsed, started: started, ok: true, image: nil)
         guard reading.validate(), !Task.isCancelled else {
             observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.")
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         let seen = reply.refs.compactMap { ref -> (ref: Int, hash: Int)? in
             guard let control = after.controls.first(where: { $0.ref == ref }), control.signature != 0 else { return nil }
@@ -225,7 +225,7 @@ extension MCPBrowserSession {
         await PageDriver.acknowledge(seen, in: view, validate: reading.validate)
         guard reading.validate(), !Task.isCancelled else {
             observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.")
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         PageDriver.adopt(after, listed: reply.refs, in: view)
         observations[tab.id] = PageObservation(id: after.snapshot, snapshot: after.snapshot, documentURL: after.url)
@@ -293,6 +293,7 @@ extension MCPBrowserSession {
                 "tabID": .string(tab.id.uuidString), "status": .string(ok ? "ok" : "failed"), "action": .string(name),
                 "content": .string(AgentToolkit.untrusted(text)), "cost": .object(cost),
             ]
+            if !ok { fields["code"] = MCPFailureCode.actionFailed.value }
             fields["navigation"] = .string(effect.navigation.rawValue)
             if effect.navigation != .none, let url = effect.url, PageOutputBudget.cost(url) <= 512 { fields["url"] = .string(url) }
             if let id = effect.observationID, ok { fields["observationID"] = .string(id) }

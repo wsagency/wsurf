@@ -57,13 +57,22 @@ extension MCPAgentWindowRegistry {
         if operation == "status" {
             return previewStatus(record: record, coordinator: coordinator, tab: tab)
         }
+        if operation == "close" {
+            return try previewClose(record: record, coordinator: coordinator, tab: tab)
+        }
         guard let session = ensurePreviewSession(for: record) else {
             throw MCPAgentWindowError(.internalError, "Could not bind preview session.")
         }
-        session.syncAgentWindowGrants()
-
         let generation = coordinator.browser.agentCompanion?.generation ?? 1
-        return try await runCancellablePreview(in: record, coordinator: coordinator, expectedGeneration: generation) {
+        let owner = coordinator.browser.agentCompanion?.owner ?? .agent
+        if operation == "snapshot" {
+            return try await runCancellablePreview(in: record, coordinator: coordinator, expectedGeneration: generation, owner: owner) {
+                try await self.previewSnapshot(
+                    opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session, owner: owner)
+            }
+        }
+        session.syncAgentWindowGrants()
+        return try await runCancellablePreview(in: record, coordinator: coordinator, expectedGeneration: generation, owner: .agent) {
             try await self.dispatchPreviewOperation(
                 operation: operation,
                 opParams: opParams,
@@ -93,7 +102,7 @@ extension MCPAgentWindowRegistry {
         }
     }
 
-    private static func activeWebURL(of tab: BrowserTab) -> URL? {
+    static func activeWebURL(of tab: BrowserTab) -> URL? {
         for candidate in [tab.liveView?.url, URL(string: tab.urlString)].compactMap({ $0 }) {
             if let scheme = candidate.scheme?.lowercased(), scheme == "http" || scheme == "https" {
                 return candidate
@@ -166,7 +175,8 @@ extension MCPAgentWindowRegistry {
         guard let companion = resolved.1.browser.agentCompanion else {
             throw MCPAgentWindowError(.notFound, "Agent session is no longer active.")
         }
-        if operation != "status", companion.owner != .agent {
+        let canRead = operation == "status" || (operation == "snapshot" && companion.owner == .human)
+        if !canRead, companion.owner != .agent {
             if companion.owner == .human {
                 throw MCPAgentWindowError(.humanControl, "Tab is under human control.")
             }
@@ -186,13 +196,18 @@ extension MCPAgentWindowRegistry {
         in record: Record,
         coordinator: AppCoordinator,
         expectedGeneration: Int,
+        owner: AgentWindowOwner,
         body: @escaping @MainActor () async throws -> [String: Any]
     ) async throws -> [String: Any] {
-        let workToken = beginWorking(for: record)
-        defer { endWorking(workToken, for: record) }
+        let workToken = owner == .agent ? beginWorking(for: record) : nil
+        defer { if let workToken { endWorking(workToken, for: record) } }
 
         let task = Task<Result<PreviewPayloadBox, any Error>, Never> { @MainActor in
             do {
+                guard !Task.isCancelled else { throw CancellationError() }
+                guard coordinator.browser.agentCompanion?.generation == expectedGeneration else {
+                    throw MCPAgentWindowError(.staleGeneration, "Window ownership changed before the operation ran.")
+                }
                 return .success(PreviewPayloadBox(value: try await body()))
             } catch {
                 return .failure(error)
@@ -214,21 +229,25 @@ extension MCPAgentWindowRegistry {
             task.cancel()
             cancelWrapper.cancel()
         }
-        if Task.isCancelled {
-            if coordinator.browser.agentCompanion?.owner == .human {
+        if Task.isCancelled || task.isCancelled || !isActiveRecord(record) {
+            if owner == .agent, coordinator.browser.agentCompanion?.owner == .human {
                 throw MCPAgentWindowError(.humanControl, "Operation interrupted by human Take Over.")
             }
             throw MCPAgentWindowError(.cancelled, "Operation was cancelled.")
         }
-        if let companion = coordinator.browser.agentCompanion,
-           companion.owner != .agent {
+        guard let companion = coordinator.browser.agentCompanion else {
+            throw MCPAgentWindowError(.notFound, "Agent session is no longer active.")
+        }
+        if companion.owner != owner {
             if companion.owner == .human {
                 throw MCPAgentWindowError(.humanControl, "Operation interrupted by human Take Over.")
             }
-            throw MCPAgentWindowError(.denied, "Window ownership changed to unclaimed while running.")
+            if companion.owner == .unclaimed {
+                throw MCPAgentWindowError(.denied, "Window ownership changed to unclaimed while running.")
+            }
+            throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
         }
-        if let companion = coordinator.browser.agentCompanion,
-           companion.generation != expectedGeneration {
+        if companion.generation != expectedGeneration {
             throw MCPAgentWindowError(.staleGeneration, "Window ownership generation changed while running.")
         }
         switch outcome {
@@ -253,8 +272,6 @@ extension MCPAgentWindowRegistry {
         switch operation {
         case "navigate":
             return try await previewNavigate(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
-        case "snapshot":
-            return try await previewSnapshot(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
         case "act":
             return try await previewAct(opParams: opParams, coordinator: coordinator, tab: tab, session: session)
         case "evaluate":
@@ -276,8 +293,6 @@ extension MCPAgentWindowRegistry {
             return try await previewDialog(opParams: opParams, coordinator: coordinator, tab: tab, session: session)
         case "set_engine":
             return try await previewSetEngine(opParams: opParams, record: record, coordinator: coordinator, tab: tab, session: session)
-        case "close":
-            return try previewClose(record: record, coordinator: coordinator, tab: tab)
         default:
             throw MCPAgentWindowError(.unknownOperation, "Unsupported preview operation: \(operation).")
         }
@@ -296,6 +311,7 @@ extension MCPAgentWindowRegistry {
             "title": tab.title,
             "loading": tab.isLoading,
             "owner": (companion?.owner ?? .agent).rawValue,
+            "visible": isWindowVisible(coordinator),
             "generation": companion?.generation ?? 1,
             "engine": effectiveEngine(of: tab).rawValue,
             "viewport": [
@@ -356,79 +372,6 @@ extension MCPAgentWindowRegistry {
             "engine": effectiveEngine(of: tab).rawValue,
             "generation": coordinator.browser.agentCompanion?.generation ?? 1,
         ]
-    }
-
-    private func previewSnapshot(
-        opParams: [String: Any],
-        record: Record,
-        coordinator: AppCoordinator,
-        tab: BrowserTab,
-        session: MCPBrowserSession
-    ) async throws -> [String: Any] {
-        if let url = Self.activeWebURL(of: tab) {
-            tab.assistantAccess.pageChanged(url: url)
-            let policy = tab.assistantAccess.explicitPolicy ?? coordinator.browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url))
-            if policy == .deny {
-                throw MCPAgentWindowError(.forbidden, "Assistant access is off for this website.")
-            }
-            if policy == .ask {
-                throw MCPAgentWindowError(.denied, "This website explicitly requires asking before assistant access.")
-            }
-        }
-        session.keepInWindow(tab)
-        session.syncAgentWindowGrants()
-        var readArgs: [String: Value] = ["tabID": .string(tab.id.uuidString)]
-        if let scope = opParams["scope"] as? String, !scope.isEmpty {
-            readArgs["scope"] = .string(scope)
-        }
-        let pageResult = try await session.call(name: "readPage", arguments: readArgs)
-        if pageResult.isError == true {
-            throw MCPAgentWindowError(.actionFailed, Self.extractText(from: pageResult))
-        }
-        var a11yArgs: [String: Value] = ["tabID": .string(tab.id.uuidString)]
-        if let offset = opParams["offset"] as? Int {
-            a11yArgs["offset"] = .int(offset)
-        }
-        if let scope = opParams["scope"] as? String, !scope.isEmpty {
-            a11yArgs["scope"] = .string(scope)
-        }
-        let a11yResult = try await session.call(name: "readAccessibility", arguments: a11yArgs)
-        let viewportSize = tab.liveView?.bounds.size ?? coordinator.nativeWindow?.contentLayoutRect.size ?? MicroWindowMetrics.defaultSize
-        let pageObject = pageResult.structuredContent?.objectValue ?? [:]
-        var response: [String: Any] = [
-            "tabId": tab.id.uuidString,
-            "url": tab.urlString,
-            "title": tab.title,
-            "engine": effectiveEngine(of: tab).rawValue,
-            "owner": (coordinator.browser.agentCompanion?.owner ?? .agent).rawValue,
-            "generation": coordinator.browser.agentCompanion?.generation ?? 1,
-            "page": pageObject["content"]?.stringValue ?? Self.extractText(from: pageResult),
-            "accessibilityTree": a11yResult.structuredContent?.objectValue?["content"]?.stringValue ?? Self.extractText(from: a11yResult),
-            "viewport": [
-                "width": Int(viewportSize.width.rounded()),
-                "height": Int(viewportSize.height.rounded()),
-            ],
-        ]
-        if let observationID = pageObject["observationID"]?.stringValue ?? session.observations[tab.id]?.id {
-            response["observationId"] = observationID
-        }
-        if opParams["includeImage"] as? Bool == true {
-            var shotArgs: [String: Value] = ["tabID": .string(tab.id.uuidString)]
-            if let maxWidth = opParams["maxWidth"] as? Int {
-                shotArgs["maxWidth"] = .int(maxWidth)
-            }
-            let shotResult = try await session.call(name: "screenshotPage", arguments: shotArgs)
-            if shotResult.isError != true {
-                for block in shotResult.content {
-                    if case .image(let data, let mimeType, _, _) = block {
-                        response["imageBase64"] = data
-                        response["imageMimeType"] = mimeType
-                        break
-                    }
-                }
-            }
-        }
-        return response
     }
 
     private func previewAct(
@@ -982,7 +925,7 @@ extension MCPAgentWindowRegistry {
         return dx < 0 ? "left" : "right"
     }
 
-    private nonisolated static func extractText(from result: CallTool.Result) -> String {
+    nonisolated static func extractText(from result: CallTool.Result) -> String {
         result.content.compactMap { block -> String? in
             if case .text(let text, _, _) = block {
                 return text

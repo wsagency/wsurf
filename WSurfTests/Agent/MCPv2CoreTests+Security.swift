@@ -322,7 +322,7 @@ extension MCPv2CoreTests {
 
             // Querying with an unrelated documentID must be a pure read and MUST NOT clear taint.
             #expect(!session.isMainDocumentCredentialTainted(tab: rig.owner, mainDocumentID: "unrelated-doc"))
-            #expect(session.credentialTaintedDocuments[rig.owner.id] != nil)
+            #expect(rig.owner.isMCPCredentialTainted)
 
             // SPA history.pushState and hash changes keep the same documentCommitEpoch -> taint survives!
             _ = try await rig.owner.page.evaluateJavaScript("history.pushState(null, '', '/login?step=2'); location.hash = '#verify'; 0")
@@ -331,7 +331,7 @@ extension MCPv2CoreTests {
             #expect(denied.isError == true && denied.structuredContent?.objectValue?["code"]?.stringValue == "protectedSecretPresent")
 
             // Conservative nil document ID handling: stays tainted for current commit epoch even when both IDs are nil.
-            session.markCredentialTainted(tab: rig.owner, runtimeDocumentID: nil, mainDocumentID: nil)
+            session.markCredentialTainted(tab: rig.owner, mainDocumentID: nil)
             #expect(session.isMainDocumentCredentialTainted(tab: rig.owner, mainDocumentID: rig.owner.page.mainDocumentID ?? "any"))
             #expect(await session.isDocumentCredentialProtected(tab: rig.owner, view: rig.owner.page))
 
@@ -339,7 +339,7 @@ extension MCPv2CoreTests {
             let dashURL = try rig.server.url("/dashboard")
             _ = try await call(session, "navigate", tab: rig.owner, ["url": .string(dashURL.absoluteString), "inPlace": true])
             try #require(await waitUntil { rig.owner.page.url == dashURL && !rig.owner.page.isLoading && rig.owner.page.mainDocumentID != nil })
-            #expect(session.credentialTaintedDocuments[rig.owner.id] == nil)
+            #expect(!rig.owner.isMCPCredentialTainted)
             #expect(try await call(session, "evaluateScript", tab: rig.owner, ["source": "document.title"]).isError == false)
         }
     }

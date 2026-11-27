@@ -18,7 +18,7 @@ Use violet for the person’s actions on the website. Use mint to identify the a
 - Use the current US English menu and Settings labels. Show one observable action and result per example.
 - “Fully private. Fully yours.” is the homepage line. Explain the choices alongside it. A local model can process a request on the Mac. A selected external provider receives the request and the content included with it. iCloud sync is an explicit choice for each supported category.
 - A joined shared Space can reflect opening and closing tabs on another Mac. Cookies belong to the local browsing session. A Space can use a chosen credential vault with separate sign-ins. Use synthetic names and addresses in examples.
-- A connected MCP client requests access to webpages. Keep each client’s grants, the selected tab and the person taking over visible in walkthroughs. Verify the operation against the [MCP reference](https://github.com/wsagency/wsurf/blob/main/MCP.md).
+- A connected MCP client requests access to webpages. Keep each client’s grants, the selected tab and the person taking over visible in walkthroughs. Use Connected apps for per-client policy and the tab context menu for the originating client and Close agent tabs. Verify the operation against the [MCP reference](https://github.com/wsagency/wsurf/blob/main/MCP.md).
 - For performance, describe the implemented action, such as unloading an eligible inactive tab while retaining its link. A numerical or competitive claim needs an attributable measurement with a reproducible scenario, versions and hardware.
 - Use stage data or label a reenactment as an illustrated walkthrough. Supply a still, a text description and playback controls for product films. Preserve the system’s reduced-motion preference.
 

@@ -46,6 +46,10 @@ struct ConnectedAppsPage: View {
                         client: client, caption: caption(for: client),
                         setStanding: { standing in change { try store.setStanding(standing, for: client.id) } },
                         setPaused: { paused in change { try store.setPaused(paused, for: client.id) } },
+                        passwordEntryAvailable: store.allowsPasswordEntry,
+                        setPasswordEntry: { allowed in change { try store.setClientPolicy(\.allowsPasswordEntry, to: allowed, for: client.id) } },
+                        setVaultFill: { allowed in change { try store.setClientPolicy(\.allowsVaultFill, to: allowed, for: client.id) } },
+                        setEngine: { engine in change { try store.setClientPolicy(\.defaultEngine, to: engine, for: client.id) } },
                         revoke: { revoking = client }
                     )
                 }
@@ -116,8 +120,12 @@ struct ConnectedAppsPage: View {
 private struct ConnectedAppRow: View {
     let client: PairedClient
     let caption: String
-    let setStanding: (PairedClient.Standing) -> Void
+    let setStanding: @MainActor @Sendable (PairedClient.Standing) -> Void
     let setPaused: (Bool) -> Void
+    let passwordEntryAvailable: Bool
+    let setPasswordEntry: @MainActor @Sendable (Bool) -> Void
+    let setVaultFill: @MainActor @Sendable (Bool) -> Void
+    let setEngine: @MainActor @Sendable (PairedClient.DefaultEngine) -> Void
     let revoke: () -> Void
 
     var body: some View {
@@ -143,6 +151,29 @@ private struct ConnectedAppRow: View {
 
                 SettingsButton(title: "Revoke…", isDestructive: true, action: revoke)
             }
+        }
+        RowSeparator()
+        DetailRow(
+            title: "Allow password entry",
+            caption: "Allow this app to type passwords and one-time codes you give it."
+        ) {
+            SettingsToggle(Binding(get: { client.policy.allowsPasswordEntry }, set: setPasswordEntry))
+                .disabled(!passwordEntryAvailable)
+        }
+        RowSeparator()
+        DetailRow(title: "Allow Vault login requests", caption: "WSurf asks you before filling a saved login.") {
+            SettingsToggle(Binding(get: { client.policy.allowsVaultFill }, set: setVaultFill))
+        }
+        RowSeparator()
+        DetailRow(title: "Default engine for new tabs", caption: "Sites that require WebKit still open in WebKit.") {
+            SettingsMenu(
+                options: [
+                    .init(value: .followDefault, label: String(localized: "Follow default")),
+                    .init(value: .chromium, label: String(localized: "Chromium")),
+                    .init(value: .webKit, label: String(localized: "WebKit")),
+                ],
+                selection: Binding(get: { client.policy.defaultEngine }, set: setEngine)
+            )
         }
     }
 }
@@ -175,7 +206,7 @@ private struct WebsiteDefaultSection: View {
                 title: "Allow password entry",
                 caption: """
                     Connected apps with Control access can type passwords and one-time codes you give them. \
-                    Typed values are scrubbed from results and covered in screenshots; saved Vault passwords still ask first.
+                    Paired apps also need permission in their own settings. WSurf hides typed values from results and covers them in screenshots.
                     """
             ) {
                 SettingsToggle(Binding(

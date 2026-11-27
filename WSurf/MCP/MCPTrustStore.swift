@@ -12,6 +12,27 @@ nonisolated struct PairedClient: Codable, Identifiable, Sendable, Equatable {
         case off, development, developer
     }
 
+    nonisolated enum DefaultEngine: String, Codable, Sendable {
+        case followDefault, chromium, webKit
+
+        var engine: BrowserEngine? {
+            switch self {
+            case .followDefault:
+                nil
+            case .chromium:
+                .chromium
+            case .webKit:
+                .webKit
+            }
+        }
+    }
+
+    nonisolated struct Policy: Codable, Sendable, Equatable {
+        var allowsPasswordEntry = false
+        var allowsVaultFill = true
+        var defaultEngine = DefaultEngine.followDefault
+    }
+
     let id: UUID
     var name: String
     /// `MCPClientKind.rawValue`, or nil for a client set up with Copy Configuration.
@@ -21,6 +42,13 @@ nonisolated struct PairedClient: Codable, Identifiable, Sendable, Equatable {
     var lastUsed: Date?
     var standing = Standing.off
     var paused = false
+    // Optional on disk so older Keychain documents open without a migration write.
+    var storedPolicy: Policy?
+
+    var policy: Policy {
+        get { storedPolicy ?? Policy() }
+        set { storedPolicy = newValue }
+    }
 
     var kind: MCPClientKind? {
         kindID.flatMap(MCPClientKind.init(rawValue:))
@@ -113,8 +141,8 @@ final class MCPTrustStore {
         /// lower what apps get from it.
         var appsDefaultLevel = AssistantAccessPolicy.ask
         /// Whether connected apps with Control access may type into password and one-time-code fields (automatically scrubbed
-        /// and screenshot-masked). Defaults to true; stored in the keychain so a shell process cannot re-enable it when turned off.
-        var allowsPasswordEntry = true
+        /// and screenshot-masked). Stored in the keychain so a shell process cannot re-enable it when turned off.
+        var allowsPasswordEntry = false
 
         init() {}
 
@@ -129,7 +157,7 @@ final class MCPTrustStore {
             appsFollowDefault = try values.decodeIfPresent(Bool.self, forKey: .appsFollowDefault) ?? false
             // A level this build does not know reads as Ask rather than making the whole document unreadable.
             appsDefaultLevel = Self.defaultLevel(try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .appsDefaultLevel))
-            allowsPasswordEntry = try values.decodeIfPresent(Bool.self, forKey: .allowsPasswordEntry) ?? true
+            allowsPasswordEntry = try values.decodeIfPresent(Bool.self, forKey: .allowsPasswordEntry) ?? false
         }
 
         /// No Access is a choice for one website, never for the default, so it is stored as Ask.
@@ -161,7 +189,7 @@ final class MCPTrustStore {
     private(set) var dedicatedProfileID: UUID?
     private(set) var appsFollowDefault = false
     private(set) var appsDefaultLevel = AssistantAccessPolicy.ask
-    /// Fails closed (`false`) until a healthy Keychain document is loaded; defaults to `true` once loaded.
+    /// Defaults to off and fails closed until a healthy Keychain document is loaded.
     private(set) var allowsPasswordEntry = false
     @ObservationIgnored private let storage: (any MCPTrustStorage)?
     @ObservationIgnored private let now: () -> Date
@@ -342,6 +370,13 @@ final class MCPTrustStore {
         try edit { draft in
             guard let index = draft.clients.firstIndex(where: { $0.id == id }) else { return }
             draft.clients[index].paused = paused
+        }
+    }
+
+    func setClientPolicy<Value>(_ key: WritableKeyPath<PairedClient.Policy, Value>, to value: Value, for id: UUID) throws {
+        try edit { draft in
+            guard let index = draft.clients.firstIndex(where: { $0.id == id }) else { return }
+            draft.clients[index].policy[keyPath: key] = value
         }
     }
 
