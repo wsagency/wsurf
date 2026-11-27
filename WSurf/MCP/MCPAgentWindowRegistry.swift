@@ -731,7 +731,10 @@ final class MCPAgentWindowRegistry {
                 configureTabEngine(tab, requested: options.engine, url: options.url ?? URL(string: tab.urlString))
             }
             if let url = options.url {
-                tab.load(url, transition: .agent)
+                _ = await navigateAgentTab(tab, to: url, record: record, generation: generation)
+                guard mayMutate(record, generation: generation) else {
+                    throw MCPAgentWindowError(.staleGeneration, "Window ownership changed while running.")
+                }
             }
         }
         ensurePreviewSession(for: record)?.syncAgentWindowGrants()
@@ -739,6 +742,13 @@ final class MCPAgentWindowRegistry {
             showAgentWindow(coordinator)
         }
         return windowDescriptor(record: record, coordinator: coordinator, tab: tab)
+    }
+
+    func navigateAgentTab(_ tab: BrowserTab, to url: URL, record: Record, generation: Int) async -> PageNavigation? {
+        let immediate = tab.load(url, transition: .agent) {
+            self.mayMutate(record, generation: generation)
+        }
+        return await tab.waitForPendingNavigation(cancelWithCaller: true) ?? immediate
     }
 
     func ensureDestinationAllowed(_ url: URL, permissions: SitePermissions) throws {
@@ -793,6 +803,11 @@ final class MCPAgentWindowRegistry {
         }
         coordinator.browser.agentCompanion = companion
         record.previewSession?.syncAgentWindowGeneration()
+        for tab in coordinator.browser.tabs {
+            if let view = tab.liveView {
+                PageDriver.observations.removeObject(forKey: view)
+            }
+        }
         if owner != .agent {
             cancelOperations(in: record)
             cancelMCPCalls(coordinator.browser, preservingCall)
@@ -904,12 +919,8 @@ final class MCPAgentWindowRegistry {
     }
 
     private func pruneDeadRecords() {
-        for (windowId, record) in records where record.coordinator == nil || record.coordinator?.isClosed == true {
-            records.removeValue(forKey: windowId)
-            cancelOperations(in: record)
-            record.activeWorkingIDs.removeAll()
-            record.previewSession?.revoke()
-            record.previewSession = nil
+        for record in records.values where record.coordinator == nil || record.coordinator?.isClosed == true {
+            teardown(record, clearCompanion: false, emitClosed: false)
         }
     }
 }

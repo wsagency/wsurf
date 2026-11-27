@@ -153,7 +153,11 @@ struct MCPSecretScrubberTests {
         let scrubber = MCPSecretScrubber()
         let code = MCPFailureCode.waitingForUser.rawValue
         scrubber.register(code)
-        let original: Value = .object(["code": .string(code), "message": .string("Echo: \(code)")])
+        scrubber.register("718429")
+        let original: Value = .object([
+            "code": .string(code), "message": .string("Echo: \(code)"),
+            "value": .array([.int(718429), .double(718429.25), .double(718429), .int(12)]),
+        ])
         let text = try String(decoding: JSONEncoder().encode(original), as: UTF8.self)
         let reply = CallTool.Result(
             content: [.text(text: text, annotations: nil, _meta: nil)],
@@ -164,6 +168,8 @@ struct MCPSecretScrubberTests {
         #expect(parsed == redacted.structuredContent)
         #expect(parsed.objectValue?["code"] == .string(code))
         #expect(parsed.objectValue?["message"] == .string("Echo: \(Self.hidden)"))
+        #expect(parsed.objectValue?["value"] == .array([.string(Self.hidden), .string("\(Self.hidden).25"), .string(Self.hidden), .int(12)]))
+        #expect(!MCPBrowserSession.text(of: redacted).contains("718429"))
     }
 
     @Test func recordsTheUserReadsHideOnlyValuesConfirmedAsWrittenIntoASecretField() {

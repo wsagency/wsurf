@@ -11,10 +11,10 @@ import Testing
 
 extension MCPAgentWindowBridgeTests {
     private func openReviewWindow(
-        _ client: BridgeClient, _ harness: Harness, profile: Profile, url: URL, access: String = "control"
+        _ client: BridgeClient, _ harness: Harness, profile: Profile, url: URL, access: String = "control", engine: BrowserEngine = .webKit
     ) async throws -> (window: AppCoordinator, tab: BrowserTab, token: String) {
         let (reply, _) = try await client.request(id: "open", op: "openAgentWindow", params: [
-            "threadId": "review", "profileId": profile.id.uuidString, "url": url.absoluteString, "engine": "webkit", "access": access,
+            "threadId": "review", "profileId": profile.id.uuidString, "url": url.absoluteString, "engine": engine.rawValue, "access": access,
         ])
         let result = try #require(reply["result"] as? [String: Any], "\(reply)")
         let window = try #require(harness.app.windows.first { $0.windowID.uuidString == result["windowId"] as? String })
@@ -164,16 +164,24 @@ extension MCPAgentWindowBridgeTests {
         }
     }
 
-    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-    func crossOriginFramesBlockHumanAndDeveloperImagesAndHandoffInvalidatesRefs(closedShadow: Bool) async throws {
+    enum ProtectedFrame: CaseIterable {
+        case lightDOM, closedShadow, opaque
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ProtectedFrame.allCases)
+    func crossOriginFramesBlockHumanAndDeveloperImagesAndHandoffInvalidatesRefs(placement: ProtectedFrame) async throws {
         let nested = try await HTTPFixtureServer.start(routes: ["/": .html("<input type='password' value='demo-otp'>")])
         let frameURL = try nested.url("/")
-        let frame = "<iframe src=\"\(frameURL.absoluteString)\" width=\"260\" height=\"180\"></iframe>"
-        let content = closedShadow
+        let sandbox = placement == .opaque ? " sandbox" : ""
+        let frame = "<iframe\(sandbox) src=\"\(frameURL.absoluteString)\" width=\"260\" height=\"180\"></iframe>"
+        let content = placement != .lightDOM
             ? "<div id='host'></div><script>document.querySelector('#host').attachShadow({mode: 'closed'}).innerHTML = '\(frame)'</script>"
             : frame
         let top = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<title>Frame fixture</title><button onclick=\"this.textContent = 'Clicked'\">Go</button>\(content)"),
+            "/": .html("""
+                <title>Frame fixture</title><button onclick="this.textContent = 'Clicked'">Go</button>
+                <section id="other"><button>Alternate</button></section>\(content)
+                """),
         ])
         defer { withExtendedLifetime((top, nested)) {} }
         try await withProfile { profile in
@@ -204,10 +212,17 @@ extension MCPAgentWindowBridgeTests {
             let stale = try await preview(bridge, "act", tab: tab, params: click)
             #expect(stale["ok"] as? Bool == false)
             #expect(String(describing: stale["error"]).contains("stale"))
-            let fresh = try await preview(bridge, "snapshot", tab: tab)
+            let fresh = try await preview(bridge, "snapshot", tab: tab, params: ["scope": "#other"])
             let current = try #require(fresh["result"] as? [String: Any], "\(fresh)")
-            let freshControl = try ref(for: "button \"Go\"", in: #require(current["page"] as? String))
+            let controls = try #require(current["page"] as? String)
+            #expect(!controls.contains("button \"Go\""))
+            let freshControl = try ref(for: "button \"Alternate\"", in: controls)
             let newObservation = try #require(current["observationId"] as? String)
+            let omitted = try await preview(bridge, "act", tab: tab, params: [
+                "action": "click", "ref": control, "observationId": newObservation,
+            ])
+            #expect(omitted["ok"] as? Bool == false)
+            #expect(try await tab.page.evaluateJavaScript("document.querySelector('button').textContent") as? String == "Go")
             let accepted = try await preview(bridge, "act", tab: tab, params: [
                 "action": "click", "ref": freshControl, "observationId": newObservation,
             ])
@@ -245,7 +260,8 @@ extension MCPAgentWindowBridgeTests {
         }
     }
 
-    @Test(.timeLimit(.minutes(1))) func takeOverCancelsReusedOpenAwaitingEngineRetirement() async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func takeOverCancelsReusedOpenAwaitingEngineRetirement(urlDriven: Bool) async throws {
         let fixture = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Preserve this page</title>")])
         defer { withExtendedLifetime(fixture) {} }
         try await withProfile { profile in
@@ -254,7 +270,9 @@ extension MCPAgentWindowBridgeTests {
             let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
             let bridge = try await connectAuthenticated(harness)
             defer { Task { await bridge.close() } }
-            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let source = try fixture.url("/")
+            let (window, tab, _) = try await openReviewWindow(
+                bridge, harness, profile: profile, url: source, engine: urlDriven ? .chromium : .webKit)
             let page = try #require(tab.liveView)
             let generation = tab.pageGeneration
             let record = try #require(harness.registry.record(pairedClientId: paired.id, threadId: "review"))
@@ -266,23 +284,34 @@ extension MCPAgentWindowBridgeTests {
             }
             tab.retirement = pending
             defer { pending.cancel() }
-            try await bridge.sendJSON([
-                "id": "switch", "op": "openAgentWindow",
-                "params": ["threadId": "review", "title": "Preparing engine", "engine": "chromium"],
-            ])
-            try #require(await waitUntil {
-                !record.activeOperations.isEmpty && window.browser.agentCompanion?.threadTitle == "Preparing engine"
-            })
-            window.takeOverAgentMicroWindow()
-            // The reply must arrive while the retirement remains blocked.
-            let response = try await bridge.waitForReply(id: "switch")
-            #expect((response["error"] as? [String: Any])?["code"] as? String == "humanControl")
-            #expect(tab.retirement != nil)
-            pending.cancel()
-            await pending.value
-            #expect(tab.liveView === page)
-            #expect(tab.pageGeneration == generation)
-            #expect(tab.loadedEngine == .webKit)
+            let port = try #require(fixture.port).rawValue
+            let restricted = try #require(URL(string: "http://localhost:\(port)/"))
+            try await SitePermissions.withWebKitOnlyOriginForTesting(SitePermissions.origin(for: restricted)) {
+                var params: [String: Any] = ["threadId": "review", "title": "Preparing engine"]
+                if urlDriven {
+                    params["url"] = restricted.absoluteString
+                } else {
+                    params["engine"] = "chromium"
+                }
+                try await bridge.sendJSON(["id": "switch", "op": "openAgentWindow", "params": params])
+                try #require(await waitUntil {
+                    !record.activeOperations.isEmpty && window.browser.agentCompanion?.threadTitle == "Preparing engine"
+                        && (!urlDriven || tab.pendingNavigationTask != nil)
+                })
+                window.takeOverAgentMicroWindow()
+                // The reply must arrive while the retirement remains blocked.
+                let response = try await bridge.waitForReply(id: "switch")
+                #expect((response["error"] as? [String: Any])?["code"] as? String == "humanControl")
+                #expect(tab.retirement != nil)
+                pending.cancel()
+                await pending.value
+                #expect(tab.liveView === page)
+                #expect(tab.pageGeneration == generation)
+                #expect(tab.liveView?.url == source)
+                #expect(tab.urlString == source.absoluteString)
+                #expect(tab.signInEngine == nil)
+                #expect(tab.loadedEngine == (urlDriven ? .chromium : .webKit))
+            }
         }
     }
 
@@ -315,6 +344,91 @@ extension MCPAgentWindowBridgeTests {
                 #expect(reply["ok"] as? Bool == true, "\(reply)")
                 try #require(await waitUntil { tab.liveView?.engine == .webKit && tab.liveView?.url == url && !tab.isLoading })
             }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func numericSecretIsRedactedByBothScriptTransports() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Numeric result</title><p>Fixture</p>")])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            try harness.trust.setStanding(.developer, for: paired.id)
+            try harness.trust.setDeveloperProfile(profile.id, dedicated: true)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (_, tab, token) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), access: "developer")
+            let record = try #require(harness.registry.record(pairedClientId: paired.id, threadId: "review"))
+            #expect(record.secrets.register("718429") == .registered)
+            let (client, transport) = try await connectWindowToken(token, in: harness)
+            defer { Task { await transport.disconnect() } }
+            let context: MCP.RequestContext<CallTool.Result> = try await client.callTool(
+                name: "evaluateScript", arguments: ["tabID": .string(tab.id.uuidString), "source": "718429"])
+            let result = try await context.value
+            #expect(result.isError == false)
+            #expect(result.structuredContent?.objectValue?["value"] == .string(MCPSecretScrubber.replacement))
+            #expect(!MCPBrowserSession.text(of: result).contains("718429"))
+            let previewReply = try await preview(bridge, "evaluate", tab: tab, params: ["expression": "718429"])
+            let previewContent = try #require(previewReply["result"] as? [String: Any], "\(previewReply)")
+            #expect(previewContent["value"] as? String == MCPSecretScrubber.replacement)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func humanSnapshotOmitsTheGeneratedCallbackAddress() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: ["/callback": .html("<title>Signed in</title><p>Welcome</p>")])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            _ = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let callbackCode = "fixture-oauth-callback"
+            let url = try fixture.url("/callback?code=\(callbackCode)")
+            let (window, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: url)
+            let agent = try await preview(bridge, "snapshot", tab: tab)
+            let agentContent = try #require(agent["result"] as? [String: Any])
+            window.takeOverAgentMicroWindow()
+            let human = try await preview(bridge, "snapshot", tab: tab)
+            let humanContent = try #require(human["result"] as? [String: Any])
+            for key in ["url", "page", "accessibilityTree"] {
+                #expect((agentContent[key] as? String)?.contains(callbackCode) == true)
+                #expect((humanContent[key] as? String)?.contains(callbackCode) == false)
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func windowSecretCapAndDeadRecordUseWindowLifetime() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Secret registry</title>")])
+        defer { withExtendedLifetime(fixture) {} }
+        try await withProfile { profile in
+            let harness = try await startHarness()
+            defer { stopHarness(harness) }
+            let paired = try harness.trust.pair(token: SyntheticToken.first, name: "Review", kind: nil)
+            try harness.trust.setAllowsPasswordEntry(true)
+            try harness.trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: paired.id)
+            let bridge = try await connectAuthenticated(harness)
+            defer { Task { await bridge.close() } }
+            let (_, tab, token) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"))
+            let record = try #require(harness.registry.record(pairedClientId: paired.id, threadId: "review"))
+            let session = try #require(record.previewSession)
+            session.syncAgentWindowGrants()
+            let scope = try #require(harness.registry.resolve(windowToken: token, pairedClientId: paired.id)?.1)
+            for index in 0..<MCPSecretScrubber.maximumSecrets {
+                #expect(scope.secrets.register("synthetic-secret-\(index)") == .registered)
+            }
+            let entry = MCPBrowserSession.SecretEntry(values: ["one-more-test-value"], refs: [])
+            let refusal = try #require(session.secretEntryRefusal(entry, tab: tab))
+            let text = MCPBrowserSession.text(of: refusal)
+            #expect(text.contains("Open another Agent Micro Window"))
+            #expect(!text.contains("Disconnect"))
+
+            record.coordinator = nil
+            _ = harness.registry.listTabs(pairedClientId: paired.id, threadId: "review")
+            #expect(!scope.isActive())
+            #expect(scope.secrets.isEmpty)
+            #expect(!session.isConnected)
         }
     }
 }

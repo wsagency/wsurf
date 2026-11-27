@@ -80,6 +80,16 @@ struct ChromiumServiceBrowserTests {
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func nativeFrameCountIncludesThePageAndItsChild() async throws {
+        let rig = try await Self.rig()
+        defer { rig.client.finish() }
+        try Self.open(rig, 1, "/parent")
+        let reply = try rig.client.command(CefRemote.Op.frameCount, browser: 1)
+        #expect(reply.bool(CefRemote.Key.success))
+        #expect(reply.int(CefRemote.Key.count) == 2)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aCDPRuntimeEvaluateRoundTripIsForwardedAndItsEventsToo() async throws {
         let rig = try await Self.rig()
         defer { rig.client.finish() }

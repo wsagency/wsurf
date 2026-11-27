@@ -516,17 +516,18 @@ extension ChromiumDevTools {
         invalidateCredentialContexts(documents: retired, pageWide: pageWide)
     }
 
-    func parseFrameTree(_ tree: [String: Any], parentID: String?, into result: inout [String: FrameState]) {
-        guard let frame = tree["frame"] as? [String: Any] else { return }
+    func parseFrameTree(_ tree: [String: Any], parentID: String?, into result: inout [String: FrameState]) -> Bool {
+        guard let frame = tree["frame"] as? [String: Any] else { return false }
         // A cross-site frame session's tree is rooted at its target, the frame whose parent is in another process.
         let parentID = parentID ?? (sessionID == nil || frame["id"] as? String != targetID ? nil : frame["parentId"] as? String)
-        guard let parsed = parseFrame(frame, parentID: parentID) else { return }
-        result[parsed.id] = parsed
-        if let children = tree["childFrames"] as? [[String: Any]] {
-            for child in children {
-                parseFrameTree(child, parentID: parsed.id, into: &result)
-            }
+        guard let parsed = parseFrame(frame, parentID: parentID) else { return false }
+        var complete = result.updateValue(parsed, forKey: parsed.id) == nil
+        guard let children = tree["childFrames"] else { return complete }
+        guard let children = children as? [[String: Any]] else { return false }
+        for child in children {
+            complete = parseFrameTree(child, parentID: parsed.id, into: &result) && complete
         }
+        return complete
     }
 
     func parseFrame(_ frame: [String: Any], parentID: String?) -> FrameState? {

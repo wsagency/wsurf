@@ -151,7 +151,7 @@ final class ServiceHost {
             closeBrowser(message.browser)
         case CefRemote.Op.load, CefRemote.Op.reload, CefRemote.Op.goBack, CefRemote.Op.goForward, CefRemote.Op.stop,
              CefRemote.Op.zoom, CefRemote.Op.mute, CefRemote.Op.find, CefRemote.Op.stopFinding, CefRemote.Op.devTools,
-             CefRemote.Op.collapseHistory, CefRemote.Op.visibility, CefRemote.Op.resize:
+             CefRemote.Op.collapseHistory, CefRemote.Op.visibility, CefRemote.Op.resize, CefRemote.Op.frameCount:
             guard isHost(peer, for: message) else { return }
             guard let browser = browsers[message.browser] else {
                 reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "no such browser") }

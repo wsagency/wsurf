@@ -152,6 +152,9 @@ extension MCPv2CoreTests {
             #expect(text.contains("own opt-in"))
             let tool = try #require(MCPToolCatalog.entries.first { $0.name == "typeOnPage" })
             #expect(tool.description.contains("own password-entry opt-in"))
+            let alias = try #require(MCPToolCatalog.playwrightEntries.first { $0.name == "browser_type" })
+            #expect(alias.description.contains(MCPToolCatalog.passwordEntryPermission))
+            #expect(!alias.description.contains("or Developer access"))
 
             try rig.trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: paired.id)
             #expect(session.allowsPasswordEntry(for: rig.owner))

@@ -598,6 +598,18 @@ final class ChromiumPage: NSView {
         }
     }
 
+    /// Independent browser-process inventory, including frames without a usable renderer session.
+    func screenshotFrameCount() async -> Int? {
+        if let remote {
+            let message = CefRemoteMessage(CefRemote.Op.frameCount, browser: remote.id)
+            guard case .value(let reply) = await remote.connection.request(message, timeout: 2),
+                  reply.bool(CefRemote.Key.success) else { return nil }
+            return Int(exactly: reply.int(CefRemote.Key.count))
+        }
+        guard let raw else { return nil }
+        return raw.pointee.get_frame_count?(raw)
+    }
+
     func frames() async throws -> [BrowserFrame] {
         try await devTools.frames()
     }

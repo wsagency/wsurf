@@ -355,6 +355,9 @@ final class BrowserTab: Identifiable {
             }
             return .webKit
         }
+        if keepingSignIn, let signInEngine, heldSignInChainOrigins.contains(origin) {
+            return signInEngine
+        }
         if let engineOverride {
             return engineOverride
         }

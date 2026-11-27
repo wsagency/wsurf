@@ -117,6 +117,9 @@ extension ChromiumDevTools {
         }
         owner.sessions[session] = child
         let isFrame = info?["type"] as? String == "iframe" && !target.isEmpty
+        if !isFrame {
+            owner.nonFrameSessions.insert(session)
+        }
         // A frame that was already running when the session attached (in a pop-up's first page) has a document its scripts missed.
         let wasRunning = params["waitingForDebugger"] as? Bool == false
         Task { await child.startCrossSiteFrameSession(isFrame: isFrame, wasRunning: wasRunning) }
@@ -183,6 +186,7 @@ extension ChromiumDevTools {
         scripts.removeAll()
         bindingWorlds.removeAll()
         root?.sessions[sessionID] = nil
+        root?.nonFrameSessions.remove(sessionID)
         root?.failPending(in: sessionID)
         endCrossSiteFrameSessions()
         invalidateCredentialContexts(documents: documents, pageWide: false)
@@ -207,12 +211,35 @@ extension ChromiumDevTools {
         sessionID == nil || frame.id == targetID || frame.parentID.map { framesByID[$0] != nil } == true
     }
 
-    /// The page's frames and those of every cross-site frame session.
+    /// Frame choices for the credential picker. A renderer that cannot answer offers no targets.
     func framesIncludingCrossSiteFrames() async throws -> [BrowserFrame] {
         var all = try await frames()
         for child in Array(sessions.values) where !child.closed {
             all += (try? await child.frames()) ?? []
         }
         return all
+    }
+
+    /// Screenshot accounting needs every frame, including non-HTTP documents and frames outside the main process.
+    func screenshotChildFrameURLs() async throws -> [URL] {
+        let sessionsForFrames = sessions.filter { !nonFrameSessions.contains($0.key) }
+        let frameSessions = [self] + Array(sessionsForFrames.values)
+        var frames: [String: FrameState] = [:]
+        for session in frameSessions {
+            guard session.prepared, !session.closed else { throw ChromiumError.staleFrame }
+            try await session.refreshFrames(requireComplete: true)
+            frames.merge(session.framesByID) { _, latest in latest }
+        }
+        guard frames.count <= 257,
+              await page?.screenshotFrameCount() == frames.count,
+              Set(sessions.keys).subtracting(nonFrameSessions) == Set(sessionsForFrames.keys),
+              let main = frames.values.first(where: \.isMainFrame), frames.values.filter(\.isMainFrame).count == 1
+        else { throw ChromiumError.staleFrame }
+        let children = frames.values.filter { !$0.isMainFrame }
+        guard children.allSatisfy({ child in
+            !child.documentID.isEmpty && child.hasTrustedSecurityOrigin && child.securityOrigin == main.securityOrigin
+                && child.parentID.flatMap { frames[$0] } != nil
+        }) else { throw ChromiumError.staleFrame }
+        return children.map(\.url)
     }
 }

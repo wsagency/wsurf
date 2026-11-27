@@ -228,11 +228,13 @@ nonisolated enum MCPToolCatalog {
     }
 
     /// Appended to the tools that can type a secret. They share their base description with the in-app assistant, which never can.
-    private static let secretNote =
+    static let passwordEntryPermission =
+        "With Control and Allow password entry enabled in Settings › Connected apps, typing into sensitive fields is available. "
+        + "Paired apps also need their own password-entry opt-in."
+
+    private static let secretNote = passwordEntryPermission + " " +
         """
-        With Control and Allow password entry enabled in Settings › Connected apps, typing \
-        into sensitive fields is available. Paired apps also need their own password-entry opt-in. Typing \
-        into a password, code or other sensitive field works directly without secret: true; WSurf automatically suppresses \
+        Typing into a password, code or other sensitive field works directly without secret: true; WSurf automatically suppresses \
         autofill, scrubs the typed value from results, and masks the field in screenshots. Values typed into sensitive fields \
         must be at least 4 characters. Pass secret: true to apply the same scrubbing to a non-password field.
         """

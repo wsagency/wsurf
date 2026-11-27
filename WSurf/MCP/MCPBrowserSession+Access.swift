@@ -133,8 +133,11 @@ extension MCPBrowserSession {
             rotateDiagnosticsKey(on: tab)
             observations[tab.id] = nil
             grants[tab.id] = Grant(origin: origin, access: scope.access, source: .agentWindow)
-            let immediate = tab.load(url, transition: .agent)
-            let navigation = await tab.waitForPendingNavigation() ?? immediate
+            let generation = scope.generation()
+            let immediate = tab.load(url, transition: .agent) {
+                scope.isActive() && scope.isAgentOwned() && scope.generation() == generation
+            }
+            let navigation = await tab.waitForPendingNavigation(cancelWithCaller: true) ?? immediate
             guard navigation != nil else { return failure("Navigation could not be started.") }
             return success("Navigation started. Use readPage after the page loads.")
         }

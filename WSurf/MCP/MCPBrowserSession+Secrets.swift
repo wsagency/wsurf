@@ -71,7 +71,8 @@ extension MCPBrowserSession {
             case .tooShort:
                 return failure("A secret must be at least \(MCPSecretScrubber.minimumBytes) characters so WSurf can keep it out of results. Nothing was typed.", code: .invalidInput)
             case .tooMany:
-                return failure("This connection already typed \(MCPSecretScrubber.maximumSecrets) different secrets. Disconnect to type more. Nothing was typed.")
+                let reset = agentWindowScope == nil ? "Disconnect to type more." : "Open another Agent Micro Window to type more."
+                return failure("This session already typed \(MCPSecretScrubber.maximumSecrets) different secrets. \(reset) Nothing was typed.")
             }
         }
         if agentWindowScope != nil {

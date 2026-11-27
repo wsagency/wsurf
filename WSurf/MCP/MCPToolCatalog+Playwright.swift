@@ -37,8 +37,7 @@ nonisolated extension MCPToolCatalog {
             name: "browser_type",
             description:
                 "Playwright MCP name for typeOnPage: type into the field with this ref; submit presses Enter. slowly is accepted and "
-                + "ignored. Under Control (when password entry is allowed) or Developer access, password and code fields are typed directly "
-                + "with automatic scrubbing and screenshot masking.",
+                + "ignored. " + passwordEntryPermission + " Password and code fields are scrubbed and masked in screenshots.",
             parameters: [
                 element, playwrightRef, Parameter(name: "text", type: "string", description: "Text to enter."),
                 Parameter(name: "submit", type: "boolean", description: "Press Enter after typing.", required: false),

@@ -248,7 +248,9 @@ extension BrowserTab {
         return true
     }
 
-    private func switchEngineWhileAuthorized(to engine: BrowserEngine, authorized: @MainActor () -> Bool) async -> Bool {
+    func switchEngineWhileAuthorized(
+        to engine: BrowserEngine, destination: URL? = nil, authorized: @MainActor () -> Bool
+    ) async -> Bool {
         while let pending = engineSwitchTask {
             let completed = await PageReply<Bool>.awaiting(within: .seconds(15)) { reply in
                 Task {
@@ -269,7 +271,7 @@ extension BrowserTab {
         }
         guard !isClosed, !Task.isCancelled, extensionBaseURL == nil, authorized(),
               engineSwitchTask == nil, retirement == nil else { return false }
-        let url = URL(string: urlString) ?? liveView?.url
+        let url = destination ?? URL(string: urlString) ?? liveView?.url
         guard engine != .chromium || !SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) else { return false }
         guard liveView?.engine != engine else { return true }
         // Retiring and installing must be one Main Actor turn. Awaiting close after detaching the live page would let
@@ -278,7 +280,7 @@ extension BrowserTab {
             retire(outgoing)
         }
         finishEngineInstallation(engine)
-        if let url, urlString == url.absoluteString {
+        if destination == nil, let url, urlString == url.absoluteString {
             lastRequestedNavigation = loadDirect(url)
         }
         return true

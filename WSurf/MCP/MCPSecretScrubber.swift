@@ -222,13 +222,17 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let decoder = JSONDecoder()
+        let original = result.structuredContent.flatMap { value in
+            (try? encoder.encode(value)).flatMap { try? decoder.decode(Value.self, from: $0) }
+        }
+        let mirrored = structured.flatMap { try? encoder.encode($0) }
         let content = result.content.map { block -> MCP.Tool.Content in
             guard case .text(let text, let annotations, let meta) = block else { return block }
             let redacted: String
-            if let original = result.structuredContent, let structured,
-               let decoded = try? JSONDecoder().decode(Value.self, from: Data(text.utf8)), decoded == original,
-               let data = try? encoder.encode(structured) {
-                redacted = String(decoding: data, as: UTF8.self)
+            if let original, let mirrored,
+               let decoded = try? decoder.decode(Value.self, from: Data(text.utf8)), decoded == original {
+                redacted = String(decoding: mirrored, as: UTF8.self)
             } else {
                 redacted = Self.scrub(text, needles: needles)
             }
@@ -243,6 +247,8 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         switch value {
         case .string(let text):
             .string(scrub(text, needles: needles))
+        case .int, .double:
+            redactNumber(value, needles: needles)
         case .array(let items):
             .array(items.map { scrub($0, needles: needles) })
         case .object(let fields):
@@ -250,6 +256,13 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         default:
             value
         }
+    }
+
+    private static func redactNumber(_ value: Value, needles: [[UInt8]]) -> Value {
+        guard let data = try? JSONEncoder().encode(value) else { return .string(replacement) }
+        let number = String(decoding: data, as: UTF8.self)
+        let redacted = scrub(number, needles: needles)
+        return number == redacted ? value : .string(redacted)
     }
 
     /// Every run of bytes covered by any needle becomes one `marker`. Overlapping and adjacent matches merge.

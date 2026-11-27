@@ -355,8 +355,8 @@ extension MCPAgentWindowRegistry {
             access: record.access.mcpAccess,
             source: .agentWindow
         )
-        let immediate = tab.load(url, transition: .agent)
-        _ = await tab.waitForPendingNavigation() ?? immediate
+        let generation = coordinator.browser.agentCompanion?.generation ?? 0
+        _ = await navigateAgentTab(tab, to: url, record: record, generation: generation)
         let readiness = (opParams["readiness"] as? String) ?? "load"
         if readiness != "none" {
             let timeoutMs = min(max(opParams["timeoutMs"] as? Int ?? 15_000, 100), 30_000)
@@ -496,8 +496,8 @@ extension MCPAgentWindowRegistry {
         case .failed(let message):
             throw MCPAgentWindowError(.scriptError, session.scrubbed(message))
         case .completed(let text):
-            let scrubbed = session.secrets.scrub(text)
-            guard let data = scrubbed.data(using: .utf8),
+            guard let value = try? JSONDecoder().decode(Value.self, from: Data(text.utf8)),
+                  let data = try? JSONEncoder().encode(session.secrets.scrub(value)),
                   let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             else {
                 throw MCPAgentWindowError(.scriptError, "Could not decode script reply.")

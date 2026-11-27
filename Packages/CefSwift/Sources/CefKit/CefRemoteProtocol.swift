@@ -237,6 +237,8 @@ public enum CefRemote {
         /// (the request), `keep`, `expected`. The answer is a ``Event/historyCollapsed`` event.
         public static let collapseHistory = "history.collapse"
         public static let devTools = "devtools.send"
+        /// Total number of browsing frames, including frames outside DevTools' current renderer sessions. Has a reply.
+        public static let frameCount = "browser.frameCount"
         /// DEBUG: the service ends itself at once, as a crash would. Nothing outside signals it.
         @_alwaysEmitIntoClient public static var debugAbort: String { "debug.abort" }
         /// DEBUG: the service answers with its live counts. Has a reply.

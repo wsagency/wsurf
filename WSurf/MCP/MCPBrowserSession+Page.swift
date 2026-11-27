@@ -187,7 +187,7 @@ extension MCPBrowserSession {
             output.contains("observationID: " + current.id) {
             delivered = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
             content["observationID"] = .string(current.id)
-            if PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
+            if PageDriver.includesDocumentURL, PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
         }
         let value: Value = .object(content)
         var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]

@@ -4,6 +4,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import WebKit
 
 /// A capture that blacks out filled sensitive fields instead of being refused. Only the Developer tier asks for one: it types
 /// test secrets itself, so a page with a filled password field is the normal case there, not a reason to return nothing.
@@ -18,55 +19,35 @@ struct ScreenshotMasking: Sendable {
     /// Native captures include frame pixels even when the text runtime cannot enter the frame.
     static let frameProbeScript = #"""
         out.frameURLs = [];
-        out.frameNonces = [];
         out.uninspectableFrame = (() => {
           for (const el of R.walk(document.documentElement)) {
             if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') continue;
             try {
-              const src = el.hasAttribute('srcdoc') ? null : el.getAttribute('src');
-              const requested = src && new URL(src, el.baseURI);
               const document = el.contentDocument;
-              if (document) {
-                out.frameURLs.push(document.URL);
-                const nonce = el.contentWindow?.__wsurfNativeFrameNonce;
-                if (typeof nonce === 'string') out.frameNonces.push(nonce);
-              }
-              if (!R.visible(el)) continue;
-              if (requested && /^https?:$/.test(requested.protocol) && requested.origin !== el.ownerDocument.location.origin) return true;
-              if (!document?.documentElement) return true;
+              if (!document?.documentElement || el.contentWindow.origin === 'null') return true;
+              out.frameURLs.push(document.URL);
             } catch (e) { return true; }
           }
           return false;
         })();
         """#
 
-    /// A closed shadow root can hide an iframe's element from the runtime while the browser still renders its document.
-    /// Compare the frames the browser knows about with those accounted for by the DOM probe.
+    /// Only return pixels when the engine accounts for every child document probed by the masking runtime.
     @MainActor
     static func hasUninspectableFrame(_ probe: [String: Any], in view: BrowserPage) async -> Bool {
-        guard probe["uninspectableFrame"] as? Bool == false else { return true }
-        if let chromium = view.chromium {
-            guard let addresses = probe["frameURLs"] as? [String],
-                  let frames = try? await chromium.devTools.framesIncludingCrossSiteFrames() else { return true }
-            var seen = addresses.reduce(into: [URL: Int]()) { counts, address in
-                if let url = URL(string: address) {
-                    counts[frameAddress(url), default: 0] += 1
-                }
-            }
-            let childURLs = frames.filter { !$0.isMainFrame }.compactMap { $0.request.url }
-            return childURLs.contains { url in
-                !SitePermissions.webOrigin(for: url).isEmpty && !consumeFrame(url, from: &seen)
-            }
+        guard probe["uninspectableFrame"] as? Bool == false, let addresses = probe["frameURLs"] as? [String] else { return true }
+        let children: [URL]?
+        if let native = view.webKit {
+            children = await native.screenshotChildFrameURLs()
+        } else if let chromium = view.chromium {
+            children = try? await chromium.devTools.screenshotChildFrameURLs()
+        } else {
+            return true
         }
-        guard let nonces = probe["frameNonces"] as? [String] else { return true }
-        let inspected = Set(nonces)
-        let registry = PageFrameRegistry.shared
-        for target in await registry.targets(in: view) where !inspected.contains(target.id) {
-            if await registry.isLive(target, in: view) {
-                return true
-            }
-        }
-        return false
+        guard let children, children.count == addresses.count else { return true }
+        let inspected = addresses.compactMap(URL.init(string:)).map(frameAddress).sorted { $0.absoluteString < $1.absoluteString }
+        let native = children.map(frameAddress).sorted { $0.absoluteString < $1.absoluteString }
+        return inspected != native
     }
 
     private static func frameAddress(_ url: URL) -> URL {
@@ -75,12 +56,6 @@ struct ScreenshotMasking: Sendable {
         return components.url ?? url
     }
 
-    private static func consumeFrame(_ url: URL, from counts: inout [URL: Int]) -> Bool {
-        let key = frameAddress(url)
-        guard let count = counts[key], count > 0 else { return false }
-        counts[key] = count - 1
-        return true
-    }
     /// Refs of fields the connection typed a secret into, covered even when they do not look sensitive. They count only while
     /// the page still shows `documentID`, the document those refs were issued for.
     var secretRefs: Set<Int> = []
@@ -168,5 +143,39 @@ struct ScreenshotMasking: Sendable {
                     width: covered.width * scaleX, height: covered.height * scaleY))
         }
         return context.makeImage().map(NSBitmapImageRep.init(cgImage:))
+    }
+}
+
+private extension WKWebView {
+    /// WebKit's frame tree also includes frames blocked from script access and frames in closed shadow roots.
+    func screenshotChildFrameURLs() async -> [URL]? {
+        let selector = NSSelectorFromString("_frames:")
+        guard responds(to: selector) else { return nil }
+        typealias Fetch = @convention(c) (AnyObject, Selector, @escaping @convention(block) (NSObject?) -> Void) -> Void
+        let fetch = unsafeBitCast(method(for: selector), to: Fetch.self)
+        return await PageReply<[URL]>.awaiting(within: .seconds(2)) { gate in
+            fetch(self, selector) { root in
+                gate.finish(root.flatMap(Self.screenshotChildFrameURLs))
+            }
+        }
+    }
+
+    private static func screenshotChildFrameURLs(_ root: NSObject) -> [URL]? {
+        let infoKey = "info"
+        let childrenKey = "childFrames"
+        guard root.responds(to: NSSelectorFromString(infoKey)),
+              let main = root.value(forKey: infoKey) as? WKFrameInfo, main.isMainFrame,
+              root.responds(to: NSSelectorFromString(childrenKey)),
+              var pending = root.value(forKey: childrenKey) as? [NSObject] else { return nil }
+        var urls: [URL] = []
+        while let node = pending.popLast() {
+            guard urls.count < 256, node.responds(to: NSSelectorFromString(infoKey)),
+                  let frame = node.value(forKey: infoKey) as? WKFrameInfo, !frame.isMainFrame, let url = frame.request.url,
+                  !frame.securityOrigin.protocol.isEmpty, node.responds(to: NSSelectorFromString(childrenKey)),
+                  let children = node.value(forKey: childrenKey) as? [NSObject] else { return nil }
+            urls.append(url)
+            pending.append(contentsOf: children)
+        }
+        return urls
     }
 }

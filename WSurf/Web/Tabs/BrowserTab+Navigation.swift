@@ -71,23 +71,29 @@ extension BrowserTab {
     /// page, a start page, prewarm) never says it. Only a page in the Chromium service reads it, to end a crash loop
     /// (`ChromiumPage.holdsForRecovery`); a WebKit or in-process page ignores it.
     @discardableResult
-    func load(_ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true, byPerson: Bool = false) -> PageNavigation? {
-        guard !isClosed else { return nil }
+    func load(
+        _ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true, byPerson: Bool = false,
+        authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
+        guard !isClosed, authorized?() ?? true else { return nil }
         let sourceSignIn = signInEngine
-        noteNavigation(to: url, startedByUser: startedByUser)
+        let deferNavigationState = authorized != nil && startedByUser
+        if !deferNavigationState {
+            noteNavigation(to: url, startedByUser: startedByUser)
+        }
         pendingNavigationTask?.cancel()
-        pendingTransition = transition
-        let desired = preferredEngine(for: url)
-        signInChain.note(SitePermissions.webOrigin(for: url), engine: desired, now: signInClock())
-        urlString = url.absoluteString
-        let handoff = chromiumSignInHandoff(to: url, engine: desired)
+        let desired = preferredEngine(for: url, keepingSignIn: !deferNavigationState)
+        if !deferNavigationState {
+            prepareNavigation(to: url, engine: desired, transition: transition)
+        }
+        let handoff = deferNavigationState ? nil : chromiumSignInHandoff(to: url, engine: desired)
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil || handoff != nil {
             lastRequestedNavigation = nil
             // A Chromium hop back through restored entries leaves a page that is ahead of the new one: Back must not return there.
             let left = liveView.flatMap { $0.engine != desired && $0.chromium?.hopsBackward != true ? committedURL : nil }
                 .map { (url: $0, state: page.savedInteractionState(keepingWebKitSignIn: sourceSignIn == .webKit)) }
             pendingNavigationTask = Task { [weak self] in
-                guard let self else { return nil }
+                guard let self, !Task.isCancelled, authorized?() ?? true else { return nil }
                 // Read before the Chromium page is retired: it may be the profile's only live one. The cookies are in the store
                 // before WebKit sends its first request to the provider.
                 if let handoff {
@@ -96,7 +102,16 @@ extension BrowserTab {
                     )
                 }
                 // A new address ends this page's work anyway, so unlike a same-page engine switch it is not confirmed.
-                guard !Task.isCancelled, await replaceEngine(with: desired), !Task.isCancelled else { return nil }
+                let ready = if let authorized {
+                    await switchEngineWhileAuthorized(to: desired, destination: url, authorized: authorized)
+                } else {
+                    await replaceEngine(with: desired)
+                }
+                guard ready, !Task.isCancelled, authorized?() ?? true else { return nil }
+                if deferNavigationState {
+                    noteNavigation(to: url, startedByUser: true)
+                    prepareNavigation(to: url, engine: desired, transition: transition)
+                }
                 if let left {
                     pageBeforeEngineSwitch = left
                 }
@@ -106,9 +121,20 @@ extension BrowserTab {
             }
             return nil
         }
+        pendingNavigationTask = nil
+        if deferNavigationState {
+            noteNavigation(to: url, startedByUser: true)
+            prepareNavigation(to: url, engine: desired, transition: transition)
+        }
         let result = loadDirect(url, byPerson: byPerson)
         lastRequestedNavigation = result
         return result
+    }
+
+    private func prepareNavigation(to url: URL, engine: BrowserEngine, transition: HistoryStore.Transition) {
+        pendingTransition = transition
+        signInChain.note(SitePermissions.webOrigin(for: url), engine: engine, now: signInClock())
+        urlString = url.absoluteString
     }
 
     /// Back from the first page of the engine a load moved this tab to: the page that load left, in its own engine again.
@@ -146,9 +172,15 @@ extension BrowserTab {
         return page.load(URLRequest(url: url), byPerson: byPerson)
     }
 
-    func waitForPendingNavigation() async -> PageNavigation? {
+    func waitForPendingNavigation(cancelWithCaller: Bool = false) async -> PageNavigation? {
         guard let task = pendingNavigationTask else { return lastRequestedNavigation }
-        return await task.value
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            if cancelWithCaller {
+                task.cancel()
+            }
+        }
     }
 
     func loadHTML(_ html: String, baseURL: URL?) {

@@ -434,6 +434,7 @@ extension PageDriver {
         let start = object["start"] as? Int ?? 0
         let truncated = object["truncated"] as? Bool == true
         let refs = Set((object["refs"] as? [Int]) ?? [])
+        guard PageAutomationGuard.allowsExecution else { return staleMessage }
         observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: delivered(refs, in: documentID, of: webView)), forKey: webView)
 
         var result = count == 0
@@ -445,7 +446,7 @@ extension PageDriver {
         if let skipped = object["skippedFrames"] as? Int, skipped > 0 {
             result += "\nFrames that could not be read: \(skipped)."
         }
-        if PageOutputBudget.cost(url) <= 350 {
+        if includesDocumentURL, PageOutputBudget.cost(url) <= 350 {
             result += "\nurl: \(url)"
         }
         result += "\nobservationID: \(id)"

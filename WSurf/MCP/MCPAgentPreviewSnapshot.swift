@@ -174,7 +174,9 @@ extension MCPAgentWindowRegistry {
         }
         try entry.validate(arguments)
         let result = await PageDriver.$refusesFilledSecrets.withValue(true) {
-            await session.usePage(entry, arguments: arguments, tab: tab, capability: .read, previewRead: guardScope)
+            await PageDriver.$includesDocumentURL.withValue(false) {
+                await session.usePage(entry, arguments: arguments, tab: tab, capability: .read, previewRead: guardScope)
+            }
         }
         if result.structuredContent?.objectValue?["code"]?.stringValue == MCPFailureCode.protectedSecretPresent.rawValue {
             throw Self.protectedSnapshotError
