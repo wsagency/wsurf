@@ -93,7 +93,8 @@ extension BrowserTab {
         invalidateSessionState()
         developmentDocumentChanged()
         dialogs.documentCommitted()
-        if isProvisionalDownloadPopup, isShowingRealPage, !isShowingError {
+        let committedErrorPage = isLoadingErrorPage && navigation != nil && navigation === errorDocumentNavigation
+        if isProvisionalDownloadPopup, (isShowingRealPage && !isShowingError) || committedErrorPage {
             isProvisionalDownloadPopup = false
             onProvisionalPopupCommitted?()
         }

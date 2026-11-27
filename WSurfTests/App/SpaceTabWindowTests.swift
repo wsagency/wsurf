@@ -147,8 +147,12 @@ struct SpaceTabWindowTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func aPopupInASharedFolderIsPublishedOnlyAfterItCommits(commitsPage: Bool) async throws {
+    enum PopupOutcome: CaseIterable {
+        case download, page, failure
+    }
+
+    @Test(arguments: PopupOutcome.allCases)
+    func aPendingPopupInASharedFolderStaysInItsWindow(outcome: PopupOutcome) async throws {
         try await withProfile { profile in
             let response = ResponseGate()
             let image = ResponseGate()
@@ -157,16 +161,23 @@ struct SpaceTabWindowTests {
                 image.open()
             }
             let payload = Data("Popup download".utf8)
-            var attachment = HTTPFixtureServer.Response.download(payload, filename: "popup.txt")
-            attachment.gate = response
-            let popupResponse = commitsPage
-                ? .html("<title>Committed popup</title><img src='/held-image'>", gate: response)
-                : attachment
+            let refusedServer = outcome == .failure ? try await HTTPFixtureServer.start(routes: [:]) : nil
+            let refusedURL = try refusedServer?.url("/refused")
+            var popupResponse: HTTPFixtureServer.Response = switch outcome {
+            case .download:
+                .download(payload, filename: "popup.txt")
+            case .page:
+                .html("<title>Committed popup</title><img src='/held-image'>")
+            case .failure:
+                .redirect(to: try #require(refusedURL))
+            }
+            popupResponse.gate = response
             let server = try await HTTPFixtureServer.start(routes: [
                 "/opener": .html("<title>Opener</title>"),
                 "/popup": popupResponse,
                 "/held-image": .html("", gate: image),
             ])
+            await refusedServer?.stop()
             let app = run(InMemoryUserDefaults(inheriting: .standard))
             defer { finish(app) }
             let first = app.newWindow(profile: profile, show: false)
@@ -200,13 +211,14 @@ struct SpaceTabWindowTests {
             #expect(sibling.tabs.map(\.id) == siblingTabs)
             response.open()
 
-            if commitsPage {
+            switch outcome {
+            case .page:
                 // The image keeps the page loading. Committing the document is enough to publish the row.
                 try #require(await waitUntil { popup.committedURL == url && image.requestCount > 0 })
                 let copied = try #require(copy(of: popup, in: second))
                 #expect(sibling.folder(containing: copied)?.id == folder.id)
                 #expect(copied.urlString == url.absoluteString)
-            } else {
+            case .download:
                 try #require(await waitUntil { downloads.items.first?.state == .finished })
                 let item = try #require(downloads.items.first)
                 #expect(item.sourceTabID == popup.id)
@@ -215,6 +227,14 @@ struct SpaceTabWindowTests {
                 #expect(browser.pinStore.spaceRows.map(\.id) == sharedRows)
                 #expect(sibling.tabs.map(\.id) == siblingTabs)
                 #expect(sibling.activeTabID == siblingOpener.id)
+            case .failure:
+                try #require(await waitUntil { popup.isShowingError && popup.committedNavigation != nil && !popup.isLoading })
+                #expect(!popup.isProvisionalDownloadPopup)
+                let copied = try #require(copy(of: popup, in: second))
+                #expect(sibling.folder(containing: copied)?.id == folder.id)
+                #expect(copied.urlString == refusedURL?.absoluteString)
+                #expect(sibling.activeTabID == siblingOpener.id)
+                #expect(downloads.items.isEmpty)
             }
         }
     }

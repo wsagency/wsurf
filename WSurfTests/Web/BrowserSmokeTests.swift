@@ -317,6 +317,7 @@ struct BrowserSmokeTests {
         #expect(try Data(contentsOf: #require(item.destination)) == payload)
         #expect(browser.tabs.map(\.id) == [popup.id])
         #expect(browser.activeTabID == popup.id)
+        #expect(popup.isProvisionalDownloadPopup)
     }
 
     @Test func webKitDisplaysAnInlineMP4() async throws {

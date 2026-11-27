@@ -330,7 +330,7 @@ extension BrowserModel {
     private func snapshot() -> SessionSnapshot {
         sessionRevision += 1
         let persisted = tabs.filter {
-            $0.extensionBaseURL == nil && (!$0.isPrivate || (opensPrivately && database.isEphemeral))
+            !$0.isProvisionalDownloadPopup && $0.extensionBaseURL == nil && (!$0.isPrivate || (opensPrivately && database.isEphemeral))
         }
         var restated: Set<UUID> = []
         let tabRecords = persisted.map { tab -> TabRecord in
