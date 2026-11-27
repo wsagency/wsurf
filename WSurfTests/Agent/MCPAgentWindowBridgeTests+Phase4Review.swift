@@ -453,6 +453,7 @@ extension MCPAgentWindowBridgeTests {
             let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), engine: .chromium)
             let page = try #require(tab.liveView)
             let tools = try #require(page.chromium?.devTools)
+            try await requireSettledCapture(in: page)
             var detached = false
             tools.commandObserver = { method, _ in
                 if method == "Target.detachFromTarget", !tools.nonFrameSessions.isEmpty {
@@ -487,8 +488,15 @@ extension MCPAgentWindowBridgeTests {
             defer { Task { await bridge.close() } }
             let (_, tab, _) = try await openReviewWindow(bridge, harness, profile: profile, url: fixture.url("/"), engine: engine)
             let page = try #require(tab.liveView)
-            let stable = await PageDriver.screenshot(in: page)
-            try #require(stable.failure == nil, "\(stable)")
+            try #require(await waitUntil {
+                (try? await page.evaluateJavaScript("""
+                    (() => {
+                      const child = document.querySelector('iframe').contentDocument;
+                      return child?.readyState === 'complete' && child.location.pathname === '/child';
+                    })()
+                    """)) as? Bool == true
+            }, "The fixture child has loaded its final document.")
+            try await requireSettledCapture(in: page)
             var mutated = false
             let changed = await PageDriver.$afterScreenshotCapture.withValue({
                 let result = try? await page.evaluateJavaScript("""
@@ -504,6 +512,16 @@ extension MCPAgentWindowBridgeTests {
             #expect(mutated)
             #expect(changed.failure == .uninspectableFrame)
         }
+    }
+
+    /// The renderer can finish loading before the native frame inventory catches up.
+    private func requireSettledCapture(in page: BrowserPage) async throws {
+        var failure: ScreenshotFailure?
+        try #require(await waitUntil(timeout: .seconds(8)) {
+            failure = await PageDriver.screenshot(in: page).failure
+            return failure != .uninspectableFrame
+        }, "The native frame inventory did not settle.")
+        try #require(failure == nil)
     }
 
     @Test(.timeLimit(.minutes(1))) func takeOverCancelsRedirectReissueWaitingForEngineRetirement() async throws {
