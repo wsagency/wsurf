@@ -221,6 +221,9 @@ final class BrowserTab: Identifiable {
     /// Set on a tab an assistant or MCP client opened in the background. It stays in its window, out of the other windows'
     /// sidebars, until the person moves it into a folder or another Space.
     var staysInItsWindow = false
+    /// A popup that may close itself on its initial download stays local until a document commits.
+    @ObservationIgnored var isProvisionalDownloadPopup = false
+    var onProvisionalPopupCommitted: (() -> Void)?
     /// The space of the window this tab belongs to. Nil while it is a pin or inside a pinned folder, which every space
     /// shows, and for a tab that has not joined a space yet.
     var spaceID: UUID? {
@@ -611,6 +614,7 @@ final class BrowserTab: Identifiable {
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil
         onNavigationStarted = nil
+        onProvisionalPopupCommitted = nil
         onFirstAddress = nil
         onNavigationFinished = nil
         onNavigationOutsideExtension = nil

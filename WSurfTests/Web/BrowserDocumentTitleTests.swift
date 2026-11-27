@@ -28,6 +28,43 @@ struct BrowserDocumentTitleTests {
         return data as Data
     }
 
+    @Test func aSameAddressPDFDownloadLeavesTheHTMLPageWithoutPDFActions() async throws {
+        let bytes = try pdf()
+        let attachment = HTTPFixtureServer.Response(
+            status: "200 OK",
+            headers: ["Content-Type": "application/pdf", "Content-Disposition": "attachment; filename=\"report.pdf\""],
+            body: bytes
+        )
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/report": .html("""
+                <title>Report form</title>
+                <form method="POST" action="/report"><button type="submit">Download report</button></form>
+                """),
+        ], waitsForBody: true) { request in
+            request.method == "POST" && request.path == "/report" ? attachment : nil
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wsurf-download-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false, persists: false)
+        let browser = BrowserModel(database: .temporary(), downloads: downloads)
+        defer { browser.closeAllTabs() }
+        let url = try server.url("/report")
+        let tab = browser.newTab(url: url, engine: .webKit)
+        try #require(await waitUntil { tab.title == "Report form" && tab.committedURL == url })
+        let document = try #require(tab.committedNavigation)
+
+        _ = try await tab.page.evaluateJavaScript("document.querySelector('button').click(); true")
+
+        try #require(await waitUntil { downloads.items.first?.state == .finished })
+        let item = try #require(downloads.items.first)
+        #expect(item.filename == "report.pdf")
+        #expect(try Data(contentsOf: #require(item.destination)) == bytes)
+        #expect(tab.committedNavigation === document)
+        #expect(tab.committedURL == url)
+        #expect(tab.title == "Report form")
+        #expect(tab.shownPDF == nil)
+    }
+
     @Test(arguments: [BrowserEngine.webKit, .chromium], ["/Quarterly%20Report.pdf", "/download", "/download#page=1"])
     func aPDFUsesItsFilenameAndKeepsItWhenGoingBack(engine: BrowserEngine, path: String) async throws {
         let route = String(path.prefix { $0 != "#" })

@@ -105,7 +105,7 @@ extension BrowserModel {
             case .tab(let id):
                 // A folder's rows go with it, blank or not; at the top level only a page of its own joins.
                 guard let tab = liveTabs[id], tab.extensionBaseURL == nil, !tab.isPrivate, tab.pinID == nil, tab.pinnedURL == nil,
-                      !pending.contains(id),
+                      !pending.contains(id), !tab.isProvisionalDownloadPopup,
                       tab.spaceTabID != nil || (Self.isOwnPage(tab) && !tab.staysInItsWindow) || (parent != nil && tab.microTabID == nil)
                 else { return }
                 var link = tab.spaceTabID ?? tab.id

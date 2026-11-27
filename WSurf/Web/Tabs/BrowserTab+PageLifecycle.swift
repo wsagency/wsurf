@@ -93,6 +93,10 @@ extension BrowserTab {
         invalidateSessionState()
         developmentDocumentChanged()
         dialogs.documentCommitted()
+        if isProvisionalDownloadPopup, isShowingRealPage, !isShowingError {
+            isProvisionalDownloadPopup = false
+            onProvisionalPopupCommitted?()
+        }
     }
 
     func navigationFinished(_ navigation: PageNavigation?) {

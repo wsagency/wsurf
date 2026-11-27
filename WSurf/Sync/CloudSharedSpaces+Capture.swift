@@ -317,7 +317,7 @@ extension CloudSharedSpaces {
             return .init(id: id, kind: .folder, profileID: profile, spaceID: space, title: folder.name, symbol: folder.symbol, color: folder.color.rawValue)
         case .tab(let local):
             guard let tab = browser.tab(id: local), !tab.isPrivate, tab.pinID == nil, tab.pinnedURL == nil, !tab.isFavorite,
-                  tab.microTabID == nil, tab.extensionBaseURL == nil,
+                  tab.microTabID == nil, tab.extensionBaseURL == nil, !tab.isProvisionalDownloadPopup,
                   let page = SessionNode.tab(id: id, title: tab.pageTitle, url: tab.urlString) else { return nil }
             return .init(id: id, kind: .tab, profileID: profile, spaceID: space, title: page.title, url: page.url, customTitle: tab.customTitle)
         }

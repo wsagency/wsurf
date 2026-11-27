@@ -194,7 +194,7 @@ struct BrowserSmokeTests {
     }
 
     enum VideoDownloadNavigation: CaseIterable {
-        case mainFrame, hiddenFrame, emptyPopup, redirectedPopup, committedPopup, newTab
+        case mainFrame, hiddenFrame, emptyPopup, redirectedPopup, committedPopup, committedPopupFrame, newTab
     }
 
     @Test(arguments: VideoDownloadNavigation.allCases)
@@ -202,7 +202,12 @@ struct BrowserSmokeTests {
         let payload = try videoSample()
         let server = try await HTTPFixtureServer.start(routes: [
             "/page": .html("<title>Opener</title>"),
-            "/popup": .html("<title>Popup</title>"),
+            "/popup": .html("""
+                <title>Popup</title>
+                <a id="download" href="/attachment">Download anyway</a>
+                <a id="frame-download" href="/attachment" target="download-frame">Download in frame</a>
+                <iframe hidden name="download-frame"></iframe>
+                """),
             "/redirect": .init(status: "302 Found", headers: ["Location": "/attachment"], body: Data()),
             "/attachment": videoResponse(payload, disposition: "attachment"),
         ])
@@ -245,11 +250,12 @@ struct BrowserSmokeTests {
             }
             let path = navigation == .redirectedPopup ? "/redirect" : "/attachment"
             _ = try await opener.page.evaluateJavaScript("window.open('\(path)'); true")
-        case .committedPopup:
+        case .committedPopup, .committedPopupFrame:
             _ = try await opener.page.evaluateJavaScript("window.open('/popup'); true")
             try #require(await waitUntil { browser.activeTab?.title == "Popup" })
             source = try #require(browser.activeTab)
-            source.load(attachmentURL)
+            let link = navigation == .committedPopup ? "download" : "frame-download"
+            _ = try await source.page.evaluateJavaScript("document.getElementById('\(link)').click(); true")
         case .newTab:
             source = browser.newTab(url: attachmentURL, byPerson: true)
         }
@@ -269,6 +275,48 @@ struct BrowserSmokeTests {
             #expect(browser.tabs.contains { $0 === source })
             #expect(source.committedURL != attachmentURL)
         }
+        if navigation == .committedPopup || navigation == .committedPopupFrame {
+            #expect(source.committedURL == (try server.url("/popup")))
+            #expect(source.title == "Popup")
+            #expect(browser.activeTabID == source.id)
+        }
+    }
+
+    @Test func aDownloadPopupStaysOpenWhenItsOpenerClosed() async throws {
+        let gate = ResponseGate()
+        let payload = try videoSample()
+        var attachment = videoResponse(payload, disposition: "attachment")
+        attachment.gate = gate
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/page": .html("<title>Opener</title>"), "/attachment": attachment,
+        ])
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wsurf-download-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false, persists: false)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions("LastPopup"), downloads: downloads)
+        defer {
+            gate.open()
+            browser.closeAllTabs()
+        }
+        let opener = browser.newTab(url: try server.url("/page"))
+        try #require(await waitUntil { opener.title == "Opener" })
+        browser.setPopups(.allow, for: opener)
+        _ = try await opener.page.evaluateJavaScript("window.open('/attachment'); true")
+        try #require(await waitUntil { gate.requestCount > 0 })
+        let popup = try #require(browser.activeTab)
+        try #require(popup !== opener)
+        try #require(browser.tabs.count == 2)
+
+        browser.close(opener)
+        try #require(browser.tabs.map(\.id) == [popup.id])
+        gate.open()
+
+        try #require(await waitUntil { downloads.items.first?.state == .finished })
+        let item = try #require(downloads.items.first)
+        #expect(item.sourceTabID == popup.id)
+        #expect(try Data(contentsOf: #require(item.destination)) == payload)
+        #expect(browser.tabs.map(\.id) == [popup.id])
+        #expect(browser.activeTabID == popup.id)
     }
 
     @Test func webKitDisplaysAnInlineMP4() async throws {

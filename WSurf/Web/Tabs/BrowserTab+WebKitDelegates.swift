@@ -301,11 +301,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         let modifiers = navigationAction.modifierFlags
         // A window an agent's input opened never takes the place of the person's tab.
         let activate = (!modifiers.contains(.command) || modifiers.contains(.shift)) && BrowserPage.from(webView)?.isAutomatedInputRecent != true
+        let url = navigationAction.request.url
+        let startsProvisional = !chosenFromMenu && !SitePermissions.webOrigin(for: url).isEmpty
+        view.opensAsProvisionalDownloadPopup = startsProvisional
         onNewWindow(view, activate)
+        view.opensAsProvisionalDownloadPopup = false
         if let delegate = view.navigationDelegate as? TabNavigationDelegate {
-            let url = navigationAction.request.url
             delegate.tab?.resolveOpenerSignIn(for: url)
-            if !chosenFromMenu, !SitePermissions.webOrigin(for: url).isEmpty {
+            if startsProvisional {
                 delegate.initialPopupNavigation = .awaitingNavigation
             }
         }
@@ -549,15 +552,16 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
-        if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
+        let mainFramePage = navigationResponse.isForMainFrame ? BrowserPage.from(webView) : nil
+        if let page = mainFramePage {
             PageFrameRegistry.shared.recordMainFrameResponse(navigationResponse, in: page)
-            page.onMainFrameResponse?(navigationResponse.response)
         }
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
             tab?.autofillSave.submissions.clear()
         }
         guard !navigationResponse.canShowMIMEType || Self.isAttachment(navigationResponse.response) else {
+            mainFramePage?.onMainFrameResponse?(navigationResponse.response)
             decisionHandler(.allow)
             return
         }
@@ -566,7 +570,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             if case .navigating = initialPopupNavigation {
                 initialPopupNavigation = .downloading(generation: mainFrameActionGeneration)
             }
-            if let page = BrowserPage.from(webView) {
+            if let page = mainFramePage {
                 PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
             }
         }
