@@ -1,6 +1,106 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Pairing lets WSurf recognize an app. Manage its access and engine in Connected apps." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uparivanjem WSurf prepoznaje aplikaciju. Pristupom i web-pogonom upravljajte u odjeljku Povezane aplikacije."
+          }
+        }
+      }
+    },
+    "Allow this app to type passwords and one-time codes you give it." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dopustite aplikaciji da upisuje lozinke i jednokratne kodove koje joj date."
+          }
+        }
+      }
+    },
+    "Allow Vault login requests" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dopusti zahtjeve za prijavu iz trezora"
+          }
+        }
+      }
+    },
+    "WSurf asks you before filling a saved login." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WSurf traži vaše odobrenje prije popunjavanja spremljenih podataka za prijavu."
+          }
+        }
+      }
+    },
+    "Default engine for new tabs" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zadani web-pogon za nove kartice"
+          }
+        }
+      }
+    },
+    "Sites that require WebKit still open in WebKit." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web-mjesta koja zahtijevaju WebKit otvaraju se u WebKitu."
+          }
+        }
+      }
+    },
+    "Follow default" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Koristi zadano"
+          }
+        }
+      }
+    },
+    "Connected apps with Control access can type passwords and one-time codes you give them. Paired apps also need permission in their own settings. WSurf hides typed values from results and covers them in screenshots." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Povezane aplikacije s dopuštenim upravljanjem mogu upisivati lozinke i jednokratne kodove koje im date. Uparene aplikacije trebaju i dopuštenje u vlastitim postavkama. WSurf skriva upisane vrijednosti u rezultatima i na snimkama zaslona."
+          }
+        }
+      }
+    },
+    "Close agent tabs" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zatvori kartice agenta"
+          }
+        }
+      }
+    },
+    "%@ opened this tab" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ je otvorio ovu karticu"
+          }
+        }
+      }
+    },
     "Same tabs in every window" : {
       "comment" : "Title of the switch in Settings > General > Tabs, and the same row in Settings search. On, every window of the profile shows the pinned and unpinned tabs of each Space. On by default. Sentence case.",
       "localizations" : {
@@ -2158,9 +2258,6 @@
     },
     "Pairing isn’t available because WSurf can’t reach its secure storage. The app asks for approval each time it connects." : {
       "comment" : "Error shown when setting up a client cannot pair it because the keychain item cannot be read."
-    },
-    "Pairing lets WSurf recognize an app. Review paired apps in Connected apps." : {
-      "comment" : "Caption of the Paired apps row. “Connected apps” is a link to that Settings page and must stay a substring."
     },
     "Passwords saved before Credential Manager" : {
 
@@ -14407,13 +14504,18 @@
       "comment" : "Body of the sign-in confirmation dialog shown when a connected app calls requestUserLogin and no saved WSurf Vault login exists for the website. First %@ is the connected app’s name; second %@ is the website host."
     },
     "Allow password entry" : {
-      "comment" : "Toggle title in Settings › Connected apps under Website access. Controls whether connected apps with Control access may type user-supplied passwords and one-time codes into password and OTP fields."
+      "comment" : "Toggle title in Settings › Connected apps for a paired app and for the Website section. Controls whether connected apps with Control access may type passwords and one-time codes.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dopusti upis lozinki"
+          }
+        }
+      }
     },
     "Choose a saved account to fill:" : {
       "comment" : "Prompt line above the account picker pop-up button in the WSurf Vault sign-in confirmation dialog when multiple saved logins match the website."
-    },
-    "Connected apps with Control access can type passwords and one-time codes you give them. Typed values are scrubbed from results and covered in screenshots; saved Vault passwords still ask first." : {
-      "comment" : "Caption under the Allow password entry toggle in Settings › Connected apps."
     },
     "Fill & Sign In" : {
       "comment" : "Button in the WSurf Vault login approval sheet: fills the saved login into the page and submits the sign-in form."

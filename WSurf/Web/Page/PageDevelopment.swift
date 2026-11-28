@@ -282,6 +282,8 @@ extension BrowserPage {
 }
 
 extension PageDriver {
+    @TaskLocal static var beforeFindObservation: (@MainActor () async -> Void)?
+
     /// `unrestricted` lets the selector read any attribute; only the Developer tier sets it.
     static func findElements(selector: String, offset: Int, limit: Int, unrestricted: Bool = false, in view: BrowserPage) async -> String {
         switch PageRuntime.validate(selector: selector) {
@@ -302,6 +304,8 @@ extension PageDriver {
         guard let id = object["observation"] as? String, let documentID = object["document"] as? String,
             let url = object["url"] as? String, let items = object["items"] as? [[String: Any]]
         else { return staleMessage }
+        await beforeFindObservation?()
+        guard PageAutomationGuard.allowsExecution else { return staleMessage }
         observations.setObject(
             PageObservation(id: id, documentID: documentID, url: url, refs: Set(items.compactMap { $0["r"] as? Int })), forKey: view)
         var result = object

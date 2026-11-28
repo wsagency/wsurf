@@ -59,6 +59,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         }
         // The script rule above covers a page's frames, so a frame may not bring a downloaded file into one that runs script, nor
         // any file into a downloaded page.
+        if navigationAction.targetFrame?.isMainFrame == false {
+            BrowserPage.from(webView)?.webKitFrameRevision &+= 1
+        }
         if navigationAction.targetFrame?.isMainFrame == false, let url = navigationAction.request.url,
            FileAccessScope.refusesSubframe(to: url, inPageAt: webView.url) {
             decisionHandler(.cancel)
@@ -128,15 +131,15 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         if let tab {
             let mainFrame = navigationAction.targetFrame?.isMainFrame == true
             let tracksSignIn = mainFrame && tab.signInEngine != nil
-            let isRedirect = tracksSignIn && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
+            let isRedirect = mainFrame && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
                 && navigationAction.value(forKey: "_isRedirect") as? Bool == true
             // didStartProvisionalNavigation binds every initial link to its public WKNavigation. For a redirect, use
             // its navigation when available so an older redirect cannot act on behalf of a newer visit.
-            let navigation = isRedirect && navigationAction.responds(to: NSSelectorFromString("_mainFrameNavigation"))
+            let navigation = mainFrame && navigationAction.responds(to: NSSelectorFromString("_mainFrameNavigation"))
                 ? BrowserPage.from(webView)?.navigation(for: navigationAction.value(forKey: "_mainFrameNavigation") as? WKNavigation) : nil
             if !tab.permitsEngineNavigation(
                 navigationAction.request, isMainFrame: mainFrame, userLinkFrom: tracksSignIn ? Self.userLinkOrigin(navigationAction) : nil,
-                navigation: navigation, isRedirect: isRedirect
+                navigation: navigation ?? (isRedirect ? tab.provisionalNavigation : nil), isRedirect: isRedirect
             ) {
                 decisionHandler(.cancel)
                 return

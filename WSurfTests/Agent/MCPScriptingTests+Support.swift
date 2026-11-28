@@ -122,6 +122,8 @@ extension ScriptingRig {
         trust.loadIfNeeded()
         let client = try trust.pair(token: SyntheticToken.first, name: "Claude Code", kind: .claudeCode)
         try trust.setStanding(standing, for: client.id)
+        try trust.setAllowsPasswordEntry(true)
+        try trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: client.id)
         try trust.setDeveloperProfile(profile)
         let browser = BrowserModel(
             database: .temporary(),

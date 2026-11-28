@@ -25,6 +25,7 @@ final class ChromiumDevTools {
     private(set) weak var parent: ChromiumDevTools?
     /// The page's session only: every cross-site frame session under it, at any depth, by session ID.
     var sessions: [String: ChromiumDevTools] = [:]
+    var nonFrameSessions: Set<String> = []
     /// The page's session only: the session each pending command went to, when not its own.
     private var pendingSessions: [Int: String] = [:]
     /// MCP development diagnostics. Nil unless a lease is capturing.
@@ -38,7 +39,6 @@ final class ChromiumDevTools {
     private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
-
     struct FrameState {
         let id: String
         let parentID: String?
@@ -99,6 +99,7 @@ final class ChromiumDevTools {
     /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
     var mainFrameAddress: URL?
     var frameRevision = 0
+    var screenshotFrameRevision: UInt64 = 0
     /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
     /// (`verifyOrigin`), which then is never trusted.
     var documentOrigins: [String: Bool] = [:]
@@ -393,18 +394,23 @@ final class ChromiumDevTools {
         framesByID.values.map(\.browserFrame)
     }
 
-    func refreshFrames() async throws {
+    func refreshFrames(requireComplete: Bool = false) async throws {
         let revision = frameRevision
         let response = try await command("Page.getFrameTree")
         guard !closed else { throw ChromiumError.closed }
         // Events can deliver a newer document before this command's continuation resumes.
-        guard frameRevision == revision else { return }
+        guard frameRevision == revision else {
+            if requireComplete {
+                throw ChromiumError.staleFrame
+            }
+            return
+        }
         guard let tree = response["frameTree"] as? [String: Any] else {
             throw ChromiumError.protocolFailure("Page.getFrameTree returned no frame tree.")
         }
         var parsed: [String: FrameState] = [:]
-        parseFrameTree(tree, parentID: nil, into: &parsed)
-        guard !parsed.isEmpty else {
+        let complete = parseFrameTree(tree, parentID: nil, into: &parsed)
+        guard !parsed.isEmpty, !requireComplete || complete else {
             throw ChromiumError.protocolFailure("Page.getFrameTree returned no frames.")
         }
         updateFrames(parsed)

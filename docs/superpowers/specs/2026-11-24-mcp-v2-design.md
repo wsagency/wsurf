@@ -4,7 +4,8 @@
 # WSurf MCP v2 Design Specification
 
 **Date:** 2026-11-24  
-**Status:** Approved (Phase 1 implemented; Phase 2 implemented; Phases 3–4 planned)  
+**Status:** Phases 1–4 implemented. Background Chromium pre-warming remains planned.
+
 **Scope:** Native WSurf MCP Server (`WSurf --mcp`), Page Automation Runtime, Autofill/Vault Integration, Developer Tools, and Settings
 
 ---
@@ -30,7 +31,7 @@ MCP v2 resolves these issues while **strengthening** the core security guarantee
 The following architectural decisions are finalized for MCP v2:
 
 1. **Password write under `Control` with automatic protection:**
-   - Agents with `Control` access may write agent- or user-supplied passwords/OTPs into password/OTP fields directly (no `localhost`-only lock, no mandatory `secret: true`), governed by a Keychain-backed setting `allowsPasswordEntry` (default `true`, toggleable in Settings › Connected apps).
+   - Agents with `Control` access may write agent- or user-supplied passwords/OTPs into password/OTP fields directly (no `localhost`-only lock, no mandatory `secret: true`), governed by a Keychain-backed setting `allowsPasswordEntry` (off by default, with an additional opt-in for each paired app in Connected apps).
    - Every write into a sensitive secret field automatically suppresses autofill suggestions and save-password offers, registers the typed (and reformatted stored) value in `MCPSecretScrubber`, hides the value from tool replies, and masks filled sensitive fields in black in `screenshotPage`.
 2. **WSurf Vault Blind Fill with 4-option native consent sheet:**
    - Agents can discover anonymized Vault availability via `vaultHint: { hasSavedLogin, requiresUserApproval: true }` on login pages (zero usernames, account counts, or passwords disclosed).
@@ -103,11 +104,11 @@ The following architectural decisions are finalized for MCP v2:
 #### 3.3.2 Password & OTP Write Under `Control`
 
 - **Keychain-backed setting (`MCPTrustStore`):**
-  - `allowsPasswordEntry: Bool` (default `true`), stored in the data-protection keychain document alongside paired apps and developer settings, exposed as a toggle in **Settings › Assistant › Connected apps** (and referenced from External connections).
+  - `allowsPasswordEntry: Bool` (default `false`), stored in the data-protection keychain document alongside paired apps and developer settings, exposed as a toggle in **Settings › Assistant › Connected apps** (and referenced from External connections).
 - **Eligibility:**
-  - When a connection holds `.control` on a tab AND (`trust.allowsPasswordEntry` is `true` OR connection holds `.developer`), `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` may write into `isSensitiveSecret` fields without requiring `secret: true` and without requiring `localhost` / Developer profile.
+  - A connection needs Control and the global `trust.allowsPasswordEntry` setting. Paired clients also need their own password-entry opt-in, including clients with Developer access. With those permissions, `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` can write sensitive fields directly.
   - Explicit `secret: true` remains supported as an opt-in hint for non-password fields (e.g., API keys in plain text inputs) under the same eligibility rule.
-  - When `allowsPasswordEntry` is `false` (and not `.developer`), password/OTP writes are refused before touching the DOM.
+  - WSurf refuses password and OTP writes when a required permission is off.
 - **Automatic protections on any write into a sensitive secret field:**
   1. Target sensitivity is checked before typing so values are registered in `MCPSecretScrubber` **before** DOM `input` listeners can echo them into titles, console, or network requests.
   2. The field is not focused (preventing autofill popups), must reside in the main document (not cross-origin/embedded frames), and triggers `finishSecretEntry` (dismissing `AutofillSuggestions` and clearing `tab.autofillSave`).
@@ -167,7 +168,7 @@ To guarantee that neither Vault-filled passwords nor user-typed passwords can be
 
 ---
 
-## 4. Phase 2 — Speed & Latency Optimizations (Planned)
+## 4. Phase 2 — Speed & Latency Optimizations
 
 - **Fast-path delta observation:** Consolidate pre/post DOM digest and ref acknowledgement into fewer IPC round-trips, cutting typical `clickOnPage` / `typeOnPage` latency on Chromium and WebKit.
 - **Adaptive settle windows:** Shorten `PageSettle` quiet ceilings when no network requests, animations, or mutations are observed after an action, while honoring explicit `budget.settleMs`.
@@ -187,20 +188,44 @@ per-tab call lanes with a 4-call FIFO and a global lane for sheets and focus; `-
 
 ---
 
-## 5. Phase 3 — T3 Agent Micro Window (Planned)
+## 5. Phase 3 — T3 Agent Micro Window
 
-- **Dedicated lightweight observation surface:** When external agents (such as T3 Code or coding assistants) drive background tabs, offer an optional floating **T3 Agent Micro Window** showing a live scaled preview of the active agent tab without stealing focus or rearranging the user's primary browser window.
-- **Instant human controls:** One-click **Take Over** (promotes tab or hands back control), **Stop** (invokes the window kill switch), and inline **Vault Approval** cards for `requestUserLogin` directly anchored to the micro window.
-- **Non-intrusive lifecycle:** Auto-hides when no agent tab is active; preserves strict separation between regular and private windows (never attaches to private profiles).
+An authenticated paired host can open an isolated Agent Micro Window through
+`host-bridge.sock`. A token binds `browser.sock` to that window. The Micro Bar
+shows ownership and provides Take Over, Hand Back and Stop. Login approval uses
+a native sheet anchored to the window. These windows use regular profiles and
+preserve the user's current profile selection.
 
----
+## 6. Phase 4 — Developer Ergonomics & Multi-Tab Workflows
 
-## 6. Phase 4 — Extended Developer Ergonomics & Multi-Tab Workflows (Planned)
-
-- **Agent tab groups / session labels:** Visually group tabs opened by a single MCP connection in the sidebar with connection attribution and one-click cleanup.
-- **Cross-engine parity automation:** Combine `setTabEngine`, `openComparison`, and `compareTabs` with structured layout/console/network diffs for automated Chromium vs. WebKit (Safari) regression checks.
-- **Structured error taxonomy:** Standardize machine-readable `code` fields across all MCP tools (`protectedSecretPresent`, `webKitRequired`, `vaultLocked`, `waitingForUser`, etc.).
-- **Per-client policy controls:** Optional per-app toggles in Connected apps for password entry, Vault fill availability, and default engine preference.
+- **Session attribution and cleanup.** The tab menu names the connection that
+  opened a window-local tab. **Close agent tabs** closes only that connection's
+  window-local tabs in the current window. Tabs taken over by the person, pinned
+  tabs and shared Space tabs are excluded. Window-local tabs stay out of cloud
+  Space capture across restarts until the person files them.
+- **Cross-engine comparison.** `setTabEngine`, `openComparison` and `compareTabs`
+  let clients compare Chromium with WebKit using structured layout, console and
+  network diffs and an optional image overlay. WebKit-only sites cannot be
+  opened as a Chromium comparison.
+- **Structured outcomes.** Tool results carry machine-readable `code` fields
+  for refusals and actionable states, including `protectedSecretPresent`,
+  `webKitRequired`, `vaultLocked`, `waitingForUser`, `tabNotFound`,
+  `accessDenied`, `humanControl`, `invalidInput`, `timeout` and `unsupported`.
+  Existing messages, status values and JSON-RPC protocol errors are retained.
+- **Connected app policy.** The data-protection Keychain stores opt-in password
+  entry, the availability of Vault login requests and the default tab engine
+  for each paired client. Older pairings load with password entry off, Vault
+  requests subject to human approval and Chromium as the default where WebKit
+  is not required. The live connection uses current settings.
+- **Host bridge parity.** When `open` is omitted, `openAgentWindow` shows new
+  or hidden windows and preserves focus on visible reuse. The open reply and
+  preview `status` report actual visibility. A verified host can take a guarded
+  read-only `snapshot` during human control. Both sockets share the window’s
+  in-memory secret registry, including for redaction of preview metadata.
+  Snapshots omit images when a visible frame cannot be inspected. Take Over
+  cancels in-flight mutations, manual sign-in transfers ownership before
+  returning `waitingForUser`, and Hand Back requires a fresh observation for
+  ref-based actions.
 
 ---
 
@@ -210,11 +235,11 @@ per-tab call lanes with a 4-call FIFO and a global lane for sheets and focus; `-
 | --- | --- |
 | Malicious/prompt-injected agent hijacks user's active tab | `newTab` works without touching user tabs; `navigate` on user-shared tabs opens a new background tab unless `inPlace: true`. |
 | Shell process enables password entry or grants silently | `allowsPasswordEntry`, pairings, standing grants, and Website default live in the data-protection Keychain (`MCPTrustStore`), never in UserDefaults or editable files. |
-| Agent extracts Vault password via `requestUserLogin` | Blind fill writes directly inside WSurf; Vault credentials never enter MCP messages; human approves one of 4 explicit sheet choices; password registered in memory-only `MCPSecretScrubber` (zeroed on disconnect). |
+| Agent extracts Vault password via `requestUserLogin` | Blind fill writes directly inside WSurf; Vault credentials never enter MCP messages; human approves one of 4 explicit sheet choices; password registered in memory-only `MCPSecretScrubber` (zeroed on connection teardown, or window-session teardown for the shared Agent Micro Window registry). |
 | Agent extracts Vault or user-typed password via `evaluateScript` / DevTools | `credentialTainted` + live filled-secret check blocks `evaluateScript` (`protectedSecretPresent`), strips `readNetwork` bodies (`omitted: protected credential form`), suppresses `readConsole` previews, bans `[value]` selectors and `editDOM` on sensitive forms, and masks screenshots in black. |
 | Agent probes whether user has accounts in Vault | `vaultHint` exposes only `{ hasSavedLogin: Bool, requiresUserApproval: true }` on pages with login forms; never usernames, counts, or credentials; returns `false` when Vault is locked. |
 | Echoed password leaks through page title, console, or URL | `MCPSecretScrubber` registers typed & stored/reformatted values before DOM events fire and scrubs all encodings (raw, whitespace-collapsed, percent, JSON, HTML) across every reply. |
-| Forced Chromium on WebKit-only auth origins | `SitePermissions.webKitOnlyOrigins` enforced in both `newTab` and `setTabEngine`. |
+| Forced Chromium on WebKit-only auth origins | `SitePermissions.webKitOnlyOrigins` enforced on open, engine switches and later navigation, ahead of explicit tab engine preferences. |
 
 ---
 

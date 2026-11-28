@@ -128,6 +128,7 @@ extension BrowserModel {
         var microTabID: UUID?
         /// The shared Space row the tab is this window's page for; see `BrowserTab.spaceTabID`.
         var spaceTabID: UUID?
+        var staysInItsWindow: Bool?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -358,7 +359,8 @@ extension BrowserModel {
                 lastVisit: lastVisitID[tab.id]?.visit,
                 visitTrail: lastVisitID[tab.id]?.trail,
                 microTabID: tab.microTabID,
-                spaceTabID: tab.spaceTabID
+                spaceTabID: tab.spaceTabID,
+                staysInItsWindow: tab.staysInItsWindow ? true : nil
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -466,8 +468,8 @@ extension BrowserModel {
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
                          internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, requiresSpacePlacement, lastVisit, visitTrail, microTabID,
-                         spaceTabID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         spaceTabID, staysInItsWindow)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -486,13 +488,14 @@ extension BrowserModel {
                         lastVisit = excluded.lastVisit,
                         visitTrail = excluded.visitTrail,
                         microTabID = excluded.microTabID,
-                        spaceTabID = excluded.spaceTabID
+                        spaceTabID = excluded.spaceTabID,
+                        staysInItsWindow = excluded.staysInItsWindow
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
-                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID, tab.spaceTabID,
+                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID, tab.spaceTabID, tab.staysInItsWindow,
                 ]
             )
         }
@@ -642,7 +645,7 @@ extension BrowserModel {
             tab.isFavorite = record.isFavorite
             tab.pinID = record.pinID
             tab.spaceID = record.spaceID
-            (tab.microTabID, tab.spaceTabID) = (record.microTabID, record.spaceTabID)
+            (tab.microTabID, tab.spaceTabID, tab.staysInItsWindow) = (record.microTabID, record.spaceTabID, record.staysInItsWindow == true)
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             lastVisitID[tab.id] = record.lastVisit.map { VisitMemory(visit: $0, trail: record.visitTrail) }
             deferRestore(tab, url: restoredURL)

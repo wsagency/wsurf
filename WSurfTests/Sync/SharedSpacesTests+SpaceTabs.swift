@@ -25,6 +25,54 @@ extension SharedSpacesTests {
             .filter { $0.kind == kind && !$0.removed }
     }
 
+    @Test func windowLocalAgentTabsPublishOnlyAfterFilingAndCleanupPreservesLegacyCloudRows() async throws {
+        let cloud = FakeSyncCloud()
+        let mac = Mac(cloud)
+        defer { mac.finish() }
+        let window = mac.addWindow()
+        let space = try #require(mac.store.spaces.first)
+        try await mac.host.share(space, in: mac.profile)
+
+        let alreadyShared = window.addPage("https://published-agent.example.test/")
+        window.scheduleSave()
+        try await mac.sync()
+        #expect(mac.host.sharesRow(alreadyShared.id, in: window))
+        #expect(alreadyShared.spaceTabID == nil, "Cloud publishes these rows without profile Space-tab links")
+        let session = MCPBrowserSession(browser: window, available: { true })
+        defer { session.revoke() }
+        alreadyShared.staysInItsWindow = true
+        session.attributeAgentTab(alreadyShared)
+        let disposable = window.addPage("https://disposable-agent.example.test/")
+        disposable.staysInItsWindow = true
+        session.attributeAgentTab(disposable)
+
+        window.closeAgentTabs(openedBy: session.id)
+        #expect(!alreadyShared.isClosed)
+        #expect(disposable.isClosed)
+        try await mac.sync()
+        #expect(sharedTabs(in: cloud).contains { $0.url == alreadyShared.urlString })
+
+        let local = window.addPage("https://local-agent.example.test/")
+        local.staysInItsWindow = true
+        let localID = local.id
+        let address = local.urlString
+        try await mac.sync()
+        #expect(!sharedTabs(in: cloud).contains { $0.url == address })
+        mac.removeWindow(window)
+
+        let restored = mac.restoreWindow(window.windowID, sharesSpaceTabs: false)
+        let reopened = try #require(restored.tab(id: localID))
+        #expect(reopened.staysInItsWindow)
+        #expect(reopened.mcpAgentTabOrigin == nil)
+        try await mac.sync()
+        #expect(!sharedTabs(in: cloud).contains { $0.url == address })
+
+        restored.createFolder(named: "Filed", containing: [reopened])
+        #expect(!reopened.staysInItsWindow)
+        try await mac.sync()
+        #expect(sharedTabs(in: cloud).contains { $0.url == address })
+    }
+
     /// Two Macs with two windows each share two Spaces. A move between them, a folder and a close each reach both windows.
     @Test func remoteMovesFoldersAndClosesReachEveryWindowThatSharesSpaceTabs() async throws {
         let cloud = FakeSyncCloud()

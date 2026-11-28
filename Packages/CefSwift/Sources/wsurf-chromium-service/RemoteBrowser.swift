@@ -268,6 +268,12 @@ final class RemoteBrowser {
             reply { $0.set(CefRemote.Key.success, true) }
         }
         switch message.op {
+        case CefRemote.Op.frameCount:
+            let count = raw.flatMap { $0.pointee.get_frame_count?($0) }
+            reply {
+                $0.set(CefRemote.Key.success, count != nil)
+                $0.set(CefRemote.Key.count, Int64(count ?? 0))
+            }
         case CefRemote.Op.load:
             let url = message.string(CefRemote.Key.url)
             guard !url.isEmpty else {

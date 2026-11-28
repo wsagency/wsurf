@@ -43,7 +43,7 @@ extension MCPBrowserSession {
 
     /// The result for a call that `interrupting` cut short.
     func interruptedResult(_ tab: BrowserTab) -> CallTool.Result {
-        guard !Task.isCancelled else { return failure("The request was cancelled.") }
+        guard !Task.isCancelled else { return failure("The request was cancelled.", code: .cancelled) }
         return dialogReply(
             "dialogOpened", tab, isError: false,
             "The action reached the page and a dialog opened. The page is blocked until the dialog is answered. "
@@ -60,6 +60,7 @@ extension MCPBrowserSession {
 
     private func dialogReply(_ status: String, _ tab: BrowserTab, isError: Bool, _ message: String) -> CallTool.Result {
         var object: [String: Value] = ["status": .string(status), "tabID": .string(tab.id.uuidString), "message": .string(message)]
+        object["code"] = MCPFailureCode.dialogPending.value
         object["dialogs"] = .array(tab.dialogs.pending(for: id).map(\.value))
         let value: Value = .object(object)
         let encoder = JSONEncoder()
@@ -90,7 +91,8 @@ extension MCPBrowserSession {
             return result(.stale, "That dialog is not open any more. Call handleDialog without a dialogID to see what is open.")
         }
         guard !dialog.userMustAnswer else {
-            return result(.denied, "The user has to answer this dialog in WSurf. Say what is waiting for them and stop.")
+            return result(.denied, "The user has to answer this dialog in WSurf. Say what is waiting for them and stop.",
+                          ["code": MCPFailureCode.waitingForUser.value])
         }
         let accepted = action == "accept"
         let reply = arguments["text"]?.stringValue

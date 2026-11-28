@@ -308,11 +308,13 @@ extension ChromiumPage {
 
     /// A load of the failed entry's own address while a failed hop holds the list (a reload after Stop, the address typed again)
     /// retries the hop, as a reload does. Any other load replaces it (`ChromiumHistoryRecord.superseded`).
-    func loadInHistory(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
+    func loadInHistory(
+        _ request: URLRequest, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
         if historyRecord.hopHasMoved, (request.httpMethod ?? "GET") == "GET", let target = historyRecord.hopTarget, request.url == target.url {
-            return rehop(to: target, byPerson: byPerson)
+            return rehop(to: target, byPerson: byPerson, authorized: authorized)
         }
-        return load(request, byPerson: byPerson)
+        return load(request, byPerson: byPerson, authorized: authorized)
     }
 
     /// Whether the page's navigation is a hop backward in the list. A load the engine router moves to the other engine must then not
@@ -343,8 +345,10 @@ extension ChromiumPage {
 
     /// Back, Forward or a reload while a failed hop holds the list: `entry` of the hop's own list by GET (`entryFromHop`, `hopTarget`),
     /// so two quick Backs move one step (S5).
-    private func rehop(to entry: (index: Int, url: URL)?, byPerson: Bool = false) -> PageNavigation? {
-        guard let entry, let next = load(URLRequest(url: entry.url), byPerson: byPerson) else { return nil }
+    private func rehop(
+        to entry: (index: Int, url: URL)?, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
+        guard let entry, let next = load(URLRequest(url: entry.url), byPerson: byPerson, authorized: authorized) else { return nil }
         historyRecord.retargetHop(to: entry.index, navigation: next)
         return next
     }

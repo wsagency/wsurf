@@ -536,12 +536,15 @@ final class BrowserModel {
         after opener: BrowserTab? = nil,
         transition: HistoryStore.Transition = .typed,
         engine: BrowserEngine? = nil,
+        defaultEngine: BrowserEngine? = nil,
         byPerson: Bool = false
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
         tab.isProvisionalDownloadPopup = (adopting as? TabWebView)?.opensAsProvisionalDownloadPopup == true
         if let engine {
             tab.engineOverride = engine
+        } else if let defaultEngine {
+            tab.defaultEngineOverride = defaultEngine
         } else if isAgentMicro {
             tab.defaultEngineOverride = agentCompanion?.defaultEngine ?? .chromium
         }

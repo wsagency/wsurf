@@ -26,6 +26,7 @@ struct MCPCompareTabsTests {
 
     private static let routes: [String: HTTPFixtureServer.Response] = [
         "/same": .html(page(box: "#222")), "/dark": .html(page(box: "#222")), "/light": .html(page(box: "#ddd")),
+        "/large": .html(page(box: "#222", script: "document.body.style.cssText = 'width: 1024px; height: 1024px'")),
         "/quiet": .html(page(box: "#222")),
         "/noisy": .html(
             page(box: "#222", script:
@@ -302,6 +303,37 @@ struct MCPCompareTabsTests {
     }
 
     // MARK: Access
+
+    @Test func numericLayoutSecretsAreRedactedInBothRepliesAndViewportKeepsItsType() async throws {
+        let size = CGSize(width: 1024, height: 400)
+        try await withRig([("/large", .webKit), ("/large", .webKit)], sizes: [size, size]) { rig in
+            try await share(rig)
+            let original = try await compare(rig)
+            let initialLayout = object(original)["layout"]?.objectValue?["a"]?.objectValue
+            #expect(initialLayout?["documentHeight"] == .int(1024))
+            #expect(initialLayout?["documentWidth"] == .int(1024))
+            let result = try await PageDriver.$afterScreenshotCapture.withValue({
+                if rig.session.secrets.isEmpty {
+                    #expect(rig.session.secrets.register("1024") == .registered)
+                }
+            }) {
+                try await compare(rig, ["diagnostics": false])
+            }
+            #expect(result.isError == false, "\(text(result))")
+            let mirrored = try JSONDecoder().decode(Value.self, from: Data(text(result).utf8))
+            let report = object(result)
+            #expect(report["diagnostics"] == nil)
+            #expect(mirrored.objectValue?["diagnostics"] == nil)
+            #expect(report["layout"] == mirrored.objectValue?["layout"])
+            #expect(report["viewport"] == mirrored.objectValue?["viewport"])
+            for side in ["a", "b"] {
+                let layout = try #require(report["layout"]?.objectValue?[side]?.objectValue)
+                #expect(layout["documentHeight"] == .string(MCPSecretScrubber.replacement))
+                #expect(layout["documentWidth"] == .string(MCPSecretScrubber.replacement))
+            }
+            #expect(report["viewport"]?.objectValue?["width"] == .int(1024))
+        }
+    }
 
     @Test func aControlGrantCannotCompareAndNothingIsOpened() async throws {
         try await withRig([("/same", .webKit), ("/same", .webKit)], answer: .control) { rig in

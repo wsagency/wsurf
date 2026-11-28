@@ -44,7 +44,13 @@ extension MCPBrowserSession {
         switch Self.playwrightStep(
             entry.name, arguments, tabs: tabs.map(\.id), current: current?.id, dialogID: dialogID, hasOpenedTab: hasOpenedTab) {
         case .refuse(let message):
-            return failure(message)
+            let code: MCPFailureCode
+            if message == Self.noPlaywrightTab {
+                code = .tabNotFound
+            } else {
+                code = entry.name == "browser_file_upload" ? .unsupported : .invalidInput
+            }
+            return failure(message, code: code)
         case .select(let tab):
             playwrightTab = tab
             return try await call(name: "listTabs", arguments: [:])

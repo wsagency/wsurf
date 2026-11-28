@@ -69,6 +69,7 @@ extension BrowserTab {
         }
         pendingPDFOpening = nil
         committedNavigation = navigation
+        navigation?.authorization = nil
         autofillSave.resetDismissalsForNavigation()
         if provisionalNavigation === navigation {
             provisionalNavigation = nil
@@ -236,12 +237,18 @@ extension BrowserTab {
               SitePermissions.origin(for: url).isEmpty == false else { return true }
         // A late redirect cannot change the session of the navigation which superseded it.
         if isRedirect, let navigation, let provisionalNavigation, provisionalNavigation !== navigation {
-            return true
+            return navigation.authorization == nil
         }
+        let authorization = navigation?.authorization
+        guard authorization?() ?? true else { return false }
         resolveOpenerSignIn(for: url)
         let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
             && request.httpBody == nil && request.httpBodyStream == nil
         let destination = SitePermissions.webOrigin(for: url)
+        if !canReissue, engine == .chromium, enforcesWebKitOnlySignIn, SitePermissions.webKitOnlyOrigins.contains(destination) {
+            // Reissuing would discard the form body.
+            return false
+        }
         if canReissue {
             promoteSameSiteWebKitSignInIfNeeded(for: url, destination: destination)
         }
@@ -267,7 +274,7 @@ extension BrowserTab {
             }
             return true
         }
-        load(url, transition: pendingTransition, startedByUser: outside, byPerson: userLeavesSignIn)
+        load(url, transition: pendingTransition, startedByUser: outside, byPerson: userLeavesSignIn, authorized: authorization)
         return false
     }
 
@@ -282,7 +289,8 @@ extension BrowserTab {
         isMainFrame: Bool,
         isRedirect: Bool,
         sourceURL: URL?,
-        sourceFrame: BrowserFrame?
+        sourceFrame: BrowserFrame?,
+        navigation: PageNavigation? = nil
     ) -> Bool {
         guard let url = request.url else { return false }
         if SystemPages.isSystem(url) {
@@ -301,7 +309,7 @@ extension BrowserTab {
             )
             return false
         }
-        guard permitsEngineNavigation(request, isMainFrame: isMainFrame, isRedirect: isRedirect) else { return false }
+        guard permitsEngineNavigation(request, isMainFrame: isMainFrame, navigation: navigation, isRedirect: isRedirect) else { return false }
         if isMainFrame {
             rememberScrollOffset()
         }
@@ -765,14 +773,17 @@ extension BrowserTab {
     }
 
     private func installChromiumCallbacks(on chromium: ChromiumPage, in view: BrowserPage) {
-        chromium.navigationDecision = { [weak self, weak view] request, main, _, redirect, type, sourceURL, sourceFrame in
-            guard let self, let view, self.liveView === view else { return false }
+        chromium.navigationDecision = { [weak self, weak view, weak chromium] request, main, gesture, redirect, type, sourceURL, sourceFrame in
+            guard let self, let view, let chromium, self.liveView === view else { return false }
+            let matchesLoad = !gesture && chromium.awaitingNativeNavigation && chromium.requestedURL == request.url
+            let navigation = main && (redirect || matchesLoad) ? chromium.navigation : nil
             guard permitsChromiumNavigation(
                 request,
                 isMainFrame: main,
                 isRedirect: redirect,
                 sourceURL: sourceURL,
-                sourceFrame: sourceFrame
+                sourceFrame: sourceFrame,
+                navigation: navigation
             ) else { return false }
             let kind: AutofillSubmissionTracker.NavigationKind
             switch type {

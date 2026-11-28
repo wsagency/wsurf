@@ -31,7 +31,7 @@ extension MCPBrowserSession {
         guard let first = arguments["tabA"]?.stringValue.flatMap(UUID.init(uuidString:)),
             let second = arguments["tabB"]?.stringValue.flatMap(UUID.init(uuidString:)), first != second
         else { return MCPCompareTools.result(.invalidInput, message: "tabA and tabB must be the IDs of two different tabs.") }
-        guard let tabA = sharedTab(first), let tabB = sharedTab(second) else { return failure("This tab is not shared with this connection.") }
+        guard let tabA = sharedTab(first), let tabB = sharedTab(second) else { return failure("This tab is not shared with this connection.", code: .tabNotFound) }
         guard mayProceed(tabA, capability: .development), mayProceed(tabB, capability: .development) else {
             return MCPCompareTools.result(.denied, message: "Comparing needs development access to both tabs.")
         }
@@ -81,18 +81,18 @@ extension MCPBrowserSession {
                     "b": .object(["viewport": Self.viewportValue(b.layout)]),
                 ])
         }
-        var fields: [String: Value] = [
-            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout), "layout": MCPCompareTools.layoutValue(a.layout, b.layout),
-        ]
         let shot = await screenshotComparison(a, b, wantsImage: arguments["image"]?.boolValue == true)
-        fields["screenshot"] = shot.value
-        if arguments["diagnostics"]?.boolValue != false {
-            fields["diagnostics"] = await diagnosticsComparison(a.tab, b.tab)
-        }
+        let diagnostics: Value? = arguments["diagnostics"]?.boolValue != false ? await diagnosticsComparison(a.tab, b.tab) : .none
         // The last await is behind us: what is returned is still within this connection's access.
         guard mayProceed(a.tab, capability: .development), mayProceed(b.tab, capability: .development),
             a.tab.isLive(a.view, generation: a.generation), b.tab.isLive(b.view, generation: b.generation)
         else { return MCPCompareTools.result(.stale, message: "Page access changed while comparing. Its contents were not returned.") }
+        var fields: [String: Value] = [
+            "a": a.value, "b": b.value, "viewport": Self.viewportValue(a.layout),
+            "layout": secrets.scrubPageValue(MCPCompareTools.layoutValue(a.layout, b.layout)),
+            "screenshot": secrets.scrubPageValue(shot.value),
+        ]
+        fields["diagnostics"] = diagnostics.map(secrets.scrubPageValue)
         return MCPCompareTools.result(.ok, fields, image: shot.image)
     }
 

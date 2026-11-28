@@ -8,7 +8,7 @@ import Foundation
 
 /// Why a screenshot request produced no image. Each case maps to a distinct MCP error text.
 nonisolated enum ScreenshotFailure: Error, Equatable {
-    case stale, privacy, invalidGeometry, offscreen, captureFailed, unmappableFrame, needsDevelopment, fullPageUnsupported
+    case stale, privacy, invalidGeometry, offscreen, captureFailed, unmappableFrame, uninspectableFrame, needsDevelopment, fullPageUnsupported
 
     var message: String {
         switch self {
@@ -16,6 +16,8 @@ nonisolated enum ScreenshotFailure: Error, Equatable {
             "The page or element changed before capture. Use readPage again."
         case .privacy:
             "Screenshot refused: a filled sensitive field is on the page. Use readPage for redacted text."
+        case .uninspectableFrame:
+            "Screenshot refused: a visible frame could not be inspected for sensitive fields. Use readPage for redacted text."
         case .invalidGeometry:
             "The element or region has no usable area."
         case .offscreen:

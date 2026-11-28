@@ -69,8 +69,9 @@ struct MCPSecretTypingTests {
             "/": .html(html), "/login": .html(html), "/ping": .bytes(Data("ok".utf8), contentType: "text/plain"),
         ])
         let trust = MCPTrustStore(storage: MemoryTrustStorage())
-        trust.loadIfNeeded()
+        try trust.setAllowsPasswordEntry(true)
         let client = try trust.pair(token: SyntheticToken.first, name: "Claude Code", kind: .claudeCode)
+        try trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: client.id)
         try trust.setStanding(standing, for: client.id)
         try trust.setDeveloperProfile(profile)
         if !thisMac {

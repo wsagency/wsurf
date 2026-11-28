@@ -107,6 +107,9 @@ struct MicroTabSwitcherPill: View {
                     }
                 }
             }
+            if let active = browser.activeTab {
+                AgentTabCleanupMenuItems(tabs: [active], browser: browser)
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "square.on.square")

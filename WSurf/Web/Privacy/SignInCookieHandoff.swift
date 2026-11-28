@@ -86,7 +86,7 @@ enum SignInCookieHandoff {
     /// without the cookies.
     static func copy(
         origins: Set<String>, context: BrowserProfileContext, preferring page: ChromiumPage?, into store: WKHTTPCookieStore,
-        readLimit: Duration = .seconds(3)
+        readLimit: Duration = .seconds(3), authorized: (@MainActor () -> Bool)? = nil
     ) async -> Int {
         guard !origins.isEmpty, !context.privateSessionEnded else { return 0 }
         let source = page.flatMap { $0.context.contextID == context.contextID && !$0.isClosed && ($0.raw != nil || $0.remote != nil) ? $0 : nil }
@@ -104,7 +104,7 @@ enum SignInCookieHandoff {
         let existing = await store.allCookies()
         var copied = 0
         for cookie in cookies(all, for: origins).compactMap(httpCookie) where !keepsWebKitCopy(of: cookie, in: existing) {
-            guard !Task.isCancelled, !context.privateSessionEnded else { break }
+            guard !Task.isCancelled, !context.privateSessionEnded, authorized?() ?? true else { break }
             await store.setCookie(cookie)
             copied += 1
         }

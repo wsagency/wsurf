@@ -682,6 +682,9 @@ extension BrowserModel {
         guard !moved.isEmpty, let next = tree.moving(moved, into: folder?.id, before: target) else { return }
         storedTree = next
         if let folder {
+            for case .tab(let id) in next.expanded(Set(moved)) {
+                tabsByID[id]?.staysInItsWindow = false
+            }
             folder.isExpanded = true
             autoName(folder)
         }

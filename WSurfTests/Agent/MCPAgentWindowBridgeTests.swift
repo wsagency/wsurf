@@ -140,6 +140,16 @@ struct MCPAgentWindowBridgeTests {
             }
         }
 
+        func waitForReply(id: String) async throws -> [String: Any] {
+            for _ in 0..<12 {
+                let message = try await nextMessage()
+                if message["id"] as? String == id {
+                    return message
+                }
+            }
+            throw MCPAgentWindowError(.timedOut, "Did not receive reply \(id)")
+        }
+
         func waitForEvent(named name: String, maxMessages: Int = 8) async throws -> [String: Any] {
             for _ in 0..<maxMessages {
                 let message = try await nextMessage()
@@ -168,7 +178,9 @@ struct MCPAgentWindowBridgeTests {
 
     func startHarness(
         authTimeout: Duration = .seconds(2),
-        storage: MemoryTrustStorage = MemoryTrustStorage()
+        storage: MemoryTrustStorage = MemoryTrustStorage(),
+        onOpen: @escaping (Bool) -> Void = { _ in },
+        onShow: @escaping () -> Void = {}
     ) async throws -> Harness {
         let directory = "/tmp/wsurf-bridge-\(UUID().uuidString)"
         let mcpEndpoint = directory + "/browser.sock"
@@ -185,6 +197,7 @@ struct MCPAgentWindowBridgeTests {
             trustStore: trust,
             opener: { [weak app] profile, companion, url, engine, floatOnTop, open in
                 guard let app else { preconditionFailure("app gone") }
+                onOpen(open)
                 return app.openAgentMicroWindow(
                     profile: profile,
                     companion: companion,
@@ -195,7 +208,11 @@ struct MCPAgentWindowBridgeTests {
                 )
             },
             disconnectMCP: { [weak server] browser in server?.disconnect(browser: browser) },
-            cancelMCPCalls: { [weak server] browser in server?.cancelActiveCall(in: browser) }
+            cancelMCPCalls: { [weak server] browser, preservedCall in server?.cancelActiveCall(in: browser, except: preservedCall) },
+            showWindow: { window in
+                onShow()
+                window.showBrowser(activate: false)
+            }
         )
         let bridge = MCPAgentWindowBridge(
             endpoint: bridgeEndpoint,
@@ -352,7 +369,8 @@ struct MCPAgentWindowBridgeTests {
         let appURL = try fixture.url("/app")
         let nextURL = try fixture.url("/next")
         try await withProfile { profile in
-            let harness = try await startHarness()
+            var requestedOpen: Bool?
+            let harness = try await startHarness(onOpen: { requestedOpen = $0 })
             defer {
                 stopHarness(harness)
                 withExtendedLifetime(fixture) {}
@@ -385,6 +403,9 @@ struct MCPAgentWindowBridgeTests {
             #expect(MCPPairing.isWellFormed(windowToken))
 
             let agentWindow = try #require(harness.app.windows.first { $0.windowID.uuidString == windowId })
+            let nativeWindow = try #require(agentWindow.nativeWindow)
+            #expect(requestedOpen == false)
+            #expect(openResult["visible"] as? Bool == (nativeWindow.isVisible && !nativeWindow.isMiniaturized))
             #expect(agentWindow.floatsOnTop == true)
             #expect(agentWindow.browser.agentCompanion?.hostName == "Verified Host")
             let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
@@ -613,12 +634,15 @@ struct MCPAgentWindowBridgeTests {
         let appURL = try fixture.url("/app")
         let nextURL = try fixture.url("/next")
         try await withProfile { profile in
-            let harness = try await startHarness()
+            var requestedOpen: Bool?
+            let harness = try await startHarness(onOpen: { requestedOpen = $0 })
             defer {
                 stopHarness(harness)
                 withExtendedLifetime(fixture) {}
             }
             let paired = try harness.trust.pair(token: SyntheticToken.first, name: "T3 Code", kind: nil)
+            try harness.trust.setClientPolicy(\.defaultEngine, to: .webKit, for: paired.id)
+            try harness.trust.setStanding(.development, for: paired.id)
 
             let client = try await connectAuthenticated(harness)
             defer { Task { await client.close() } }
@@ -627,7 +651,7 @@ struct MCPAgentWindowBridgeTests {
                 id: "open-1", op: "openAgentWindow",
                 params: [
                     "threadId": "thread-B", "title": "Initial Title", "profileId": profile.id.uuidString,
-                    "url": appURL.absoluteString, "engine": "webkit", "floatOnTop": false,
+                    "url": appURL.absoluteString, "floatOnTop": false, "access": "development",
                 ]
             )
             let openResult = try #require(openResp["result"] as? [String: Any])
@@ -635,6 +659,11 @@ struct MCPAgentWindowBridgeTests {
             let tabId = try #require(openResult["tabId"] as? String)
             let agentWindow = try #require(harness.app.windows.first { $0.windowID.uuidString == windowId })
             let agentTab = try #require(agentWindow.browser.tabs.first { $0.id.uuidString == tabId })
+            let window = try #require(agentWindow.nativeWindow)
+            #expect(requestedOpen == true)
+            #expect(openResult["visible"] as? Bool == true)
+            #expect(openResult["engine"] as? String == "webkit")
+            #expect(window.isVisible && !window.isMiniaturized)
             try #require(await waitUntil { agentTab.liveView?.url == appURL && !agentTab.isLoading })
 
             // agentMismatch & staleGeneration
@@ -689,13 +718,20 @@ struct MCPAgentWindowBridgeTests {
                 params: ["tabId": tabId, "threadId": "thread-B", "operation": "status"]
             )
             #expect(statusResp["ok"] as? Bool == true)
+            #expect((statusResp["result"] as? [String: Any])?["visible"] as? Bool == true)
+
+            try await checkHumanSnapshot(client, harness: harness, pairedID: paired.id, agentTab: agentTab)
+            window.orderOut(nil)
+            let (hidden, _) = try await client.request(
+                id: "guard-hidden", op: "invokePreview",
+                params: ["tabId": tabId, "threadId": "thread-B", "operation": "status"])
+            #expect((hidden["result"] as? [String: Any])?["visible"] as? Bool == false)
 
             // ONLY user Hand Back restores agent ownership!
             agentWindow.handBackAgentMicroWindow()
             let backEvent = try await client.waitForEvent(named: "ownerChanged")
             #expect((backEvent["payload"] as? [String: Any])?["owner"] as? String == "agent")
 
-            // H2: Clicking Stop pauses the paired client, closes the bridge socket, and blocks immediate reconnect/reopen!
             agentWindow.stopAgentMicroWindow()
             #expect(harness.trust.client(id: paired.id)?.paused == true)
             #expect(!harness.registry.hasActiveWindows)
@@ -707,6 +743,48 @@ struct MCPAgentWindowBridgeTests {
             #expect(retryReply["ok"] as? Bool == false)
             #expect((retryReply["error"] as? [String: Any])?["code"] as? String == "unauthorized")
             await retryClient.close()
+        }
+    }
+
+    private func checkHumanSnapshot(_ client: BridgeClient, harness: Harness, pairedID: UUID, agentTab: BrowserTab) async throws {
+        let tabId = agentTab.id.uuidString
+        let snapshotSecret = "bridge-snapshot-secret-Q7"
+        let session = try #require(harness.registry.record(pairedClientId: pairedID, threadId: "thread-B")?.previewSession)
+        #expect(session.secrets.registerVaultSecret(snapshotSecret) == .registered)
+        let page = try #require(agentTab.liveView)
+        _ = try await page.evaluateJavaScript(
+            "document.title = '\(snapshotSecret)'; document.querySelector('p').textContent += ' \(snapshotSecret)'; 0")
+        let snapshotRequest: [String: Any] = [
+            "tabId": tabId, "threadId": "thread-B", "expectedGeneration": 2, "operation": "snapshot",
+            "params": ["includeImage": true],
+        ]
+        let (snapshot, _) = try await client.request(id: "guard-snapshot", op: "invokePreview", params: snapshotRequest)
+        let read = try #require(snapshot["result"] as? [String: Any])
+        #expect(read["owner"] as? String == "human")
+        #expect((read["page"] as? String)?.contains("Hello") == true)
+        #expect(read["imageBase64"] == nil)
+        #expect(!String(describing: read).contains(snapshotSecret))
+
+        try harness.trust.setStanding(.off, for: pairedID)
+        let (downgraded, _) = try await client.request(id: "guard-downgraded", op: "invokePreview", params: snapshotRequest)
+        #expect((downgraded["error"] as? [String: Any])?["code"] as? String == "denied")
+        try harness.trust.setStanding(.development, for: pairedID)
+
+        _ = try await page.evaluateJavaScript(
+            "document.body.insertAdjacentHTML('beforeend', '<input type=password value=humanSecretOnly>'); 0")
+        let (protected, _) = try await client.request(id: "guard-protected", op: "invokePreview", params: snapshotRequest)
+        #expect(protected["ok"] as? Bool == false)
+        #expect((protected["error"] as? [String: Any])?["code"] as? String == "protectedSecretPresent")
+        _ = try await page.evaluateJavaScript("document.querySelector('input').remove(); 0")
+        session.markCredentialTainted(tab: agentTab, mainDocumentID: page.mainDocumentID)
+        let (tainted, _) = try await client.request(id: "guard-tainted", op: "invokePreview", params: snapshotRequest)
+        #expect((tainted["error"] as? [String: Any])?["code"] as? String == "protectedSecretPresent")
+
+        for operation in ["act", "evaluate", "resize", "set_appearance", "dialog", "close", "set_engine", "open"] {
+            let (blocked, _) = try await client.request(
+                id: "guard-\(operation)", op: "invokePreview",
+                params: ["tabId": tabId, "threadId": "thread-B", "operation": operation])
+            #expect((blocked["error"] as? [String: Any])?["code"] as? String == "humanControl")
         }
     }
 

@@ -8,6 +8,11 @@ import WebKit
 
 @MainActor
 enum PageDriver {
+    @TaskLocal static var refusesFilledSecrets = false
+    @TaskLocal static var includesDocumentURL = true
+    @TaskLocal static var allowsAgentWindowCapture: (@MainActor @Sendable () -> Bool)?
+    static let filledSecretRefusal = "The page contains a protected password or sensitive field."
+
     // MARK: - The page-side runtime
 
     static func scripted(_ body: String) -> String {
@@ -32,7 +37,10 @@ enum PageDriver {
         } else {
             frameCheck = ""
         }
-        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck
+        let secretCheck = refusesFilledSecrets
+            ? "if (R.hasFilledSensitiveField()) return JSON.stringify({error: '\(filledSecretRefusal)'});\n"
+            : ""
+        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck + secretCheck
     }
 
     // MARK: - Reading
@@ -113,7 +121,7 @@ enum PageDriver {
         let nextText = start + text.utf16.count
         let totalControls = object["controlTotal"] as? Int ?? 0
         let nextControl = (object["controlStart"] as? Int ?? 0) + refs.count
-        if PageOutputBudget.cost(url) <= 350 {
+        if includesDocumentURL, PageOutputBudget.cost(url) <= 350 {
             result += "\nurl: \(url)"
         }
         result += "\nobservationID: \(id)"
@@ -128,6 +136,7 @@ enum PageDriver {
         if nextControl < totalControls {
             result += "\nMore controls: readPage controlOffset=\(nextControl) (\(totalControls) total); keep the same query and scope."
         }
+        guard PageAutomationGuard.allowsExecution else { return staleMessage }
         observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: delivered(refs, in: documentID, of: webView)), forKey: webView)
         return result
     }

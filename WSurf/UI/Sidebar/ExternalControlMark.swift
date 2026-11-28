@@ -185,6 +185,7 @@ struct ExternalControlMenuItems: View {
 
     var body: some View {
         let server = coordinator.mcpServer
+        AgentTabCleanupMenuItems(tabs: tabs, browser: coordinator.browser)
         let held = tabs.filter { !$0.processState.externalControllers.isEmpty }
         let controllers = held.flatMap { server.controllers(of: $0, in: coordinator.browser) }
         let apps = Dictionary(grouping: controllers, by: \.id).compactMap { $0.value.first }
@@ -212,6 +213,27 @@ struct ExternalControlMenuItems: View {
                 }
             }
             Divider()
+        }
+    }
+}
+
+struct AgentTabCleanupMenuItems: View {
+    let tabs: [BrowserTab]
+    let browser: BrowserModel
+
+    var body: some View {
+        let sources = tabs.compactMap { browser.agentTabOrigin(for: $0) }
+        let sessions = sources.enumerated().compactMap { index, source in
+            sources[..<index].contains(where: { $0.sessionID == source.sessionID }) ? nil : source
+        }
+        ForEach(sessions, id: \.sessionID) { source in
+            Section {
+                Button("Close agent tabs", role: .destructive) {
+                    browser.closeAgentTabs(openedBy: source.sessionID)
+                }
+            } header: {
+                Text("\(source.clientName) opened this tab")
+            }
         }
     }
 }

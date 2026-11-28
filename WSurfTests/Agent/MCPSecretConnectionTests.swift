@@ -52,6 +52,8 @@ struct MCPSecretConnectionTests {
         let running = Running()
         running.developer.context.extensions.register(browser: running.developer, window: running.window)
         let client = try running.trust.pair(token: SyntheticToken.first, name: "Claude Code", kind: .claudeCode)
+        try running.trust.setAllowsPasswordEntry(true)
+        try running.trust.setClientPolicy(\.allowsPasswordEntry, to: true, for: client.id)
         try running.trust.setStanding(.developer, for: client.id)
         try running.trust.setDeveloperProfile(running.developerProfile.id, dedicated: true)
         let developer = running.developer

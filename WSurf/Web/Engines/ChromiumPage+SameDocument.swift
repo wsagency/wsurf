@@ -57,7 +57,7 @@ extension ChromiumPage {
     /// Stop ends a load that Chromium has not begun (no `willNavigate` yet). It reports no end of its own: `loading = false` is
     /// dropped while the wait holds and -3 is ignored, so the page would stay loading and `BrowserTab.reload` would take it for
     /// stuck and restart it, dropping Back and Forward.
-    private func endUnstartedLoad() {
+    func endUnstartedLoad() {
         guard awaitingNativeNavigation else { return }
         awaitingNativeNavigation = false
         sameDocumentWait = nil

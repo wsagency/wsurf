@@ -46,13 +46,10 @@ struct MCPPrivacyTests {
         _ browser: BrowserModel, access: MCPAccessConsent.Access = .control, allowsPasswordEntry: Bool = true
     ) -> MCPBrowserSession {
         let trust = MCPTrustStore(storage: MemoryTrustStorage())
-        trust.loadIfNeeded()
-        if !allowsPasswordEntry {
-            do {
-                try trust.setAllowsPasswordEntry(false)
-            } catch {
-                Issue.record("Failed to disable password entry in test trust store: \(error)")
-            }
+        do {
+            try trust.setAllowsPasswordEntry(allowsPasswordEntry)
+        } catch {
+            Issue.record("Failed to set password entry in test trust store: \(error)")
         }
         return MCPBrowserSession(browser: browser, trust: trust, available: { true }, consent: { _, _, _ in access })
     }
@@ -313,7 +310,7 @@ struct MCPPrivacyTests {
         #expect(refused.isError == true)
         #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
 
-        // With the default setting (allowsPasswordEntry == true), Control can type passwords and WSurf scrubs/hides them.
+        // With password entry enabled, Control can type passwords and WSurf scrubs/hides them.
         let allowed = session(browser, allowsPasswordEntry: true)
         _ = try await call(allowed, "requestAccess")
         let fresh = try await observation(allowed, tab: tab)

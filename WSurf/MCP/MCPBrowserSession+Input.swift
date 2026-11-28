@@ -101,35 +101,37 @@ extension MCPBrowserSession {
     /// finds its own ends. A selector reads the page's structure, so it needs development access, not only control.
     /// Returns a refusal, or nil with `arguments` rewritten.
     func prepareTargets(
-        _ entry: MCPToolCatalog.Entry, arguments: inout [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int, url: URL
+        _ entry: MCPToolCatalog.Entry, arguments: inout [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int, url: URL,
+        holdsOwnership: @escaping @MainActor @Sendable () -> Bool
     ) async -> CallTool.Result? {
+        guard holdsOwnership() else { return failure("Page access changed. Read the page again.", code: .accessDenied) }
         let name = entry.name
         let needsDevelopment = "A selector needs development access. Use readPage and a ref, or ask for development access with requestAccess."
         if name == "dragOnPage" {
             switch Self.dragTargets(arguments) {
             case .failure(let failed):
-                return failure(failed.message)
+                return failure(failed.message, code: .invalidInput)
             case .success(let targets):
-                return targets.usesSelector && !mayProceed(tab, capability: .development) ? failure(needsDevelopment) : nil
+                return targets.usesSelector && !mayProceed(tab, capability: .development) ? failure(needsDevelopment, code: .accessDenied) : nil
             }
         }
         if arguments["x"] != nil || arguments["y"] != nil {
-            guard Self.point(arguments) != nil else { return failure("Give both x and y.") }
+            guard Self.point(arguments) != nil else { return failure("Give both x and y.", code: .invalidInput) }
             guard arguments["ref"] == nil, arguments["selector"] == nil else {
-                return failure("Name the target with one of ref, selector, or x and y.")
+                return failure("Name the target with one of ref, selector, or x and y.", code: .invalidInput)
             }
             return nil
         }
         guard let kinds = MCPToolCatalog.selectorTargets[name] else { return nil }
         guard let selector = arguments["selector"]?.stringValue else {
-            return arguments["ref"] == nil ? failure("Name the control with a ref from readPage or with a selector.") : nil
+            return arguments["ref"] == nil ? failure("Name the control with a ref from readPage or with a selector.", code: .invalidInput) : nil
         }
-        guard arguments["ref"] == nil else { return failure("Name the control with either ref or selector, not both.") }
-        guard mayProceed(tab, capability: .development) else { return failure(needsDevelopment) }
+        guard arguments["ref"] == nil else { return failure("Name the control with either ref or selector, not both.", code: .invalidInput) }
+        guard mayProceed(tab, capability: .development) else { return failure(needsDevelopment, code: .accessDenied) }
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: .development) && self.isReachable(tab)
             })
         let outcome = await PageAutomationGuard.$current.withValue(scope) { () -> Result<PageDriver.ControlTarget, PageDriver.TargetFailure> in
@@ -138,9 +140,9 @@ extension MCPBrowserSession {
         }
         switch outcome {
         case .failure(let failed):
-            return failure(failed.message)
+            return failure(failed.message, code: .invalidInput)
         case .success(let target):
-            guard scope.validate(), !Task.isCancelled else { return failure("Page access changed before the operation finished. Its contents were not returned.") }
+            guard scope.validate(), !Task.isCancelled else { return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied) }
             // The client holds this observation from now on; one it already holds keeps its id.
             if observations[tab.id]?.id != target.observationID {
                 observations[tab.id] = PageObservation(id: target.observationID, snapshot: target.observationID, documentURL: target.url)

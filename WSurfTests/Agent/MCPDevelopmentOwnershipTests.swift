@@ -594,7 +594,7 @@ struct MCPDevelopmentOwnershipTests {
             let calls = [(second, "getDevelopmentInfo"), (second, "resetDevelopment"), (first, "getDevelopmentInfo")]
             for (connection, name) in calls {
                 let result = try? await self.call(connection, name, tab)
-                if result?.isError != true || result?.structuredContent != nil {
+                if result?.isError != true || result?.structuredContent?.objectValue?["code"] != "connectionUnavailable" {
                     problems.append(name)
                 }
             }

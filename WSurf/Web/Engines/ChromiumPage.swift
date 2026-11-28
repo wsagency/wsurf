@@ -356,13 +356,15 @@ final class ChromiumPage: NSView {
     }
 
     @discardableResult
-    func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
-        guard !isClosed, !closing, let url = request.url else { return nil }
+    func load(
+        _ request: URLRequest, byPerson: Bool = false, authorized: (@MainActor () -> Bool)? = nil
+    ) -> PageNavigation? {
+        guard !isClosed, !closing, authorized?() ?? true, let url = request.url else { return nil }
         guard !holdsForRecovery(request, byPerson: byPerson) else { return nil }
         supersedeStop()
         pendingLoad?.cancel()
         mainFrameGeneration &+= 1
-        let next = PageNavigation()
+        let next = PageNavigation(authorization: authorized)
         navigation = next
         requestedURL = url
         htmlDocumentURL = nil
@@ -387,6 +389,12 @@ final class ChromiumPage: NSView {
                     hasAppliedInitialSettings = true
                 }
                 guard !Task.isCancelled, navigation === next else { return }
+                guard next.authorization?() ?? true else {
+                    endUnstartedLoad()
+                    navigation = nil
+                    requestedURL = nil
+                    return
+                }
                 try loadNative(request)
             } catch {
                 guard !Task.isCancelled, navigation === next else { return }
@@ -596,6 +604,18 @@ final class ChromiumPage: NSView {
             remote?.send(CefRemote.Op.zoom) { $0.set(CefRemote.Key.value, level) }
             withHost { $0.pointee.set_zoom_level?($0, level) }
         }
+    }
+
+    /// Independent browser-process inventory, including frames without a usable renderer session.
+    func screenshotFrameCount() async -> Int? {
+        if let remote {
+            let message = CefRemoteMessage(CefRemote.Op.frameCount, browser: remote.id)
+            guard case .value(let reply) = await remote.connection.request(message, timeout: 2),
+                  reply.bool(CefRemote.Key.success) else { return nil }
+            return Int(exactly: reply.int(CefRemote.Key.count))
+        }
+        guard let raw else { return nil }
+        return raw.pointee.get_frame_count?(raw)
     }
 
     func frames() async throws -> [BrowserFrame] {

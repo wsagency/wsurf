@@ -28,6 +28,75 @@ nonisolated extension PageRuntime {
       try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { changeCount++; }); } catch (e) {}
       """#
 
+    static let walkScript = #"""
+      const isFrame = el => el?.nodeType === 1 && /^(iframe|frame)$/i.test(el.localName);
+      function* walk(root, inspectedFrame, observeFrames, includeRoot = false) {
+        const descendants = root.querySelectorAll('*');
+        for (const el of includeRoot ? [root, ...descendants] : descendants) {
+          yield el;
+          if (el.shadowRoot) {
+            watchRoot(el.shadowRoot);
+            observeFrames?.(el.shadowRoot);
+            yield* walk(el.shadowRoot, inspectedFrame, observeFrames);
+          }
+          if (!isFrame(el)) continue;
+          let child, childRoot;
+          try {
+            child = el.contentDocument;
+            childRoot = child && (child.body || child.documentElement);
+            if (inspectedFrame && childRoot && el.contentWindow.origin === 'null') childRoot = null;
+          } catch (e) {}
+          if (childRoot) {
+            watchRoot(child);
+            observeFrames?.(child);
+            yield* walk(childRoot, inspectedFrame, observeFrames, true);
+          }
+          inspectedFrame?.(el, childRoot ? child : null);
+        }
+      }
+      """#
+
+    static let screenshotFrameScript = #"""
+      let frameRevision = 0, nextFrameID = 0;
+      const frameIDs = new WeakMap();
+      const frameRoots = new WeakSet();
+      const frameID = node => {
+        if (!frameIDs.has(node)) frameIDs.set(node, ++nextFrameID);
+        return frameIDs.get(node);
+      };
+      const containsFrame = node => {
+        if (isFrame(node) || node.querySelector?.('iframe,frame')) return true;
+        if (node.shadowRoot && containsFrame(node.shadowRoot)) return true;
+        return Array.from(node.querySelectorAll?.('*') || []).some(el => el.shadowRoot && containsFrame(el.shadowRoot));
+      };
+      const noteFrameMutations = records => {
+        if (records.some(record => record.type === 'attributes'
+          ? isFrame(record.target) : [...record.addedNodes, ...record.removedNodes].some(containsFrame))) frameRevision++;
+      };
+      const frameWatcher = new MutationObserver(noteFrameMutations);
+      const watchFrames = root => {
+        if (frameRoots.has(root)) return;
+        frameRoots.add(root);
+        frameWatcher.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['src','srcdoc','sandbox']});
+        root.addEventListener('load', event => { if (event.isTrusted && isFrame(event.target)) frameRevision++; }, true);
+      };
+      const scanScreenshot = proof => {
+        const frames = [], filled = [];
+        let uninspectable = false;
+        watchFrames(document);
+        const inspect = (el, child) => {
+          if (!child) { uninspectable = true; return; }
+          child.__wsurfScreenshotProof = proof;
+          frames.push([String(frameID(el)), String(frameID(child)), child.URL]);
+        };
+        for (const el of walk(document.documentElement, inspect, watchFrames)) {
+          if (isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) filled.push(el);
+        }
+        noteFrameMutations(frameWatcher.takeRecords());
+        return {frames, filled, uninspectable, revision: frameRevision};
+      };
+      """#
+
     /// Spliced into the runtime, where it shares the helpers (`collect`, `visible`, `norm`, `clip`...) it is written against.
     static let feedbackScript = #"""
       // MARK: Action feedback: digest, quiet wait, condition wait

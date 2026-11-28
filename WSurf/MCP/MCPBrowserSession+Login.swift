@@ -21,6 +21,7 @@ struct MCPVaultProvider {
     var blindFill: @MainActor (
         BrowserTab, BrowserPage, URL, AccountSummary, Bool, @MainActor (String) -> Bool
     ) async -> PageDriver.VaultFillResult?
+    var isLocked: @MainActor (BrowserTab, URL, UUID?) async -> Bool = { _, _, _ in false }
 
     static func live(browser: BrowserModel) -> MCPVaultProvider {
         MCPVaultProvider(
@@ -33,6 +34,10 @@ struct MCPVaultProvider {
                 return await VaultBlindLoginBridge.blindFill(
                     account: account, submit: submit, in: browser, tab: tab, view: view, url: url,
                     registerSecret: registerSecret)
+            },
+            isLocked: { [weak browser] tab, url, vaultID in
+                guard let browser else { return false }
+                return await VaultBlindLoginBridge.isLocked(in: browser, tab: tab, url: url, vaultID: vaultID)
             }
         )
     }
@@ -41,27 +46,15 @@ struct MCPVaultProvider {
 /// Document-scoped credential protection (`credentialTainted`), anonymized `vaultHint`, and `requestUserLogin`.
 @MainActor
 extension MCPBrowserSession {
-    /// Identifies a document that WSurf Vault filled credentials into. Cleared ONLY on real main-frame document commits
-    /// (`BrowserTab.notifyDocumentCommitted`), never by `history.pushState`/hash changes or pure read queries.
-    struct CredentialTaint: Equatable, Sendable {
-        let commitEpoch: UInt64
-        let runtimeDocumentID: String?
-        let mainDocumentID: String?
-    }
-
     // MARK: Credential protection
 
     /// Marks `tab`'s current document as credential-tainted, registers a commit observer so real main-frame navigation
     /// clears taint cleanly, and strips any already-buffered diagnostics bodies/previews on this document.
-    func markCredentialTainted(tab: BrowserTab, runtimeDocumentID: String?, mainDocumentID: String?) {
-        let epoch = tab.documentCommitEpoch
-        credentialTaintedDocuments[tab.id] = CredentialTaint(
-            commitEpoch: epoch, runtimeDocumentID: runtimeDocumentID, mainDocumentID: mainDocumentID)
+    func markCredentialTainted(tab: BrowserTab, mainDocumentID: String?) {
+        tab.mcpCredentialTaint = (tab.documentCommitEpoch, mainDocumentID)
         let tabID = tab.id
         tab.observeDocumentCommit(id: id) { [weak self] in
-            guard let self else { return }
-            self.credentialTaintedDocuments[tabID] = nil
-            self.inspectionApprovedDocuments[tabID] = nil
+            self?.inspectionApprovedDocuments[tabID] = nil
         }
         if let diagnostics = ownLease(tab)?.diagnostics {
             diagnostics.taintDocument(mainDocumentID ?? diagnostics.buffer.documentID)
@@ -77,9 +70,7 @@ extension MCPBrowserSession {
     /// Never mutates taint state; when `mainDocumentID` was nil at fill time, conservatively treats the entire commit
     /// epoch as tainted until a real new document commits.
     func isMainDocumentCredentialTainted(tab: BrowserTab, mainDocumentID: String) -> Bool {
-        guard let taint = credentialTaintedDocuments[tab.id], taint.commitEpoch == tab.documentCommitEpoch else {
-            return false
-        }
+        guard let taint = tab.mcpCredentialTaint, tab.isMCPCredentialTainted else { return false }
         if let taintedMain = taint.mainDocumentID {
             return taintedMain == mainDocumentID
         }
@@ -92,7 +83,7 @@ extension MCPBrowserSession {
     /// autofilled username, or contact field) not explicitly approved for inspection. Fails closed if the page does not answer.
     func isDocumentCredentialProtected(tab: BrowserTab, view: BrowserPage) async -> Bool {
         guard let state = await PageDriver.protectedSecretState(in: view) else { return true }
-        if let taint = credentialTaintedDocuments[tab.id], taint.commitEpoch == tab.documentCommitEpoch {
+        if tab.isMCPCredentialTainted {
             return true
         }
         if state.hasFilledSensitive {
@@ -103,14 +94,19 @@ extension MCPBrowserSession {
 
     // MARK: Anonymized vaultHint
 
+    private var allowsVaultFill: Bool {
+        guard pairedClient != nil else { return true }
+        return livePairedClient?.policy.allowsVaultFill == true
+    }
+
     /// Returns `{ hasSavedLogin: Bool, requiresUserApproval: true }` when `view` currently displays a visible login/password
     /// form, or nil otherwise. Never discloses usernames, account counts, or passwords.
     func vaultHint(for tab: BrowserTab, view: BrowserPage, url: URL) async -> Value? {
         guard await PageDriver.hasLoginForm(in: view) else { return nil }
-        let accounts = await vaultProvider.savedAccounts(tab, url, nil)
+        let accounts = allowsVaultFill ? await vaultProvider.savedAccounts(tab, url, nil) : []
         guard isConnected, available(), !Task.isCancelled, webURL(of: tab) == url else { return nil }
         return .object([
-            "hasSavedLogin": .bool(!accounts.isEmpty),
+            "hasSavedLogin": .bool(allowsVaultFill && !accounts.isEmpty),
             "requiresUserApproval": .bool(true),
         ])
     }
@@ -120,23 +116,24 @@ extension MCPBrowserSession {
     func requestUserLogin(_ arguments: [String: Value], tab: BrowserTab) async -> CallTool.Result {
         let mode = arguments["mode"]?.stringValue ?? "vaultOrManual"
         guard ["vaultOrManual", "vaultFill", "manualLogin"].contains(mode) else {
-            return failure("mode must be vaultOrManual, vaultFill, or manualLogin.")
+            return failure("mode must be vaultOrManual, vaultFill, or manualLogin.", code: .invalidInput)
         }
         let reason = arguments["reason"]?.stringValue
         if let reason, reason.utf8.count > 200 {
-            return failure("reason must be at most 200 UTF-8 bytes.")
+            return failure("reason must be at most 200 UTF-8 bytes.", code: .invalidInput)
         }
         let accountHint = arguments["accountHint"]?.stringValue
         if let accountHint, accountHint.utf8.count > 100 {
-            return failure("accountHint must be at most 100 UTF-8 bytes.")
+            return failure("accountHint must be at most 100 UTF-8 bytes.", code: .invalidInput)
         }
 
         if mode == "manualLogin" {
-            handBack(tab)
+            handBackForLogin(tab)
             return loginResult(
                 status: "waitingForUser", tabID: tab.id,
                 message: "Control was handed to the user. Ask the user to sign in in WSurf and share control again.")
         }
+        guard mode != "vaultFill" || allowsVaultFill else { return vaultFillRefusal() }
 
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
@@ -144,106 +141,143 @@ extension MCPBrowserSession {
         let view = tab.page
         let generation = tab.pageGeneration
         guard tab.isLive(view, generation: generation), let url = webURL(of: tab) else {
-            return failure("The webpage is unavailable.")
+            return failure("The webpage is unavailable.", code: .pageUnavailable)
         }
         let initialOrigin = SitePermissions.origin(for: url)
         let initialCommitEpoch = tab.documentCommitEpoch
 
-        let accounts = await vaultProvider.savedAccounts(tab, url, accountHint)
+        let accounts = allowsVaultFill ? await vaultProvider.savedAccounts(tab, url, accountHint) : []
         guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
             let liveAfterLookup = webURL(of: tab), SitePermissions.origin(for: liveAfterLookup) == initialOrigin,
             tab.documentCommitEpoch == initialCommitEpoch
         else {
-            return failure("Page access changed before login approval.")
+            return failure("Page access changed before login approval.", code: .accessDenied)
         }
 
+        let canFill = allowsVaultFill
+        if mode == "vaultFill", !canFill { return vaultFillRefusal() }
         if mode == "vaultFill", accounts.isEmpty {
+            let locked = await vaultProvider.isLocked(tab, url, nil)
+            guard allowsVaultFill else { return vaultFillRefusal() }
+            guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
+                  tab.documentCommitEpoch == initialCommitEpoch, webURL(of: tab) == liveAfterLookup
+            else {
+                return failure("Page access changed before login approval.", code: .accessDenied)
+            }
             return loginResult(
                 status: "noSavedLogin", tabID: tab.id,
-                message: "No saved WSurf Vault login is available for this website. Call requestUserLogin with mode \"manualLogin\" or \"vaultOrManual\" to let the user sign in.")
+                message: "No saved WSurf Vault login is available for this website. Call requestUserLogin with mode \"manualLogin\" or \"vaultOrManual\" to let the user sign in.",
+                extra: ["code": (locked ? MCPFailureCode.vaultLocked : .noSavedLogin).value])
         }
 
-        let sheetAccounts = accounts.map { MCPAccessConsent.LoginAccount(id: $0.id, label: $0.label) }
+        let sheetAccounts = canFill ? accounts.map { MCPAccessConsent.LoginAccount(id: $0.id, label: $0.label) } : []
         let choice = await loginConsent(clientName, url, sheetAccounts, mode != "vaultFill", reason)
         guard isConnected, available(), !Task.isCancelled else {
-            return failure("Connection is unavailable. Reconnect and request access again.")
+            return failure("Connection is unavailable. Reconnect and request access again.", code: .connectionUnavailable)
         }
         guard mayProceed(tab, capability: .control), tab.isLive(view, generation: generation),
             let liveAfterConsent = webURL(of: tab), SitePermissions.origin(for: liveAfterConsent) == initialOrigin,
             tab.documentCommitEpoch == initialCommitEpoch
         else {
-            return failure("Page access or origin changed while waiting for login approval.")
+            return failure("Page access or origin changed while waiting for login approval.", code: .accessDenied)
         }
 
         switch choice {
         case .decline:
             return loginResult(status: "declined", tabID: tab.id, message: "The user declined the login request.")
         case .takeOver:
-            handBack(tab)
+            handBackForLogin(tab)
             return loginResult(
                 status: "waitingForUser", tabID: tab.id,
                 message: "The user chose to sign in themselves. Ask the user to sign in in WSurf and share control again.")
         case .fill(let chosenID), .fillAndSignIn(let chosenID):
-            let shouldSubmit: Bool
-            if case .fillAndSignIn = choice {
-                shouldSubmit = true
-            } else {
-                shouldSubmit = false
-            }
+            guard canFill, allowsVaultFill else { return vaultFillRefusal() }
             guard let chosenID, let account = accounts.first(where: { $0.id == chosenID }) else {
                 return loginResult(
                     status: "noSavedLogin", tabID: tab.id,
                     message: "The selected WSurf Vault login is no longer available for this website.")
             }
-            guard mayProceed(tab, capability: .control), isReachable(tab),
-                tab.isLive(view, generation: generation),
-                let liveBeforeFill = webURL(of: tab), SitePermissions.origin(for: liveBeforeFill) == initialOrigin,
-                tab.documentCommitEpoch == initialCommitEpoch
-            else {
-                return failure("Page access or origin changed before credentials could be filled.")
-            }
-            let preSubmitMainDocumentID = view.mainDocumentID
-            let guardScope = PageAutomationGuard(
-                documentURL: liveBeforeFill.absoluteString, snapshot: nil,
-                validate: { [weak self, weak tab, weak view] in
-                    guard let self, let tab, let view, tab.isLive(view, generation: generation),
-                        let currentURL = self.webURL(of: tab), SitePermissions.origin(for: currentURL) == initialOrigin
-                    else { return false }
-                    return self.mayProceed(tab, capability: .control) && self.isReachable(tab)
-                })
-            let (preSubmitRuntimeDocumentID, fillResult) = await PageAutomationGuard.$current.withValue(guardScope) {
-                let preState = await PageDriver.protectedSecretState(in: view)
-                let filled = await vaultProvider.blindFill(tab, view, liveBeforeFill, account, shouldSubmit) { [secrets] secret in
-                    secrets.registerVaultSecret(secret) == .registered
-                }
-                return (preState?.documentID, filled)
-            }
-            AutofillSuggestions.shared.dismiss(in: view)
-            tab.autofillSave.clear()
-            guard let fill = fillResult else {
-                return failure("Could not read the saved login from WSurf Vault. Ask the user to unlock WSurf Vault or sign in manually.")
-            }
-            guard fill.ok else {
-                return failure(fill.error ?? "Could not fill the login form.")
-            }
-            markCredentialTainted(
-                tab: tab,
-                runtimeDocumentID: fill.documentID ?? preSubmitRuntimeDocumentID,
-                mainDocumentID: preSubmitMainDocumentID)
-            let message = fill.submitted
-                ? "WSurf Vault filled the login form and requested sign-in. Values remain hidden and this document is credential-protected."
-                : "WSurf Vault filled the login form without submitting. Values remain hidden and this document is credential-protected."
-            return loginResult(
-                status: "filledByVault",
-                tabID: tab.id,
-                message: message,
-                extra: [
-                    "submitted": .bool(fill.submitted),
-                    "fieldsFilled": .array(fill.fieldsFilled.map { .string($0) }),
-                    "valuesHidden": .bool(true),
-                    "documentProtected": .bool(true),
-                ])
+            return await fillApprovedLogin(
+                account, submit: choice == .fillAndSignIn(accountID: chosenID), tab: tab, view: view,
+                generation: generation, initialOrigin: initialOrigin, initialCommitEpoch: initialCommitEpoch)
         }
+    }
+
+    private func handBackForLogin(_ tab: BrowserTab) {
+        if let agentWindowScope {
+            agentWindowScope.takeOver(tab)
+        } else {
+            handBack(tab)
+        }
+    }
+
+    private func fillApprovedLogin(
+        _ account: MCPVaultProvider.AccountSummary, submit shouldSubmit: Bool, tab: BrowserTab, view: BrowserPage,
+        generation: Int, initialOrigin: String, initialCommitEpoch: UInt64
+    ) async -> CallTool.Result {
+        guard mayProceed(tab, capability: .control), isReachable(tab),
+            tab.isLive(view, generation: generation),
+            let liveBeforeFill = webURL(of: tab), SitePermissions.origin(for: liveBeforeFill) == initialOrigin,
+            tab.documentCommitEpoch == initialCommitEpoch
+        else {
+            return failure("Page access or origin changed before credentials could be filled.", code: .accessDenied)
+        }
+        let preSubmitMainDocumentID = view.mainDocumentID
+        let guardScope = PageAutomationGuard(
+            documentURL: liveBeforeFill.absoluteString, snapshot: nil,
+            validate: { [weak self, weak tab, weak view] in
+                guard let self, let tab, let view, tab.isLive(view, generation: generation),
+                    let currentURL = self.webURL(of: tab), SitePermissions.origin(for: currentURL) == initialOrigin
+                else { return false }
+                return self.allowsVaultFill && tab.documentCommitEpoch == initialCommitEpoch
+                    && self.mayProceed(tab, capability: .control) && self.isReachable(tab)
+            })
+        let fillResult = await PageAutomationGuard.$current.withValue(guardScope) {
+            await vaultProvider.blindFill(tab, view, liveBeforeFill, account, shouldSubmit) { secret in
+                guard guardScope.validate(), secrets.registerVaultSecret(secret) == .registered else { return false }
+                // Protect the document before the DOM write, including for another connection and after Take Over.
+                markCredentialTainted(tab: tab, mainDocumentID: preSubmitMainDocumentID)
+                return true
+            }
+        }
+        AutofillSuggestions.shared.dismiss(in: view)
+        tab.autofillSave.clear()
+        guard allowsVaultFill else { return vaultFillRefusal() }
+        guard let fill = fillResult else {
+            let locked = await vaultProvider.isLocked(tab, liveBeforeFill, account.vaultID)
+            guard allowsVaultFill, guardScope.validate() else {
+                return failure("Page access changed before credentials could be filled.", code: .accessDenied)
+            }
+            if locked {
+                return failure("Could not read the saved login from WSurf Vault. Ask the user to unlock WSurf Vault or sign in manually.", code: .vaultLocked)
+            }
+            return loginResult(
+                status: "noSavedLogin", tabID: tab.id,
+                message: "The selected WSurf Vault login is no longer available for this website.")
+        }
+        guard fill.ok else {
+            return failure(fill.error ?? "Could not fill the login form.")
+        }
+        if tab.documentCommitEpoch == initialCommitEpoch {
+            markCredentialTainted(tab: tab, mainDocumentID: preSubmitMainDocumentID)
+        }
+        let message = fill.submitted
+            ? "WSurf Vault filled the login form and requested sign-in. Values remain hidden and this document is credential-protected."
+            : "WSurf Vault filled the login form without submitting. Values remain hidden and this document is credential-protected."
+        return loginResult(
+            status: "filledByVault",
+            tabID: tab.id,
+            message: message,
+            extra: [
+                "submitted": .bool(fill.submitted),
+                "fieldsFilled": .array(fill.fieldsFilled.map { .string($0) }),
+                "valuesHidden": .bool(true),
+                "documentProtected": .bool(true),
+            ])
+    }
+
+    private func vaultFillRefusal() -> CallTool.Result {
+        failure("WSurf Vault login fill is turned off for this app. Ask the user to sign in manually.", code: .accessDenied)
     }
 
     private func loginResult(
@@ -251,6 +285,16 @@ extension MCPBrowserSession {
     ) -> CallTool.Result {
         var object = extra
         object["status"] = .string(status)
+        switch status {
+        case "waitingForUser":
+            object["code"] = MCPFailureCode.waitingForUser.value
+        case "noSavedLogin":
+            object["code"] = object["code"] ?? MCPFailureCode.noSavedLogin.value
+        case "declined":
+            object["code"] = MCPFailureCode.accessDenied.value
+        default:
+            break
+        }
         object["tabID"] = .string(tabID.uuidString)
         object["message"] = .string(message)
         let value: Value = .object(object)

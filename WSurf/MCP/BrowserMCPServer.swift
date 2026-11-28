@@ -12,6 +12,7 @@ import Observation
 @MainActor
 @Observable
 final class BrowserMCPServer {
+    @TaskLocal static var currentCallID: UUID?
     private struct Connection {
         let server: MCP.Server
         let transport: LocalMCPTransport
@@ -251,9 +252,9 @@ final class BrowserMCPServer {
     }
 
     /// Cancels the running and waiting calls of the connections bound to `browser`'s window.
-    func cancelActiveCall(in browser: BrowserModel) {
+    func cancelActiveCall(in browser: BrowserModel, except preservedCall: UUID? = nil) {
         for session in sessions(in: browser) {
-            for call in running.values where call.sessionID == session.id {
+            for (id, call) in running where call.sessionID == session.id && id != preservedCall {
                 call.task.cancel()
             }
             lanes.drain(session: session.id)
@@ -519,9 +520,7 @@ final class BrowserMCPServer {
             break
         case .full(let lane):
             let what = lane == .global ? "for a sheet or tab change" : "for this tab"
-            return CallTool.Result(
-                content: [.text(text: "\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.", annotations: nil, _meta: nil)],
-                isError: true)
+            return MCPFailureCode.busy.result("\(MCPCallLanes.queueLimit) calls already wait \(what). Wait for a result before sending more.")
         case .cancelled:
             throw CancellationError()
         }
@@ -533,8 +532,10 @@ final class BrowserMCPServer {
         let id = UUID()
         let pin = params.name.hasPrefix("browser_") ? MCPBrowserSession.PlaywrightPin(tab: pinned) : nil
         let task = Task {
-            try await MCPBrowserSession.$playwrightPin.withValue(pin) {
-                try await session.call(name: params.name, arguments: arguments)
+            try await Self.$currentCallID.withValue(id) {
+                try await MCPBrowserSession.$playwrightPin.withValue(pin) {
+                    try await session.call(name: params.name, arguments: arguments)
+                }
             }
         }
         running[id] = (session.id, held, task)

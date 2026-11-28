@@ -69,6 +69,7 @@ nonisolated enum MCPAgentWindowErrorCode: String, Sendable, Equatable {
     case unsupported
     case agentMismatch
     case humanControl
+    case protectedSecretPresent
     case staleGeneration
     case actionFailed
     case scriptError

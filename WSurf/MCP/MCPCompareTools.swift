@@ -24,6 +24,7 @@ nonisolated enum MCPCompareTools {
     static func result(_ kind: MCPDevelopmentTools.Kind, message: String? = nil, _ fields: [String: Value] = [:], image: Data? = nil) -> CallTool.Result {
         var object = fields
         object["status"] = .string(kind.rawValue)
+        object["code"] = object["code"] ?? kind.failureCode?.value
         if let message { object["message"] = .string(message) }
         let value: Value = .object(object)
         let encoder = JSONEncoder()

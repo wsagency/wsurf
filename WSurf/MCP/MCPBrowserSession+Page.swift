@@ -11,30 +11,44 @@ import MCP
 /// Reading and acting on a shared page.
 @MainActor
 extension MCPBrowserSession {
+    /// A parked operation can outlive both sides of a handoff, even on the same page.
+    func pageOwnershipGuard() -> @MainActor @Sendable () -> Bool {
+        guard let scope = agentWindowScope else { return { true } }
+        let generation = scope.generation()
+        return { generation != nil && scope.generation() == generation }
+    }
+
     func usePage(
-        _ entry: MCPToolCatalog.Entry, arguments: [String: Value], tab: BrowserTab, capability: Scope
+        _ entry: MCPToolCatalog.Entry, arguments: [String: Value], tab: BrowserTab, capability: Scope,
+        previewRead: PageAutomationGuard? = nil
     ) async -> CallTool.Result {
         let name = entry.name
-        tab.setExternalAutomationWorking(true)
-        defer { tab.setExternalAutomationWorking(false) }
-        tab.realizeDeferredSession()
+        let holdsOwnership = pageOwnershipGuard()
+        if previewRead == nil {
+            tab.setExternalAutomationWorking(true)
+            tab.realizeDeferredSession()
+        }
+        defer { if previewRead == nil { tab.setExternalAutomationWorking(false) } }
+        if let previewRead, !previewRead.validate() || !tab.isMaterialised {
+            return failure("The page is not ready. Try again.", code: .pageUnavailable)
+        }
         let view = tab.page
         // The view and generation this call started on. The guard below refuses to continue once either changes.
         let generation = tab.pageGeneration
-        guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.") }
-        guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
+        guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.", code: .pageUnavailable) }
+        guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.", code: .pageUnavailable) }
         if capability == .control, let refusal = await sensitivePageRefusal(tab, view: view, url: url) {
             return refusal
         }
         var targeted = arguments
-        if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url) {
+        if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url, holdsOwnership: holdsOwnership) {
             return refusal
         }
         let arguments = targeted
         // Explicit `secret: true` is refused immediately if password/secret entry is disallowed.
         let explicitSecretEntry = Self.secretEntry(tool: name, arguments: arguments)
         if let explicitSecretEntry, !allowsPasswordEntry(for: tab) {
-            return secretEntryRefusal(explicitSecretEntry, tab: tab) ?? failure("Password and secret entry is not allowed.")
+            return secretEntryRefusal(explicitSecretEntry, tab: tab) ?? failure("Password and secret entry is not allowed.", code: .accessDenied)
         }
         if let refusal = fullInspectionRefusal(name, arguments: arguments, tab: tab) {
             return refusal
@@ -50,7 +64,7 @@ extension MCPBrowserSession {
             // still be the latest.
             guard let observation, arguments["observationID"]?.stringValue.map({ $0 == observation.id }) ?? true,
                 observation.documentURL == url.absoluteString
-            else { return failure("The observation is stale. Use readPage again.") }
+            else { return failure("The observation is stale. Use readPage again.", code: .stale) }
         }
         // Under Control (when password entry is allowed) or Developer tier, writes into password/OTP/card fields are
         // automatically treated as secret entries: registered in MCPSecretScrubber before typing, autofill suppressed,
@@ -67,14 +81,14 @@ extension MCPBrowserSession {
                 let probeScope = PageAutomationGuard(
                     documentURL: url.absoluteString, snapshot: observation?.snapshot,
                     validate: { [weak self, weak tab, weak view] in
-                        guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                        guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                         return self.mayProceed(tab, capability: capability)
                     })
                 autoSensitiveRefs = await PageAutomationGuard.$current.withValue(probeScope) {
                     await PageDriver.sensitiveSecretRefs(probeRefs, in: view)
                 }
-                guard mayProceed(tab, capability: capability), tab.isLive(view, generation: generation), webURL(of: tab) == url else {
-                    return failure("Page access changed. Read the page again.")
+                guard probeScope.validate(), webURL(of: tab) == url else {
+                    return failure("Page access changed. Read the page again.", code: .accessDenied)
                 }
             }
         }
@@ -83,10 +97,10 @@ extension MCPBrowserSession {
             return refusal
         }
         let typesSecret = secretEntry != nil
-        let scope = PageAutomationGuard(
+        let scope = previewRead ?? PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
                     && (!typesSecret || self.allowsPasswordEntry(for: tab))
                     && (!readsAsDeveloper || self.mayProceed(tab, capability: .developer))
@@ -95,16 +109,16 @@ extension MCPBrowserSession {
         )
         // What a finished action may report: the page may have left the screen (a popup took its place) without the
         // connection losing the right to read it.
-        let reading = PageAutomationGuard(
+        let reading = previewRead ?? PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
-                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                guard holdsOwnership(), let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: .read)
             }
         )
-        let tainted = credentialTaintedDocuments[tab.id].map { $0.commitEpoch == tab.documentCommitEpoch } ?? false
+        let tainted = tab.isMCPCredentialTainted
         return await PageAutomationGuard.$current.withValue(scope) {
-            guard scope.validate(), webURL(of: tab) == url else { return failure("Page access changed. Read the page again.") }
+            guard scope.validate(), webURL(of: tab) == url else { return failure("Page access changed. Read the page again.", code: .accessDenied) }
             // The ring still shows on a page the person sees, but an MCP action does not wait for it.
             return await PageDriver.$announceDuration.withValue(.zero) {
                 await PageDriver.$protectedCredentials.withValue(tainted) {
@@ -132,9 +146,10 @@ extension MCPBrowserSession {
             return reply
         }
         var capturedImage: Data?
+        var failureCode: MCPFailureCode?
         let output: String
         if name == "screenshotPage" {
-            (output, capturedImage) = await screenshotOutput(arguments: arguments, tab: tab, view: view)
+            (output, capturedImage, failureCode) = await screenshotOutput(arguments: arguments, tab: tab, view: view)
         } else {
             // `result: full` keeps the old grace for a navigation to start; only the longest wait follows the budget.
             let limits = PageSettle.limits(
@@ -144,15 +159,23 @@ extension MCPBrowserSession {
             let acted = await PageSettle.$limits.withValue(limits) {
                 await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
             }
+            guard scope.validate(), !Task.isCancelled else {
+                return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+            }
             guard let acted else {
                 observations[tab.id] = nil
                 return interruptedResult(tab)
             }
             output = acted
+            if name == "waitForPage", output.hasPrefix("Timed out waiting for ") {
+                failureCode = .timeout
+            }
         }
         guard scope.validate(), !Task.isCancelled else {
-            observations[tab.id] = nil
-            return failure("Page access changed before the operation finished. Its contents were not returned.")
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
+        }
+        if output == PageDriver.filledSecretRefusal {
+            return failure(output, code: .protectedSecretPresent)
         }
         let succeeded = Self.succeeded(name, output)
         if !succeeded, name != "screenshotPage" {
@@ -160,20 +183,20 @@ extension MCPBrowserSession {
                 arguments["screenshotOnFailure"]?.stringValue, ref: arguments["ref"]?.intValue, tab: tab, view: view, scope: scope)
         }
         var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
-        if succeeded, name == "readPage" || name == "inspectControl", let currentURL = webURL(of: tab),
+        if !succeeded { content["code"] = (failureCode ?? .actionFailed).value }
+        if !PageDriver.refusesFilledSecrets, succeeded, name == "readPage" || name == "inspectControl", let currentURL = webURL(of: tab),
             let hint = await vaultHint(for: tab, view: view, url: currentURL) {
-            guard scope.validate(), !Task.isCancelled else {
-                observations[tab.id] = nil
-                return failure("Page access changed before the operation finished. Its contents were not returned.")
-            }
             content["vaultHint"] = hint
+        }
+        guard scope.validate(), !Task.isCancelled else {
+            return failure("Page access changed before the operation finished. Its contents were not returned.", code: .accessDenied)
         }
         var delivered: PageObservation?
         if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
             output.contains("observationID: " + current.id) {
             delivered = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
             content["observationID"] = .string(current.id)
-            if PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
+            if PageDriver.includesDocumentURL, PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
         }
         let value: Value = .object(content)
         var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]
@@ -198,13 +221,15 @@ extension MCPBrowserSession {
     }
 
     /// `screenshotPage`: the text a client reads and the image, when there is one.
-    private func screenshotOutput(arguments: [String: Value], tab: BrowserTab, view: BrowserPage) async -> (String, Data?) {
+    private func screenshotOutput(
+        arguments: [String: Value], tab: BrowserTab, view: BrowserPage
+    ) async -> (String, Data?, MCPFailureCode?) {
         let request = Self.screenshotTarget(arguments)
         if let message = request.error {
-            return (message, nil)
+            return (message, nil, .invalidInput)
         }
         if request.target == .fullPage, !mayProceed(tab, capability: .development) {
-            return ("A full-page screenshot needs development access.", nil)
+            return ("A full-page screenshot needs development access.", nil, .accessDenied)
         }
         // A control ref needs read access; a non-control inspection ref needs current development access, asked
         // again inside the driver before work, after each await and before pixels are returned.
@@ -236,11 +261,27 @@ extension MCPBrowserSession {
             // The snapshot above was the last await: development access is asked once more right before the
             // image is attached, so a revoke during it never returns an inspection image.
             if capture.requiresDevelopment, !developmentAllowed() {
-                return (ScreenshotFailure.needsDevelopment.message, nil)
+                return (ScreenshotFailure.needsDevelopment.message, nil, .accessDenied)
             }
-            return (text, capture.jpeg)
+            return (text, capture.jpeg, nil)
         case .failure(let failure):
-            return (failure.message, nil)
+            let code: MCPFailureCode = switch failure {
+            case .privacy:
+                .protectedSecretPresent
+            case .uninspectableFrame:
+                .unsupported
+            case .stale:
+                .stale
+            case .invalidGeometry:
+                .invalidInput
+            case .needsDevelopment:
+                .accessDenied
+            case .fullPageUnsupported:
+                .unsupported
+            case .offscreen, .captureFailed, .unmappableFrame:
+                .actionFailed
+            }
+            return (failure.message, nil, code)
         }
     }
 
@@ -379,12 +420,12 @@ extension MCPBrowserSession {
         guard name == "inspectElement" else { return nil }
         let full = arguments["full"]?.boolValue == true
         if full, !permits(tab, capability: .developer) {
-            return failure("A full inspection needs Developer access: a paired app, a developer site, and a window of the Developer profile. Nothing was read.")
+            return failure("A full inspection needs Developer access: a paired app, a developer site, and a window of the Developer profile. Nothing was read.", code: .accessDenied)
         }
         if arguments["properties"] != nil {
-            guard full else { return failure("properties belongs to a full inspection. Set full to true.") }
+            guard full else { return failure("properties belongs to a full inspection. Set full to true.", code: .invalidInput) }
             guard Self.computedPropertyNames(arguments["properties"]?.stringValue) != nil else {
-                return failure("properties is up to \(Self.maximumComputedProperties) comma-separated CSS property names of letters, digits and dashes.")
+                return failure("properties is up to \(Self.maximumComputedProperties) comma-separated CSS property names of letters, digits and dashes.", code: .invalidInput)
             }
         }
         return nil

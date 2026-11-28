@@ -187,9 +187,9 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         Self.scrub(text, needles: allNeedles)
     }
 
-    func scrub(_ value: Value) -> Value {
+    func scrubPageValue(_ value: Value) -> Value {
         let needles = allNeedles
-        return needles.isEmpty ? value : Self.scrub(value, needles: needles)
+        return needles.isEmpty ? value : Self.scrub(value, needles: needles, pageNumbers: true)
     }
 
     /// For a record the user reads about what the agent did: hides only the values confirmed as written into a password, code
@@ -212,26 +212,59 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     func scrub(_ result: CallTool.Result) -> CallTool.Result {
         let needles = allNeedles
         guard !needles.isEmpty else { return result }
+        let structured = result.structuredContent.map { value -> Value in
+            // A protocol code comes from WSurf's fixed vocabulary. Scrub every other field, including dynamic keys.
+            guard let fields = value.objectValue, let code = fields["code"]?.stringValue.flatMap(MCPFailureCode.init(rawValue:)),
+                  var redacted = Self.scrub(.object(fields.filter { $0.key != "code" }), needles: needles).objectValue
+            else { return Self.scrub(value, needles: needles) }
+            redacted["code"] = code.value
+            return .object(redacted)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let decoder = JSONDecoder()
+        let original = result.structuredContent.flatMap { value in
+            (try? encoder.encode(value)).flatMap { try? decoder.decode(Value.self, from: $0) }
+        }
+        let mirrored = structured.flatMap { try? encoder.encode($0) }
         let content = result.content.map { block -> MCP.Tool.Content in
             guard case .text(let text, let annotations, let meta) = block else { return block }
-            return .text(text: Self.scrub(text, needles: needles), annotations: annotations, _meta: meta)
+            let redacted: String
+            if let original, let mirrored,
+               let decoded = try? decoder.decode(Value.self, from: Data(text.utf8)), decoded == original {
+                redacted = String(decoding: mirrored, as: UTF8.self)
+            } else {
+                redacted = Self.scrub(text, needles: needles)
+            }
+            return .text(text: redacted, annotations: annotations, _meta: meta)
         }
         return CallTool.Result(
-            content: content, structuredContent: result.structuredContent.map { Self.scrub($0, needles: needles) },
+            content: content, structuredContent: structured,
             isError: result.isError, _meta: result._meta)
     }
 
-    private static func scrub(_ value: Value, needles: [[UInt8]]) -> Value {
+    private static func scrub(_ value: Value, needles: [[UInt8]], pageNumbers: Bool = false) -> Value {
         switch value {
         case .string(let text):
             .string(scrub(text, needles: needles))
+        case .int where pageNumbers, .double where pageNumbers:
+            redactNumber(value, needles: needles)
         case .array(let items):
-            .array(items.map { scrub($0, needles: needles) })
+            .array(items.map { scrub($0, needles: needles, pageNumbers: pageNumbers) })
         case .object(let fields):
-            .object(Dictionary(fields.map { (scrub($0.key, needles: needles), scrub($0.value, needles: needles)) }) { first, _ in first })
+            .object(Dictionary(fields.map {
+                (scrub($0.key, needles: needles), scrub($0.value, needles: needles, pageNumbers: pageNumbers))
+            }) { first, _ in first })
         default:
             value
         }
+    }
+
+    private static func redactNumber(_ value: Value, needles: [[UInt8]]) -> Value {
+        guard let data = try? JSONEncoder().encode(value) else { return .string(replacement) }
+        let number = String(decoding: data, as: UTF8.self)
+        let redacted = scrub(number, needles: needles)
+        return number == redacted ? value : .string(redacted)
     }
 
     /// Every run of bytes covered by any needle becomes one `marker`. Overlapping and adjacent matches merge.

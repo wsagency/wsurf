@@ -230,7 +230,8 @@ extension CloudSharedSpaces {
         var restoredMembership = false
         // Missing membership supplies neither a shared destination nor evidence of departure.
         // A page whose pin another window removed waits to learn whether it was unpinned or closed (`pendingPinDemotions`).
-        for row in tree.walk() where !browser.unplacedSpaceRows.contains(row) && !browser.awaitsPinOutcome(row) {
+        for row in tree.walk()
+        where !browser.unplacedSpaceRows.contains(row) && !browser.awaitsPinOutcome(row) && !isWindowLocal(row, in: browser) {
             let local: UUID
             switch row {
             case .folder(let id), .tab(let id):
@@ -310,13 +311,19 @@ extension CloudSharedSpaces {
         persistLinks()
     }
 
+    /// A window-local tab supplies neither a publication nor evidence that an older cloud row was deleted.
+    private func isWindowLocal(_ row: SidebarItem, in browser: BrowserModel) -> Bool {
+        guard case .tab(let id) = row else { return false }
+        return browser.tab(id: id)?.staysInItsWindow == true
+    }
+
     private static func row(_ row: SidebarItem, id: UUID, space: UUID, profile: UUID, browser: BrowserModel) -> SharedSpaceItem? {
         switch row {
         case .folder(let local):
             guard let folder = browser.folder(id: local), !folder.isPinned, !browser.profileFolderIDs.contains(local) else { return nil }
             return .init(id: id, kind: .folder, profileID: profile, spaceID: space, title: folder.name, symbol: folder.symbol, color: folder.color.rawValue)
         case .tab(let local):
-            guard let tab = browser.tab(id: local), !tab.isPrivate, tab.pinID == nil, tab.pinnedURL == nil, !tab.isFavorite,
+            guard let tab = browser.tab(id: local), !tab.staysInItsWindow, !tab.isPrivate, tab.pinID == nil, tab.pinnedURL == nil, !tab.isFavorite,
                   tab.microTabID == nil, tab.extensionBaseURL == nil, !tab.isProvisionalDownloadPopup,
                   let page = SessionNode.tab(id: id, title: tab.pageTitle, url: tab.urlString) else { return nil }
             return .init(id: id, kind: .tab, profileID: profile, spaceID: space, title: page.title, url: page.url, customTitle: tab.customTitle)

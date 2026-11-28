@@ -61,12 +61,11 @@ token at once. The entry stays in the client's configuration and connects as an
 unpaired app until you choose **Pair** again. **… → Re-pair** replaces the token;
 the old one stops working immediately.
 
-Pairing does not skip any prompt. Every connection still starts with no grants,
-and a paired app asks for access like any other. Pairing lets WSurf recognize an
-app you configured, so later features can give a known, revocable app access that
-an unknown process cannot get.
+Pairing identifies a revocable app. The app asks for access unless a standing
+grant, the Website access default or an Agent Micro Window token covers the
+request.
 
-Apps you added before pairing keep working with no change. They have no token,
+Apps you added before pairing can still connect. They have no token,
 show **Not paired** with a **Pair** button, and ask for approval each time they
 connect. **Pair** changes only `env.WSURF_MCP_TOKEN` of the existing entry
 (Codex: the `WSURF_MCP_TOKEN` line of its `env` table), under the same backup,
@@ -91,6 +90,22 @@ could not read. Every app asks for approval each time it connects.
 `WSurf --mcp --tools=core` lists and accepts only WSurf's own tools, `--tools=playwright` only the Playwright MCP aliases,
 and `--tools=all` (the default) both. A call to a tool outside the profile is refused as an unknown tool. An unknown profile
 name stops the relay with an error. A smaller catalog saves a client's context; the tools behave the same in every profile.
+
+### Per-app policy
+
+In **Settings › Assistant › Connected apps**, set **Allow password entry**,
+**Allow Vault login requests**, and **Default engine for new tabs** for each
+paired app. WSurf stores these choices with the pairing in the data-protection
+Keychain. Changing a policy takes effect on the live connection. Re-pairing
+keeps the policy.
+
+Password entry starts off. A paired app needs both the Website section’s
+password-entry permission and its own permission to type a password or code.
+Vault login requests are available by default and always require the person
+to approve the fill in WSurf. Turning off Vault requests still allows a
+manual handoff. **Follow default** keeps the normal Chromium default for
+agent tabs. **Chromium** and **WebKit** apply to new tabs when the tool omits
+the engine. Sites that require WebKit always use WebKit.
 
 ## Automatic client setup
 
@@ -166,6 +181,53 @@ a tool error; interrupted calls are never replayed because an action may already
 have happened. Use **Disconnect** beside a connection in Advanced settings to
 revoke it immediately.
 
+An agent-opened tab’s sidebar menu names the client that opened it. **Close
+agent tabs** closes the window-local tabs from that connection in this window.
+The action is also available beside an active connection in External
+connections. Tabs the person took over, filed or pinned are excluded, as are
+tabs already published as shared Space rows. Window-local tabs stay out of
+shared Spaces across restarts until the person moves them into a folder or
+another Space.
+
+## Agent Micro Windows and the host bridge
+
+The local `host-bridge.sock` v1 protocol lets authenticated paired hosts open a
+dedicated Agent Micro Window and bind a separate MCP connection to it with a
+window token. `openAgentWindow` shows new or hidden windows by default.
+Omit `open` to reuse a visible window without activating it. Pass `open: true`
+to activate it or `open: false` to leave its visibility and focus alone. Both
+the open reply and preview `status` report actual visibility, accounting for
+minimized windows.
+
+Under **Take Over**, `status` and the read-only `snapshot` remain available to
+the paired host. Website access rules still apply. WSurf scrubs registered
+secrets and refuses the snapshot if a live filled sensitive field or
+Vault-tainted document would put credentials at risk. Mutation, scripting
+and closing remain blocked with `humanControl` until the person selects
+**Hand Back**. Observations are cleared on ownership changes, so a ref-based
+action needs a fresh snapshot after Hand Back. **Stop** revokes the window token
+and pauses the paired app.
+
+Both sockets share the window’s in-memory secret registry. WSurf scrubs registered
+secrets from preview titles, URLs, text and tab events, and withholds preview
+metadata and generated document URLs while the person has control. WSurf
+omits snapshot images when either socket has registered a secret or the
+browser cannot account for and inspect every embedded frame. A Vault login approval sheet attaches to the Agent Micro
+Window. Choosing **Sign In Myself** or requesting `manualLogin` transfers the
+window to the person before the tool returns `waitingForUser`.
+
+### Structured outcomes
+
+Tool errors include `structuredContent.code` alongside the original
+human-readable content. Existing `status` values remain available. For
+example, check `tabNotFound` for an unavailable shared tab, `accessDenied`
+for an access refusal, `webKitRequired` for an engine constraint,
+`protectedSecretPresent` for protected page data, `vaultLocked` for an
+unavailable locked Vault, and `timeout` for a timed-out wait or script.
+`requestUserLogin` returns `code: "waitingForUser"` when it hands the tab
+back for manual sign-in. JSON-RPC protocol errors and host-bridge v1
+`error.code` retain their existing wire formats.
+
 ## Tools in this version
 
 | Tool | Behavior |
@@ -174,13 +236,13 @@ revoke it immediately.
 | `listTabs` | List only tabs shared with this connection. |
 | `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. Sensitive fields show type and state (`(password, sensitive) = (empty)` / `(filled, hidden)`), never values. On login forms, includes anonymized `vaultHint: { hasSavedLogin, requiresUserApproval: true }`. |
 | `clickOnPage` | Click a numbered control, or with `x` and `y` (viewport CSS pixels) whatever is at that point. A ref is clicked with a DOM click by default; `pointer: true`, a point, `button` (`left`, `right`, `middle`), `clickCount: 2` or `modifiers` (`shift`, `option`, `command`) send trusted pointer input instead (see Background pointer and keyboard input). Returns what the click changed (see Action results). |
-| `typeOnPage` | Fill a field, optionally submitting it. Under Control (when password entry is allowed in Settings › Connected apps) or Developer access, writes into password and OTP fields work directly without `secret: true` and are automatically scrubbed and screenshot-masked; `secret: true` remains optional for non-password secret fields. |
+| `typeOnPage` | Fill a field, optionally submitting it. With Control and the password-entry permissions in Settings › Connected apps, writes into password and OTP fields work directly without `secret: true` and are automatically scrubbed and screenshot-masked; `secret: true` remains optional for non-password secret fields. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct form controls and report exactly which refs retained their values. One round checks every field, one small round writes each field, one verifies them all, and the page settles once. `submitRef` clicks a submit control, and `submit: true` presses Enter in the last text field, but only after every field was filled and verified, with the approval a click on that control needs, judged on its label and form as they read after the writes; a control that changes after that is not clicked. Sensitive fields work directly under Control (when password entry is allowed) or Developer access with automatic scrubbing and masking, and items may optionally set `secret: true`. |
+| `fillFields` | Fill up to 32 distinct form controls and report exactly which refs retained their values. One round checks every field, one small round writes each field, one verifies them all, and the page settles once. `submitRef` clicks a submit control, and `submit: true` presses Enter in the last text field, but only after every field was filled and verified, with the approval a click on that control needs, judged on its label and form as they read after the writes; a control that changes after that is not clicked. Sensitive fields work directly with Control and password-entry permission, with automatic scrubbing and masking, and items may optionally set `secret: true`. |
 | `inspectControl` | Read control state and paginate dropdown options. Reports `sensitive`, `type`, `filled`, and `value: "(hidden)"` on sensitive fields, plus anonymized `vaultHint` on login forms. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | `includeSnapshot` adds the viewport's text and controls; it defaults to false when the connection holds the page's current observation (the reply then names that `observationID`) and to true otherwise. Masking and every refusal below apply either way. Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
+| `screenshotPage` | `includeSnapshot` adds the viewport's text and controls; it defaults to false when the connection holds the page's current observation (the reply then names that `observationID`) and to true otherwise. Masking and every refusal below apply either way. Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). Capture at every access tier requires a complete native frame inventory with every embedded frame accounted for and inspectable. |
 | `pressKey` | Send a key or a key chord to a control in a visible tab, or in a background Chromium tab through DevTools (a background WebKit tab refuses and names `switchTab`): a named key (`Enter`, `Tab`, `Escape`, `Space`, the arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`) or one printable ASCII character, with optional `modifiers` (`shift`, `option`, `command`). The key goes to the page only; see Key chords below for what is refused. Name the control with `ref` or `selector`. |
 | `hoverOnPage` | Move the pointer to a referenced element or to `x` and `y`, so CSS `:hover` and pointer/mouse handlers run. On Chromium the pointer is a DevTools pointer: it works in the background and WSurf need not be active, and the user's cursor does not move. On WebKit it moves the real pointer and needs WSurf to be the active app with a key window and the tab on screen (a background WebKit tab answers that it is unsupported, naming `switchTab` and Chromium); it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below); on Chromium it works in a background tab. Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
@@ -222,9 +284,9 @@ A page action reports what it changed (see Action results) and an `observationID
 A ref stays valid for as long as its document does and its control is unchanged, so
 the next action needs no new read. `fillFields` accepts positive, distinct refs
 the client was given: text, supported value controls, dropdowns and checked states
-(`true`/`false`). Password/payment controls remain blocked (except an item marked
-`secret` in the Developer tier), disabled/read-only
-controls are skipped, and file pickers cannot be opened by a batch. A batch submits only
+(`true`/`false`). Password and payment fields require password-entry permission.
+The batch skips disabled and read-only controls. File pickers require a person.
+A batch submits only
 with `submitRef` or `submit`, and only when every field was verified. Navigation, cancellation, access revocation, or a
 change of the page's text or controls between two writes (a validation message) stops remaining writes.
 
@@ -610,21 +672,21 @@ Choose **Resume** in Connected apps to bring it back.
 WSurf separates **reading**, **writing**, and **WSurf Vault blind fill** for credential fields:
 
 - **Autofilled usernames and contacts stay hidden on read, writable on write.** `readPage`, `readAccessibility`, and `inspectControl` redact autofilled usernames and contact fields as well as passwords, never exposing prior values. However, `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` can overwrite username, email, and contact fields directly.
-- **Typing passwords and one-time codes under Control.** Governed by **Allow password entry** (Keychain-backed in Settings › Assistant › Connected apps, enabled by default) or the Developer tier, an app with Control access can type agent- or user-supplied passwords and OTPs directly into password/OTP fields via `typeOnPage`, `fillFields`, `browser_type`, or `browser_fill_form` without needing `secret: true` or restricting to `localhost`. (`secret: true` remains supported as an opt-in hint for non-password fields such as API tokens.) Turning **Allow password entry** off refuses password/OTP typing outside the Developer tier.
+- **Typing passwords and one-time codes under Control.** With password entry enabled for the connection, `typeOnPage`, `fillFields`, `browser_type`, and `browser_fill_form` can write supplied passwords or codes directly. Passing `secret: true` is optional and also works for a value such as an API token in an ordinary text field.
 - **Automatic protection on every sensitive write:**
   1. The field is not focused, open autofill suggestions are dismissed, and save-password offers are cleared.
   2. The typed value (and any reformatted value stored by the page) is automatically registered in memory-only `MCPSecretScrubber` (wiped on disconnect) and scrubbed to `‹secret›` from all subsequent outputs.
   3. Tool replies never echo the value (`Typed into "<label>" (sensitive field, value hidden).`).
-  4. `screenshotPage` masks filled sensitive fields in black under Control (when password entry is allowed) as well as in the Developer tier, still refusing if a sensitive field cannot be reliably measured.
+  4. `screenshotPage` masks filled sensitive fields in black with Developer access or password-entry permission. WSurf refuses capture if it cannot reliably locate a sensitive field.
 - **Anonymized `vaultHint` and `requestUserLogin` blind fill.** When `readPage` or `inspectControl` sees a visible login form, WSurf checks unlocked Vaults for the tab's verified HTTPS origin and adds `vaultHint: { hasSavedLogin, requiresUserApproval: true }` — never usernames, counts, or passwords. Calling `requestUserLogin(tabID, mode?, reason?, accountHint?)` opens WSurf's native login sheet showing the exact saved account (or an account picker when multiple accounts match) with **Fill**, **Fill & Sign In**, **Sign In Myself** (hands the tab to the user, returning `status: "waitingForUser"`, omitted in `vaultFill` mode), and **Cancel** (`status: "declined"`). On **Fill** or **Fill & Sign In**, WSurf re-verifies the page origin, registers the password in a dedicated Vault scrubber bucket (exempt from the 32-secret agent cap, aborting before DOM injection if registration fails), writes credentials directly into the main document via `callAsyncJavaScript` arguments without ever sending them to the client or targeting iframes, marks the document `credentialTainted`, and returns `{ status: "filledByVault", submitted, fieldsFilled, valuesHidden: true, documentProtected: true }`.
-- **No password read-back across MCP or Developer Tools (`credentialTainted` & sticky password protection).** Whenever a document is `credentialTainted` (filled by WSurf Vault) or holds any live non-empty sensitive field (including user-typed passwords marked with sticky `data-wsurf-password` so "Show password" toggling to `type="text"` cannot expose them, as well as autofilled usernames/contacts), `evaluateScript` and host-bridge `preview_evaluate` are denied before running (`status: "denied"`, `code: "protectedSecretPresent"`). On `credentialTainted` documents, `readNetwork` omits `requestBody` and `responseBody` with `"omitted: protected credential form"` and `readConsole` suppresses object previews. Taint survives `history.pushState`/hash changes and clears only once navigation commits to a new document.
+- **No password read-back across MCP or Developer Tools (`credentialTainted` & sticky password protection).** Whenever a document is `credentialTainted` (filled by WSurf Vault) or holds any live non-empty sensitive field (including user-typed passwords marked with sticky `data-wsurf-password` so "Show password" toggling to `type="text"` cannot expose them, as well as autofilled usernames/contacts), `evaluateScript` is denied before running (`status: "denied"`, `code: "protectedSecretPresent"`). Host-bridge `preview_evaluate` also refuses to run. On `credentialTainted` documents, `readNetwork` omits `requestBody` and `responseBody` with `"omitted: protected credential form"` and `readConsole` suppresses object previews. Taint survives `history.pushState`/hash changes and clears only once navigation commits to a new document.
 - **Limits and audit records.** Secrets must be at least 4 characters (and up to 32 distinct secrets per connection) and go into text fields of the page itself, not frames, dropdowns, or checkboxes. Audit records (`scrubForAudit`) hide only values of at least 8 characters confirmed as written into a sensitive field (`‹hidden secret›`). Plain login buttons (`Log in`, `Sign in`) stay clickable without confirmation while OAuth / third-party account linking (`Continue with Google`, `Authorize`, etc.) still asks.
 
 ### Scripts and DOM edits
 
 `evaluateScript` and `editDOM` give a paired app code and edit access to a page. They exist
 only in the **Developer tier**: a paired app, a page on a developer site, and a window of
-the Developer profile (the same conditions as typing test credentials). Anywhere else, in
+the Developer profile. Anywhere else, in
 a private window, with a Development or lower grant, or for a Read Only site, the call is
 refused before anything runs, and the tier is checked again before the script starts, after
 the page answered and before anything is returned. The tab may be in the background (see Background tabs).
@@ -821,7 +883,7 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 
 ### Comparing engines
 
-`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, split side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised and the user's tab stays selected: the pair opens in the background, kept in the window at one size so that both load and can be captured (see Background tabs). Selecting the split shows them side by side. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. A tab the user pins is never closed. Close the pair with `closeTab` when done; it needs no question, because the connection opened it. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
+`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, split side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised and the user's tab stays selected: the pair opens in the background, kept in the window at one size so that both load and can be captured (see Background tabs). Selecting the split shows them side by side. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. Tabs the user pins or shares in a Space are kept. Close the pair with `closeTab` when done; it needs no question, because the connection opened it. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
 
 `compareTabs {tabA, tabB}` needs development access to both tabs, both on screen or kept in the window in the background, and no other connection holding a development lease on either. It waits for both pages to finish loading, then measures each tab's viewport. If the sizes differ by more than 2 CSS pixels nothing is captured: the reply is `invalidInput` with both sizes, and the fix is `setViewport` on both (Chromium may not apply a viewport while WSurf is in the background, and a measured size that is still different is reported rather than hidden). Otherwise one reply of about 1 to 2 KB:
 
@@ -840,7 +902,7 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 - **Pixels.** Both viewports are captured through the `screenshotPage` path (the same refusals; in the Developer tier filled sensitive fields are covered) at one pixel per CSS pixel, at most 1,280 wide, and compared as luma. A pixel is changed when the other image has no pixel within one pixel of it that is within 24 levels, so anti-aliasing and a one-pixel shift between engines are not differences, while a moved, added, removed or recoloured shape is. `diffRatio` is the changed share of the viewport. Changed pixels are grouped in 16-pixel blocks into at most five boxes in CSS pixels, the biggest first; a block with fewer than six changed pixels is noise and starts no box. `image: true` attaches a JPEG of the first tab with the changed pixels in red, at most 100 KB. Only the viewport is compared: scroll both tabs and compare again for the rest.
 - **Layout.** Document size, element and image counts, broken images and horizontal scroll, read in each page. `differences` names the numbers that differ (sizes by more than 2 pixels).
 - **Console and network.** Only when `startDiagnostics` runs on both tabs under this connection (`diagnostics: false` skips it); otherwise the reply says capture is not running. Capture starts at the document it was started on, so start it on both tabs and `reloadPage` both. Console warnings and errors are matched by level and text (first line, runs of four or more digits ignored); requests by host and path, without the query. Reported are messages and requests seen in only one tab, requests that failed, were aborted or ended with another error status in only one, and how many failed in both. Engines word the same error differently, so an error can appear once on each side. At most 20 items per list; `more` counts the rest.
-- **Sign-ins.** The engines keep separate cookies and storage. Sign in on both tabs, with test credentials in the Developer tier (see Test credentials), before comparing a page behind a login. Every result passes through the connection's secret scrubber like any other.
+- **Sign-ins.** The engines keep separate cookies and storage. Sign in on both tabs before comparing a page behind a login. The connection needs password-entry permission to type test credentials. Every result passes through the connection's secret scrubber.
 
 ### Closing tabs
 
@@ -979,11 +1041,10 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   token-like headers and password, token, secret, code and card fields never show their
   values; bodies are text only and bounded; typed test secrets are removed before the text
   is cut (see Headers, bodies and the full console).
-- The existing page driver detects and masks sensitive fields and refuses to
-  fill them; the one exception is a test secret typed in the Developer tier, which
-  is hidden from every result (see Test credentials). Consequential actions use WSurf's native confirmation UI. External
-  confirmations do not inherit the assistant's saved action approvals; any
-  remembered approval lasts only for that connection.
+- The page driver detects sensitive fields. Typing into one needs password-entry
+  permission, and WSurf hides the supplied value from results. Vault fill needs
+  human approval. Consequential actions use WSurf's native confirmation UI.
+  External approvals apply to the connection that requested them.
 - External page scripts run in WebKit's isolated client world. Observation IDs
   belong to one connection and one document. A read or an action takes a new
   snapshot, but a ref the connection was given stays usable for its document

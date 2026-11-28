@@ -177,6 +177,7 @@ extension PageDriver {
         guard object["stale"] == nil, let ref = object["ref"] as? Int, let snapshot = object["snapshot"] as? String,
             let documentID = object["document"] as? String, let url = object["url"] as? String
         else { return .failure(.init(message: staleMessage)) }
+        guard PageAutomationGuard.allowsExecution else { return .failure(.init(message: staleMessage)) }
         // The control joins the observation the client already holds, so refs it was given stay usable beside it.
         let prior = observation(in: view)
         let kept = prior.flatMap { $0.id == snapshot && $0.documentID == documentID ? $0.refs : nil } ?? []

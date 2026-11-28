@@ -120,13 +120,15 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let activity = ExternalActivityLog()
     /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
     /// wiped when the connection ends.
-    @ObservationIgnored let secrets = MCPSecretScrubber()
+    @ObservationIgnored private let connectionSecrets = MCPSecretScrubber()
+    var secrets: MCPSecretScrubber {
+        agentWindowScope?.secrets ?? connectionSecrets
+    }
     /// The fields of each tab's current document that this connection typed a secret into, so a screenshot covers them too.
     @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
     /// When non-nil, this session is bound exclusively to an Agent Micro Window via a host-bridge `windowToken`.
     @ObservationIgnored var agentWindowScope: MCPAgentWindowScope?
-    /// Documents that WSurf Vault filled credentials into via `requestUserLogin` (cleared automatically on new document commit).
-    @ObservationIgnored var credentialTaintedDocuments: [UUID: CredentialTaint] = [:]
+    @ObservationIgnored var lastAgentWindowGeneration: Int?
     /// Documents where the user explicitly approved sensitive script inspection (`tabID -> runtimeDocumentID`). Never set automatically.
     @ObservationIgnored var inspectionApprovedDocuments: [UUID: String] = [:]
 
@@ -193,9 +195,8 @@ final class MCPBrowserSession: Identifiable {
         destinations = []
         comparison = nil
         actionPolicy.revokeAll()
-        secrets.wipe()
+        connectionSecrets.wipe()
         secretFields = [:]
-        credentialTaintedDocuments = [:]
         inspectionApprovedDocuments = [:]
         digestCache = [:]
     }
@@ -209,15 +210,15 @@ final class MCPBrowserSession: Identifiable {
         }
         try entry.validate(arguments)
         guard isConnected, available(), !Task.isCancelled else {
-            return failure("Connection is unavailable. Reconnect after leaving private browsing or after the assistant finishes.")
+            return failure("Connection is unavailable. Reconnect after leaving private browsing or after the assistant finishes.", code: .connectionUnavailable)
         }
         if let scope = agentWindowScope {
             guard scope.isActive() else {
                 revoke()
-                return failure("Agent Micro Window session is closed or revoked.")
+                return failure("Agent Micro Window session is closed or revoked.", code: .connectionUnavailable)
             }
             guard scope.isAgentOwned() else {
-                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.")
+                return failure("humanControl: This Agent Micro Window is under human control. Wait for Hand Back.", code: .humanControl)
             }
             syncAgentWindowGrants()
         }
@@ -225,7 +226,7 @@ final class MCPBrowserSession: Identifiable {
         guard busy.isDisjoint(with: lanes) else {
             return failure(lanes.contains(.global) && busy.contains(.global)
                 ? "Another operation that can show a sheet is running. Wait for its result."
-                : "Another operation is running on this tab. Wait for its result.")
+                : "Another operation is running on this tab. Wait for its result.", code: .busy)
         }
         busy.formUnion(lanes)
         lastTool = name
@@ -239,16 +240,23 @@ final class MCPBrowserSession: Identifiable {
         }
         let started = ContinuousClock.now
         let subject = logSubject(for: name, arguments: arguments)
-        let result = await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
-            await AgentActionConsent.$externalClientName.withValue(clientName) {
-                await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
-                    await execute(entry, arguments: arguments)
+        let result = await withAgentWindowCapturePolicy {
+            await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
+                await AgentActionConsent.$externalClientName.withValue(clientName) {
+                    await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
+                        await execute(entry, arguments: arguments)
+                    }
                 }
             }
         }
         let scrubbed = finished(result)
         logCall(name, subject: subject, result: scrubbed, since: started)
         return scrubbed
+    }
+
+    private func withAgentWindowCapturePolicy(_ body: () async -> CallTool.Result) async -> CallTool.Result {
+        guard let scope = agentWindowScope else { return await body() }
+        return await PageDriver.$allowsAgentWindowCapture.withValue({ scope.isActive() && scope.secrets.isEmpty }, operation: body)
     }
 
     private func executeTabFree(_ name: String, arguments: [String: Value]) async -> CallTool.Result? {
@@ -291,19 +299,24 @@ final class MCPBrowserSession: Identifiable {
         if let direct = await executeTabFree(name, arguments: arguments) {
             return direct
         }
-        guard let id = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)),
-            let tab = sharedTab(id), let grant = grants[id]
-        else { return failure("This tab is not shared with this connection.") }
-        guard let capability = entry.scope else { return failure("This tool does not act on a tab.") }
+        guard let id = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
+            return failure("This tab is not shared with this connection.", code: .invalidInput)
+        }
+        guard let tab = sharedTab(id), let grant = grants[id] else {
+            return failure("This tab is not shared with this connection.", code: .tabNotFound)
+        }
+        guard let capability = entry.scope else { return failure("This tool does not act on a tab.", code: .invalidInput) }
         guard mayProceed(tab, capability: capability) else {
-            return failure(capability == .developer ? Self.developerRefusal : "This action is blocked by the connection’s access or the website’s Assistant Access setting.")
+            return failure(
+                capability == .developer ? Self.developerRefusal : "This action is blocked by the connection’s access or the website’s Assistant Access setting.",
+                code: .accessDenied)
         }
         if let managed = await executeTabManagement(name, arguments: arguments, tab: tab) {
             return managed
         }
         keepInWindow(tab)
         if capability == .control, !isReachable(tab) {
-            return failure(Self.unreachableRefusal)
+            return failure(Self.unreachableRefusal, code: .unsupported)
         }
         if name == "handleDialog" { return await handleDialog(arguments, tab: tab) }
         if let open = dialogRefusal(for: tab) {
@@ -311,7 +324,7 @@ final class MCPBrowserSession: Identifiable {
         }
         if name == "setTabEngine" {
             guard let engine = arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)) else {
-                return failure("engine must be webkit or chromium.")
+                return failure("engine must be webkit or chromium.", code: .invalidInput)
             }
             let inPlace = arguments["inPlace"]?.boolValue ?? false
             return await setTabEngine(engine, tab: tab, inPlace: inPlace)
@@ -424,7 +437,7 @@ final class MCPBrowserSession: Identifiable {
         CallTool.Result(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
     }
 
-    func failure(_ text: String) -> CallTool.Result {
-        CallTool.Result(content: [.text(text: text, annotations: nil, _meta: nil)], isError: true)
+    func failure(_ text: String, code: MCPFailureCode = .actionFailed) -> CallTool.Result {
+        code.result(text)
     }
 }

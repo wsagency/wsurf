@@ -240,11 +240,11 @@ extension BrowserModel {
     /// The engine `tab` is set to run: its own (comparison, pinned, or agent default), else the website's.
     func engine(for tab: BrowserTab) -> BrowserEngine {
         let origin = siteOrigin(for: tab)
-        if let engineOverride = tab.engineOverride {
-            return engineOverride
-        }
         if !origin.isEmpty, SitePermissions.webKitOnlyOrigins.contains(origin) {
             return .webKit
+        }
+        if let engineOverride = tab.engineOverride {
+            return engineOverride
         }
         if let pinned = tab.pinnedEngine, pinned.origin == origin {
             return pinned.engine

@@ -117,6 +117,11 @@ extension ChromiumDevTools {
         }
         owner.sessions[session] = child
         let isFrame = info?["type"] as? String == "iframe" && !target.isEmpty
+        if isFrame {
+            owner.screenshotFrameRevision &+= 1
+        } else {
+            owner.nonFrameSessions.insert(session)
+        }
         // A frame that was already running when the session attached (in a pop-up's first page) has a document its scripts missed.
         let wasRunning = params["waitingForDebugger"] as? Bool == false
         Task { await child.startCrossSiteFrameSession(isFrame: isFrame, wasRunning: wasRunning) }
@@ -156,8 +161,11 @@ extension ChromiumDevTools {
 
     /// The renderer of one of this session's frames crashed: its documents are gone, its session stays for the reloaded frame.
     func targetCrashed(_ params: [String: Any]) {
+        let owner = root ?? self
         guard let target = params["targetId"] as? String,
-              let child = (root ?? self).sessions.values.first(where: { $0.targetID == target && $0.parent === self }) else { return }
+              let child = owner.sessions.first(where: { $0.value.targetID == target && $0.value.parent === self && !owner.nonFrameSessions.contains($0.key) })?.value
+        else { return }
+        owner.screenshotFrameRevision &+= 1
         let documents = child.framesByID.values.map(\.documentID)
         // A crashed renderer plays nothing, and its frames' last word about their sound would otherwise stand (the reloaded
         // frame says its own, and the old one is forgotten here, so nothing would retire it).
@@ -182,6 +190,9 @@ extension ChromiumDevTools {
         uniqueIDByExecutionID.removeAll()
         scripts.removeAll()
         bindingWorlds.removeAll()
+        if let root, root.nonFrameSessions.remove(sessionID) == nil {
+            root.screenshotFrameRevision &+= 1
+        }
         root?.sessions[sessionID] = nil
         root?.failPending(in: sessionID)
         endCrossSiteFrameSessions()
@@ -207,12 +218,38 @@ extension ChromiumDevTools {
         sessionID == nil || frame.id == targetID || frame.parentID.map { framesByID[$0] != nil } == true
     }
 
-    /// The page's frames and those of every cross-site frame session.
+    /// Frame choices for the credential picker. A renderer that cannot answer offers no targets.
     func framesIncludingCrossSiteFrames() async throws -> [BrowserFrame] {
         var all = try await frames()
         for child in Array(sessions.values) where !child.closed {
             all += (try? await child.frames()) ?? []
         }
         return all
+    }
+
+    /// Screenshot accounting needs every frame, including non-HTTP documents and frames outside the main process.
+    func screenshotFrameEvidence() async throws -> ScreenshotMasking.FrameEvidence {
+        let revision = screenshotFrameRevision
+        let sessionsForFrames = sessions.filter { !nonFrameSessions.contains($0.key) }
+        let frameSessions = [self] + Array(sessionsForFrames.values)
+        var frames: [String: FrameState] = [:]
+        for session in frameSessions {
+            guard session.prepared, !session.closed else { throw ChromiumError.staleFrame }
+            try await session.refreshFrames(requireComplete: true)
+            frames.merge(session.framesByID) { _, latest in latest }
+        }
+        guard frames.count <= 257,
+              await page?.screenshotFrameCount() == frames.count,
+              screenshotFrameRevision == revision,
+              Set(sessions.keys).subtracting(nonFrameSessions) == Set(sessionsForFrames.keys),
+              let main = frames.values.first(where: \.isMainFrame), frames.values.filter(\.isMainFrame).count == 1
+        else { throw ChromiumError.staleFrame }
+        let children = frames.values.filter { !$0.isMainFrame }
+        guard children.allSatisfy({ child in
+            !child.documentID.isEmpty && child.hasTrustedSecurityOrigin && child.securityOrigin == main.securityOrigin
+                && child.parentID.flatMap { frames[$0] } != nil
+        }) else { throw ChromiumError.staleFrame }
+        let documents = children.sorted { $0.id < $1.id }.map { [$0.id, $0.documentID, $0.url.absoluteString] }
+        return ScreenshotMasking.FrameEvidence(documents: documents, revision: revision)
     }
 }

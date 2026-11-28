@@ -99,7 +99,7 @@ struct SignInHandoffLiveTests {
             rig.browser.sitePermissions.setEngine(.chromium, for: app)
             try await SitePermissions.withWebKitOnlyOriginForTesting(provider) {
                 let home = try #require(URL(string: "\(app)/app/home"))
-                let tab = rig.browser.newTab(url: home)
+                let tab = rig.browser.newTab(url: home, engine: .chromium)
                 tab.page.ignoresWindowOcclusion = true
                 try #require(await waitUntil(timeout: .seconds(60)) { tab.page.url == home && !tab.page.isLoading })
                 let chromium = try #require(tab.page.chromium)
@@ -135,6 +135,10 @@ struct SignInHandoffLiveTests {
                 let host = try #require(stored["__Host-flow"])
                 #expect(host.domain == "localhost" && host.path == "/" && host.isSecure)
                 #expect(stored["elsewhere"] == nil && stored["provider_own"] == nil)
+                #expect(tab.engineOverride == .chromium)
+                let deadline = try #require(tab.signInChainDeadline)
+                tab.signInClock = { deadline }
+                #expect(tab.preferredEngine(for: done) == .chromium)
                 if throughSSO {
                     #expect(try #require(stored["authentik_session"]).isHTTPOnly)
                     let none = try #require(stored["sso_none"])

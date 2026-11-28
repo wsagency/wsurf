@@ -214,6 +214,9 @@ struct AppDatabase: Sendable {
         migrator.registerMigration("v6-space-tabs", foreignKeyChecks: .immediate) { db in
             try defineSchema(in: db)
         }
+        migrator.registerMigration("v7-window-local-tabs", foreignKeyChecks: .immediate) { db in
+            try defineSchema(in: db)
+        }
         return migrator
     }
 
@@ -498,6 +501,11 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "spaceTabID" }) {
             try db.alter(table: "sessionTab") { t in
                 t.add(column: "spaceTabID", .blob)
+            }
+        }
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "staysInItsWindow" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "staysInItsWindow", .boolean)
             }
         }
     }

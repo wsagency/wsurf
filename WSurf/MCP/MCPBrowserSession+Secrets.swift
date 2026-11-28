@@ -27,15 +27,12 @@ extension MCPBrowserSession {
         var refs: Set<Int>
     }
 
-    /// Whether this connection may write agent-supplied passwords/secrets into sensitive fields on `tab`: allowed in the
-    /// Developer tier, or under `Control` when the Keychain trust store is available and enables password entry. Fails closed
-    /// when the Keychain cannot be read.
+    /// Password entry requires Control, the Keychain setting, and an explicit opt-in for a paired client.
     func allowsPasswordEntry(for tab: BrowserTab) -> Bool {
-        if permits(tab, capability: .developer) {
-            return true
-        }
         trust.loadIfNeeded()
-        return permits(tab, capability: .control) && trust.isAvailable && trust.allowsPasswordEntry
+        return trust.isAvailable && trust.allowsPasswordEntry
+            && (pairedClient == nil || livePairedClient?.policy.allowsPasswordEntry == true)
+            && permits(tab, capability: .control)
     }
 
     /// The secrets `tool` would type, combining explicit `secret: true` items with any target refs in `autoSensitiveRefs`
@@ -64,17 +61,22 @@ extension MCPBrowserSession {
     func secretEntryRefusal(_ entry: SecretEntry, tab: BrowserTab) -> CallTool.Result? {
         guard allowsPasswordEntry(for: tab) else {
             return failure(
-                "Password and secret entry is turned off in Settings › Connected apps (or requires Developer access). Nothing was typed.")
+                "Password and secret entry requires Control and Allow password entry in Settings › Connected apps. Paired apps also need their own opt-in. Nothing was typed.",
+                code: .accessDenied)
         }
         for value in entry.values {
             switch secrets.register(value) {
             case .registered:
                 continue
             case .tooShort:
-                return failure("A secret must be at least \(MCPSecretScrubber.minimumBytes) characters so WSurf can keep it out of results. Nothing was typed.")
+                return failure("A secret must be at least \(MCPSecretScrubber.minimumBytes) characters so WSurf can keep it out of results. Nothing was typed.", code: .invalidInput)
             case .tooMany:
-                return failure("This connection already typed \(MCPSecretScrubber.maximumSecrets) different secrets. Disconnect to type more. Nothing was typed.")
+                let reset = agentWindowScope == nil ? "Disconnect to type more." : "Open another Agent Micro Window to type more."
+                return failure("This session already typed \(MCPSecretScrubber.maximumSecrets) different secrets. \(reset) Nothing was typed.")
             }
+        }
+        if agentWindowScope != nil {
+            tab.mcpSecretWriteEpoch = tab.documentCommitEpoch
         }
         return nil
     }
@@ -150,7 +152,7 @@ extension MCPBrowserSession {
     /// How a screenshot of `tab` treats filled sensitive fields: covered in black under Control (when password entry is
     /// allowed) and in the Developer tier, a refusal otherwise.
     func screenshotMasking(for tab: BrowserTab) -> ScreenshotMasking? {
-        guard allowsPasswordEntry(for: tab) else { return nil }
+        guard permits(tab, capability: .developer) || allowsPasswordEntry(for: tab) else { return nil }
         let fields = secretFields[tab.id]
         return ScreenshotMasking(secretRefs: fields?.refs ?? [], documentID: fields?.documentID)
     }
@@ -159,7 +161,7 @@ extension MCPBrowserSession {
     /// what the call computed may predate the wipe). Everything else is cleaned of the secrets typed so far.
     func finished(_ result: CallTool.Result) -> CallTool.Result {
         if !isConnected, secrets.wasUsed {
-            return failure("Connection is unavailable. Reconnect and request access again.")
+            return failure("Connection is unavailable. Reconnect and request access again.", code: .connectionUnavailable)
         }
         return secrets.scrub(result)
     }
